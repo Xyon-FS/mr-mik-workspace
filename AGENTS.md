@@ -1,4 +1,4 @@
-# Mr. Mak Workspace
+# Mr. Mik Workspace
 
 This repository is a desktop workspace and a starter context for its owner.
 Read `context/preferences.md`, `context/goals.md`, and the relevant project before
@@ -9,7 +9,7 @@ working. Ask for missing personal preferences; do not invent a biography.
 - Keep Workspace content in English unless another language is explicitly
   requested for that output. A conversation in another language does not change
   the default language of stored work.
-- Check `processes/` for an existing workflow and `knowledge/` for prior decisions.
+- Consult processes/ or knowledge/ only when they are relevant to the current task.
 - Use the project skills in `.agents/skills/`. Claude entries in
   `.claude/skills/` are complete distribution copies. After editing a shared skill,
   run `npm run skills:sync`; template checks detect differences between copies.

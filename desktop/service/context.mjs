@@ -50,11 +50,11 @@ export class ContextLibrary {
     const start = Math.max(0, Number(offset) || 0);
     return { path: actual, text: text.slice(start, start + 24000), nextOffset: start + 24000 < text.length ? start + 24000 : null };
   }
-  async search(query) {
+  async search(query, folders = ['context', 'processes', 'knowledge', 'projects']) {
     if (typeof query !== 'string' || !query.trim() || query.length > 200) throw new Error('Use a short context search phrase.');
     const rg = commandPath('rg');
     if (!rg) throw new Error('The rg context search tool is unavailable.');
-    const roots = ['context', 'processes', 'knowledge', 'projects'].map(folder => path.join(this.repo, folder));
+    const roots = folders.map(folder => path.join(this.repo, folder));
     const { stdout } = await execute(rg, ['-n', '-i', '--fixed-strings', '--max-count', '2', '-g', '*.md', '-g', '!node_modules', '--', query, ...roots], { windowsHide: true, maxBuffer: 128 * 1024 }).catch(error => ({ stdout: error.stdout || '' }));
     return { matches: stdout.slice(0, 18000), truncated: stdout.length > 18000 };
   }

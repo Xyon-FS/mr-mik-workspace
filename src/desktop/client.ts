@@ -14,8 +14,8 @@ if (isDesktop && token) {
 const listeners = new Set<() => void>()
 const events = new Set<(event: ServiceEvent) => void>()
 let state: DesktopState = {
-  ready: false, connected: false, error: null, repo: '', contentBase: '', agents: [], sessions: [], selectedId: null, notices: [],
-  settings: { defaultAgent: 'codex', defaultBypass: false }, coordinator: 'idle', voice: { configured: false, owner: null }, operations: [], preview: null, voiceHistory: [],
+  ready: false, connected: false, error: null, repo: '', contentBase: '', projects: [], agents: [], sessions: [], selectedId: null, notices: [],
+  settings: { defaultAgent: 'codex', defaultBypass: false, defaultWorkerEffort: 'xhigh' }, coordinator: 'idle', voice: { configured: false, owner: null }, operations: [], preview: null, voiceHistory: [],
 }
 let socket: WebSocket | null = null
 let started = false
@@ -39,7 +39,7 @@ export async function api<T>(path: string, data?: unknown, method?: string): Pro
   if (!response.ok) throw new Error(value.error || `Request failed (${response.status})`)
   return value as T
 }
-export function pickFiles(): Promise<string[]> {
+export function pickFiles(options: { window?: 'chats' | 'workspace'; folder?: boolean } = {}): Promise<string[]> {
   const requestId = crypto.randomUUID()
   return new Promise((resolve, reject) => {
     const cleanup = () => { window.removeEventListener('mrmak-picked-files', picked); window.removeEventListener('pagehide', closed) }
@@ -51,11 +51,11 @@ export function pickFiles(): Promise<string[]> {
     const closed = () => { cleanup(); reject(new Error('The file picker window was closed.')) }
     window.addEventListener('mrmak-picked-files', picked)
     window.addEventListener('pagehide', closed)
-    api('/files/pick', { requestId }).catch(error => { cleanup(); reject(error) })
+    api('/files/pick', { requestId, ...options }).catch(error => { cleanup(); reject(error) })
   })
 }
-export async function uploadImage(file: File): Promise<{ path: string; name: string }> {
-  const response = await fetch('/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name || 'Screenshot.png') }, body: file })
+export async function uploadImage(file: File, sessionId: string): Promise<{ path: string; name: string }> {
+  const response = await fetch('/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name || 'Screenshot.png'), 'X-Session-Id': sessionId }, body: file })
   const value = await response.json()
   if (!response.ok) throw new Error(value.error || 'Image could not be saved')
   return value
@@ -111,6 +111,7 @@ function connect() {
       update({ operations: [...state.operations.filter(item => item.id !== operation.id), operation].slice(-50) })
     }
     if (event.type === 'settings' && event.settings) update({ settings: event.settings })
+    if (event.type === 'projects-changed') api<DesktopState['projects']>('/projects').then(projects => update({ projects })).catch(reportError)
     if (event.type === 'notice' && event.notice) update({ notices: [...state.notices, event.notice].slice(-100) })
     if (event.type === 'voice-owner') update({ voice: { ...state.voice, owner: event.owner || null } })
     if (event.type === 'navigate') {

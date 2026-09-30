@@ -1,0 +1,142 @@
+/* Accent themes recolour Mr. Mik chrome, not authored card pages or native CLI colours. */
+html[data-accent-theme] {
+  --accent-soft: color-mix(in srgb, var(--pink) 12%, transparent);
+  --accent-medium: color-mix(in srgb, var(--pink) 28%, transparent);
+  --accent-border: color-mix(in srgb, var(--pink) 46%, transparent);
+  --accent-muted: color-mix(in srgb, var(--pink) 64%, #9797a2);
+  --accent-ink: color-mix(in srgb, var(--pink) 28%, #ececf1);
+  --accent-panel: color-mix(in srgb, var(--pink) 3%, #101116);
+  --accent-overlay: color-mix(in srgb, var(--pink) 8%, #202126);
+  --accent-overlay-hover: color-mix(in srgb, var(--pink) 12%, #202126);
+}
+html[data-accent-theme] body::before {
+  background: radial-gradient(520px 420px at 12% -4%, color-mix(in srgb, var(--pink) 8%, transparent), transparent 65%),
+    radial-gradient(720px 560px at 96% 104%, color-mix(in srgb, var(--purple) 6.5%, transparent), transparent 65%),
+    radial-gradient(900px 500px at 55% 120%, color-mix(in srgb, var(--pink) 3%, transparent), transparent 70%);
+}
+html[data-accent-theme] ::selection { background: color-mix(in srgb, var(--pink) 30%, transparent); }
+html[data-accent-theme] .desktop-root button:focus-visible,
+html[data-accent-theme] .desktop-root input:focus-visible { outline-color: var(--accent-border); }
+html[data-accent-theme] .desk-primary { background: var(--pink); border-color: var(--pink-bright); box-shadow: 0 3px 15px var(--accent-soft); }
+html[data-accent-theme] .desk-primary:hover { background: var(--pink-bright); }
+html[data-accent-theme] .desk-icon:hover,
+html[data-accent-theme] .desk-icon.active { color: var(--pink-bright) !important; }
+html[data-accent-theme] .rail-tool.active,
+html[data-accent-theme] .skill-locations button[aria-pressed=true] { background: var(--accent-soft); color: var(--pink); }
+html[data-accent-theme] .skill-locations button[aria-pressed=true] { border-color: var(--accent-medium); }
+html[data-accent-theme] .chat-tab[aria-selected=true]:after,
+html[data-accent-theme] .chat-tab.selected:after { background: var(--tab-accent, var(--pink)); }
+html[data-accent-theme] .topbar-new-chat,
+html[data-accent-theme] .app-layout:not([data-entity="my-dream-game"]) .step-tab.active { border-color: var(--accent-medium); background: var(--accent-soft); color: var(--pink-bright); }
+html[data-accent-theme] .topbar-new-chat:hover { background: var(--accent-medium); }
+html[data-accent-theme] .file-row.selected,
+html[data-accent-theme] .files-panel .drop-target { background: var(--accent-soft) !important; }
+html[data-accent-theme] .file-list.drop-area { box-shadow: inset 0 0 0 1px var(--accent-border); }
+html[data-accent-theme] .desk-dark-select:focus-visible,
+html[data-accent-theme] .desk-dark-select[aria-expanded="true"] { border-color: var(--accent-border); box-shadow: 0 0 0 2px var(--accent-soft); }
+html[data-accent-theme] .desk-dark-options button[aria-selected="true"],
+html[data-accent-theme] .history-button:hover,
+html[data-accent-theme] .history-button.active,
+html[data-accent-theme] .history-action:hover,
+html[data-accent-theme] .history-action.active { background: var(--accent-soft); color: var(--pink-bright) !important; }
+html[data-accent-theme] .desk-dark-options button>span { color: var(--pink); }
+html[data-accent-theme] .file-context-menu button.danger { color: var(--red); }
+html[data-accent-theme] .setting-toggle input,
+html[data-accent-theme] .desk-check input,
+html[data-accent-theme] .mak-markdown input[type=checkbox] { accent-color: var(--pink); }
+html[data-accent-theme] .desk-field input:focus,
+html[data-accent-theme] .mcp-filters select:focus-visible { border-color: var(--accent-border); }
+html[data-accent-theme] .mcp-editor summary,
+html[data-accent-theme] .mcp-editor button,
+html[data-accent-theme] .mcp-add-button,
+html[data-accent-theme] .mcp-hide-item:hover,
+html[data-accent-theme] .mcp-hidden-toggle:hover,
+html[data-accent-theme] .mcp-sources button,
+html[data-accent-theme] .mcp-footer button { color: var(--pink-bright); }
+html[data-accent-theme] .mcp-eye-toggle:hover,
+html[data-accent-theme] .mcp-entry-eye:hover,
+html[data-accent-theme] .mcp-eye-toggle[aria-pressed=true] { color: var(--pink-bright); }
+html[data-accent-theme] .mcp-eye-toggle:focus-visible,
+html[data-accent-theme] .mcp-entry-eye:focus-visible,
+html[data-accent-theme] .mcp-scroll button:focus-visible,
+html[data-accent-theme] .mcp-sources summary:focus-visible { outline-color: var(--accent-border); }
+html[data-accent-theme] .mcp-editor-tabs button[aria-pressed=true],
+html[data-accent-theme] .mcp-provider { color: var(--pink-bright); }
+html[data-accent-theme] .mcp-server.is-hidden { border-color: var(--accent-medium); box-shadow: inset 2px 0 var(--accent-border); }
+html[data-accent-theme] .hub-action { background: var(--accent-soft); color: var(--pink-bright); }
+html[data-accent-theme] .skill-create-target button.selected { background: var(--accent-medium); border-color: var(--accent-border); }
+html[data-accent-theme] .help-site-search:focus-within { border-color: var(--accent-border); }
+html[data-accent-theme] .help-site-nav-list button.selected,
+html[data-accent-theme] .help-site-next button:hover { background: var(--accent-soft); color: var(--pink-bright); }
+html[data-accent-theme] .help-site-kicker,
+html[data-accent-theme] .help-site-content h3,
+html[data-accent-theme] .help-site-content strong,
+html[data-accent-theme] .help-site-content code,
+html[data-accent-theme] .help-site-content a,
+html[data-accent-theme] .help-site-next button { color: var(--pink-bright); }
+html[data-accent-theme] .help-site-content blockquote { border-left-color: var(--pink); }
+html[data-accent-theme] .document-toolbar button[aria-pressed=true],
+html[data-accent-theme] .document-toolbar .document-save:not(:disabled) { background: var(--accent-soft); color: var(--pink-bright); border-color: var(--accent-medium); }
+html[data-accent-theme] .mak-markdown a,
+html[data-accent-theme] .report-error a { color: var(--pink); }
+html[data-accent-theme] .mak-markdown blockquote { border-left-color: var(--accent-border); background: color-mix(in srgb, var(--pink) 3%, transparent); }
+
+/* One neutral ink scale for non-Rose themes. Literal fallbacks preserve Rose exactly.
+   Status colours and native terminal colours are intentionally not mapped here. */
+html[data-accent-theme]:not([data-accent-theme="rose"]) {
+  --ink-faint: color-mix(in srgb, var(--pink) 12%, #64646d);
+  --ink-subdued: color-mix(in srgb, var(--pink) 14%, #7d7d87);
+  --ink-secondary: color-mix(in srgb, var(--pink) 14%, #94949e);
+  --ink-label: color-mix(in srgb, var(--pink) 16%, #afafb8);
+  --ink-body: color-mix(in srgb, var(--pink) 12%, #d8d8e0);
+  --ink-bright: color-mix(in srgb, var(--pink) 8%, #ececf1);
+  --ink-highlight: var(--pink-bright);
+  --text-dim: var(--ink-secondary);
+  --text-muted: var(--ink-faint);
+}
+
+/* Rose keeps the original surface/ink balance; other themes use equivalent tints. */
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-rail-content,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .files-panel,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .settings-panel,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .chat-history { background: var(--accent-panel); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .desk-dark-options,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .file-context-menu,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .history-more>div,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .file-confirm,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .chat-model-menu { background: var(--accent-overlay); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .desk-dialog { background: linear-gradient(140deg, var(--accent-overlay), #15161c 60%); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .desk-dark-select:hover { background: var(--accent-overlay-hover); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .desk-dark-select>svg,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .file-row.directory>svg:nth-child(2),
+html[data-accent-theme]:not([data-accent-theme="rose"]) .file-root-row,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .file-reveal { color: var(--accent-muted); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .files-panel>header,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .files-panel>header strong,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-skills h3,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-form h3,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-repositories h3,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .settings-scroll h3 { color: var(--accent-ink); }
+html[data-accent-theme] .file-row:focus-visible,
+html[data-accent-theme] .file-reveal:focus-visible { outline-color: var(--accent-border); }
+html[data-accent-theme] .file-reveal:hover,
+html[data-accent-theme] .chat-tab-close:hover,
+html[data-accent-theme] .portable-settings button:hover,
+html[data-accent-theme] .portable-actions button:hover { background: var(--accent-soft); color: var(--pink-bright); }
+html[data-accent-theme] .file-row.selected { color: var(--accent-ink); }
+html[data-accent-theme] .files-panel .drop-target { box-shadow: inset 0 0 0 1px var(--accent-border); color: var(--accent-ink); }
+html[data-accent-theme] .rail-tool:hover { color: var(--pink-bright); }
+html[data-accent-theme] .history-filters button.selected { background: var(--accent-soft); border-color: var(--accent-medium); color: var(--pink-bright); }
+html[data-accent-theme] .history-recovery { background: color-mix(in srgb, var(--pink) 4%, transparent); border-color: var(--accent-medium); }
+html[data-accent-theme] .history-recovery button { background: var(--accent-soft); border-color: var(--accent-medium); color: var(--pink-bright); }
+html[data-accent-theme] .terminal-drop { background: color-mix(in srgb, var(--pink) 10%, #16171bf0); border-color: var(--accent-border); color: var(--pink-bright); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .help-site-top { background: linear-gradient(100deg, var(--accent-overlay), #14151b 55%); }
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-picker button,
+html[data-accent-theme]:not([data-accent-theme="rose"]) .hub-quiet { color: var(--ink-body); }
+
+.settings-theme-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:13px 0 2px; }
+.settings-theme-options button { display:flex; align-items:center; gap:8px; min-height:38px; padding:7px 9px; border:1px solid #ffffff1a; border-radius:7px; background:#ffffff05; color:#ccc9d3; font:11px var(--font-body); text-align:left; cursor:pointer; }
+.settings-theme-options button:hover { background:#ffffff0c; }
+.settings-theme-options button[aria-pressed="true"] { border-color:var(--accent-border); background:var(--accent-soft); color:var(--pink-bright); }
+.settings-theme-options button:focus-visible { outline:2px solid var(--pink); outline-offset:2px; }
+.settings-theme-swatch { display:inline-block; width:16px; height:16px; flex:none; border-radius:50%; box-shadow:0 0 0 1px #ffffff4a; }

@@ -28,6 +28,8 @@
   </defs>
   <path d="M64 26C40 26 20 43 12 65C4 86 12 103 29 105C40 107 51 99 64 99C77 99 88 107 99 105C116 103 124 86 116 65C108 43 88 26 64 26Z" fill="url(#pink)" stroke="url(#rim)" stroke-width="1.7"/>
   <g clip-path="url(#outline)">
+    <path d="M18 61C20 50 32 43 39 49C45 56 39 63 34 68C27 76 17 70 18 61Z" fill="#cf719b" opacity=".55"/>
+    <path d="M94 84C97 76 111 75 114 84C117 91 105 99 99 95C94 92 92 89 94 84Z" fill="#d581a4" opacity=".55"/>
     <path d="M22 54C36 31 60 26 80 34" stroke="#fff2f6" stroke-width="4" stroke-linecap="round" opacity=".48" filter="url(#soft)"/>
     <path d="M17 94C32 112 49 96 64 96C79 96 98 112 112 94" stroke="#a74771" stroke-width="3" opacity=".18" filter="url(#soft)"/>
     <g transform="translate(42 69) rotate(15)">
@@ -41,4 +43,7 @@
       <path d="M-8-7C-4-14 3-15 8-9" stroke="#44232e" stroke-width="1.8" stroke-linecap="round" opacity=".42" filter="url(#edge)"/>
     </g>
   </g>
+  <path d="M19 43C19 17 39 3 65 4C88 4 107 20 109 44C87 35 45 35 19 43Z" fill="#555966" stroke="#292b34" stroke-width="2"/>
+  <path d="M64 5C57 15 54 27 54 37M65 5C80 15 88 25 91 39" fill="none" stroke="#727786" stroke-width="1.8" opacity=".65"/>
+  <path d="M16 44C42 32 83 33 115 46C105 54 84 52 63 47C44 44 28 44 16 44Z" fill="#30323c" stroke="#20222b" stroke-width="1.5"/>
 </svg>

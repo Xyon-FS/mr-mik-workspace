@@ -80,6 +80,10 @@ test('appearance API applies explicit colors and settings and rejects cross-grou
     assert.equal(settings.terminalAppearance, 'original');
     const ignored = await (await request('/settings', { terminalAppearance: 'invalid' })).json();
     assert.equal(ignored.terminalAppearance, 'original');
+    const themed = await (await request('/settings', { accentTheme: 'teal' })).json();
+    assert.equal(themed.accentTheme, 'teal');
+    const invalidTheme = await (await request('/settings', { accentTheme: 'neon' })).json();
+    assert.equal(invalidTheme.accentTheme, 'teal');
   } finally { await service.close(); }
 });
 

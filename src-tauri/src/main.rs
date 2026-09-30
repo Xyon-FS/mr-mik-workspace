@@ -119,7 +119,7 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
                 return Ok(root.to_owned());
             }
         }
-        selected = rfd::FileDialog::new().set_title("Choose your Mr. Mak Workspace repository").pick_folder();
+        selected = rfd::FileDialog::new().set_title("Choose your Mr. Mik Hub folder (an existing Mr. Mak Hub is supported)").pick_folder();
         if selected.is_none() { return Err("No Workspace repository selected".into()); }
         if !selected.as_ref().unwrap().join("workspace/workspace.json").is_file() {
             rfd::MessageDialog::new().set_title("Choose the Workspace folder").set_description("Select the repository folder containing workspace/workspace.json.").show();
@@ -139,13 +139,13 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
     let workspace_window = WebviewWindowBuilder::new(app, "workspace", WebviewUrl::External(workspace.parse()?))
         .on_new_window(|url, _| external_links::open_popup(url))
         .disable_drag_drop_handler().visible(false)
-        .title(format!("{} — Workspace", app.config().product_name.as_deref().unwrap_or("Mr. Mak"))).inner_size((width - chat_width - 8.0).max(500.0), (height - 6.0).max(450.0))
+        .title(format!("{} — Workspace", app.config().product_name.as_deref().unwrap_or("Mr. Mik"))).inner_size((width - chat_width - 8.0).max(500.0), (height - 6.0).max(450.0))
         .position(x + chat_width + 6.0, y + 2.0).min_inner_size(500.0, 400.0)
         .theme(Some(tauri::Theme::Dark)).background_color(tauri::webview::Color(12, 13, 16, 255)).build()?;
     let chats_window = WebviewWindowBuilder::new(app, "chats", WebviewUrl::External(chats.parse()?))
         .on_new_window(|url, _| external_links::open_popup(url))
         .visible(false)
-        .title(format!("{} — Chats", app.config().product_name.as_deref().unwrap_or("Mr. Mak"))).inner_size(chat_width, (height - 6.0).max(450.0))
+        .title(format!("{} — Chats", app.config().product_name.as_deref().unwrap_or("Mr. Mik"))).inner_size(chat_width, (height - 6.0).max(450.0))
         .position(x + 2.0, y + 2.0).min_inner_size(330.0, 420.0)
         .theme(Some(tauri::Theme::Dark)).background_color(tauri::webview::Color(12, 13, 16, 255)).build()?;
     // Native drops expose every original file/folder path. Keep Workspace's
@@ -236,7 +236,7 @@ fn main() {
                             let chats = event["chats"].as_str().unwrap_or("").to_owned();
                             let _ = app_handle.run_on_main_thread(move || {
                                 if let Err(error) = make_windows(&handle, &workspace, &chats) {
-                                    rfd::MessageDialog::new().set_title("Mr. Mak could not open").set_description(error.to_string()).show(); handle.exit(1);
+                                    rfd::MessageDialog::new().set_title("Mr. Mik could not open").set_description(error.to_string()).show(); handle.exit(1);
                                 }
                             });
                         },
@@ -255,16 +255,23 @@ fn main() {
                         #[cfg(windows)]
                         "recycle-file" => {
                             if let Some(file) = event["path"].as_str() {
-                                if let Some(window) = app_handle.get_webview_window("workspace") {
+                                let window = app_handle.get_webview_window("workspace");
+                                let request_id = event["requestId"].as_str().map(str::to_owned);
+                                let recycle_app = app_handle.clone();
                                     let file = file.to_owned();
                                     std::thread::spawn(move || {
                                         let detail = match trash::delete(&file) {
                                             Ok(()) => serde_json::json!({ "path": file, "recycled": true }),
                                             Err(error) => serde_json::json!({ "path": file, "recycled": false, "error": error.to_string() }),
                                         };
-                                        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('mrmak-recycle-result',{{detail:{detail}}}))"));
+                                        if let Some(request_id) = request_id {
+                                            let reply = serde_json::json!({ "type": "card-recycle-result", "requestId": request_id, "recycled": detail["recycled"], "error": detail["error"] });
+                                            if let Some(child) = recycle_app.state::<Service>().0.lock().unwrap().as_mut() {
+                                                if let Some(stdin) = child.stdin.as_mut() { let _ = writeln!(stdin, "{reply}"); }
+                                            }
+                                        }
+                                        if let Some(window) = window { let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('mrmak-recycle-result',{{detail:{detail}}}))")); }
                                     });
-                                }
                             }
                         },
                         #[cfg(windows)]
@@ -275,10 +282,16 @@ fn main() {
                             }
                         },
                         "pick-files" => {
-                            if let (Some(window), Some(request_id)) = (app_handle.get_webview_window("chats"), event["requestId"].as_str()) {
+                            let target = event["window"].as_str().unwrap_or("chats");
+                            if let (Some(window), Some(request_id)) = (app_handle.get_webview_window(target), event["requestId"].as_str()) {
                                 let request_id = request_id.to_owned();
+                                let folder = event["folder"].as_bool().unwrap_or(false);
                                 std::thread::spawn(move || {
-                                    let paths = rfd::FileDialog::new().set_parent(&window).set_title("Attach file paths").pick_files().unwrap_or_default();
+                                    let paths: Vec<PathBuf> = if folder {
+                                        rfd::FileDialog::new().set_parent(&window).set_title("Choose repository folder").pick_folder().into_iter().collect()
+                                    } else {
+                                        rfd::FileDialog::new().set_parent(&window).set_title("Choose files").pick_files().unwrap_or_default()
+                                    };
                                     let detail = serde_json::json!({ "requestId": request_id, "paths": paths });
                                     let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('mrmak-picked-files',{{detail:{detail}}}))"));
                                 });
@@ -295,14 +308,14 @@ fn main() {
                     }
                 }
                 if app_handle.get_webview_window("workspace").is_none() {
-                    rfd::MessageDialog::new().set_title("Mr. Mak service did not start").set_description("The local service stopped before opening the windows. See the Mr. Mak service.log in your local application data.").show();
+                    rfd::MessageDialog::new().set_title("Mr. Mik service did not start").set_description("The local service stopped before opening the windows. See the Mr. Mik service.log in your local application data.").show();
                     app_handle.exit(1);
                 }
             });
             let workspace_item = MenuItem::with_id(app, "workspace", "Show Workspace", true, None::<&str>)?;
             let chats_item = MenuItem::with_id(app, "chats", "Show Chats", true, None::<&str>)?;
             let both_item = MenuItem::with_id(app, "both", "Show both windows", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Mr. Mak and stop terminals", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Mr. Mik and stop terminals", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&workspace_item, &chats_item, &both_item, &separator, &quit_item])?;
             #[cfg(windows)]
@@ -312,12 +325,12 @@ fn main() {
                 let shortcut = win_key::WinKeyShortcut::start(app.handle(), enabled);
                 let available = shortcut.is_ok();
                 if let Ok(shortcut) = shortcut { app.manage(shortcut); }
-                let item = CheckMenuItem::with_id(app, "win-key", "Win key shows Mr. Mak", available, enabled && available, None::<&str>)?;
+                let item = CheckMenuItem::with_id(app, "win-key", "Win key shows Mr. Mik", available, enabled && available, None::<&str>)?;
                 menu.insert(&item, 3)?;
                 app.manage(item);
                 publish_shortcut(app.handle(), None, if available { None } else { Some("Windows could not register the shortcut.".into()) });
             }
-            TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Mr. Mak — your agents, close at hand")
+            TrayIconBuilder::new().icon(app.default_window_icon().unwrap().clone()).tooltip("Mr. Mik — your agents, close at hand")
                 .menu(&menu).show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "workspace" => reveal(app, "workspace"), "chats" => reveal(app, "chats"),
@@ -350,6 +363,6 @@ fn main() {
                 if let Some(job) = app.try_state::<ServiceJob>() { job.0.lock().unwrap().take(); }
             }
         }),
-        Err(error) => { rfd::MessageDialog::new().set_title("Mr. Mak could not start").set_description(error.to_string()).show(); }
+        Err(error) => { rfd::MessageDialog::new().set_title("Mr. Mik could not start").set_description(error.to_string()).show(); }
     }
 }

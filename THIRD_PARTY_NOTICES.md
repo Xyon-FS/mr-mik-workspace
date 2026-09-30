@@ -3,6 +3,11 @@
 The application and original workflow documentation use the root MIT license.
 Third-party components retain their own licenses.
 
+- The six optional game workflow skills are adapted from witnesstodark/mr-mak-workspace
+  v0.4.15, commit f122637a26c584ae1d3e48470d11874517913748, under its MIT license.
+  The original specialized workflows and VFX reference are retained, with Mr. Mik
+  Hub/project scope guidance added. See docs/upstream-adaptations.md.
+
 - `img2threejs` is bundled under Apache-2.0. Its license and notices are retained
   in `.agents/skills/img2threejs`. Source: https://github.com/img2threejs/img2threejs.
 - JavaScript and Rust dependencies are recorded in their lockfiles. Their

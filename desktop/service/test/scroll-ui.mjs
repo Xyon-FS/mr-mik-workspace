@@ -41,7 +41,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 640, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await context.newPage(); page.setDefaultTimeout(6000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(service.urls.chats);
+  await page.goto(service.urls.chats, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const select = async id => {
     await page.locator(`[data-chat-tab="${id}"] [role=tab]`).click();
     await page.locator('.xterm-rows').filter({ hasText: id === 'claude-fullscreen' ? 'Claude fullscreen transcript' : 'History line' }).waitFor();

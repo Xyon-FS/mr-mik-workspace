@@ -7,8 +7,8 @@ xterm.js. The windows share sessions and settings but minimize independently.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/` | React Workspace, document previews, files, chat and voice UI |
-| `desktop/service/` | HTTP/WebSocket service, PTYs, session history, tools, voice connection |
+| `src/` | React Workspace, document previews, files and chat UI |
+| `desktop/service/` | HTTP/WebSocket service, PTYs, session history and tools |
 | `src-tauri/src/` | Windows shell integration, taskbar identities, native drag and optional Win key |
 | `workspace/workspace.json` | Card registry |
 | `workspace/_shared/` | Report CSS, image viewer and Help |
@@ -23,7 +23,8 @@ The service runs CLIs as the current user. Their available files and permissions
 follow their launch options and native account settings. Permission bypass is
 off by default. Do not expose the local service as a public web server.
 
-The optional voice frontend uses OpenAI Live. Routine actions call local tools;
+Voice is temporarily disabled; existing local transcripts are retained and the
+service rejects new voice sessions. Routine actions call local tools;
 the Codex app-server coordinator handles broader orchestration with the user's
 configured model. Larger execution tasks go to visible worker terminals. The
 provider's native conversation ID is recorded when available for later resume.
@@ -52,8 +53,8 @@ npm run desktop:test:ui
 
 UI tests use an isolated repository and fake terminals. Edge must be available
 on Windows, or set `MRMAK_TEST_BROWSER` to a Playwright browser channel you have
-installed. Live voice and subscription smoke checks are separate scripts with
-explicit opt-in flags; they are never part of the default test command.
+installed. Legacy live-voice and subscription smoke checks are separate scripts
+with explicit opt-in flags; they are never part of the default test command.
 
 Windows x64 is the validated native target. Porting the native shell integration
 to another operating system requires additional work.

@@ -1,5 +1,8 @@
-export const workerEfforts = ['medium', 'high', 'xhigh', 'max'];
+export const workerEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+export const defaultWorkerEfforts = workerEfforts;
+export const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const defaultWorkerEffort = 'xhigh';
+export const workerDefault = (settings, agent) => agent === 'claude' ? settings.defaultClaudeWorkerEffort || 'high' : settings.defaultWorkerEffort;
 
 export function explicitMax(text = '') {
   const value = String(text).toLowerCase();
@@ -14,7 +17,7 @@ export function explicitMax(text = '') {
 export function taskEffort(request = '', preferred) {
   if (explicitMax(request)) return 'max';
   if (preferred === 'max') return 'xhigh';
-  if (['medium', 'high', 'xhigh'].includes(preferred)) return preferred;
+  if (workerEfforts.includes(preferred)) return preferred;
   if (/research|исследова|рес[её]рч|ресерч|глубок(?:ий|ое)|архитектур|сложн/iu.test(request)) return 'xhigh';
   if (/implement|реализ|разработ|интеграц|debug|отлад|рефактор/iu.test(request)) return 'high';
   return 'medium';

@@ -23,9 +23,9 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(520px 420px at 12% -4%, rgba(240, 160, 176, 0.08), transparent 65%),
-    radial-gradient(720px 560px at 96% 104%, rgba(183, 148, 244, 0.065), transparent 65%),
-    radial-gradient(900px 500px at 55% 120%, rgba(240, 160, 176, 0.03), transparent 70%);
+    radial-gradient(520px 420px at 12% -4%, color-mix(in srgb, var(--pink) 8%, transparent), transparent 65%),
+    radial-gradient(720px 560px at 96% 104%, color-mix(in srgb, var(--purple) 6.5%, transparent), transparent 65%),
+    radial-gradient(900px 500px at 55% 120%, color-mix(in srgb, var(--pink) 3%, transparent), transparent 70%);
 }
 
 /* Grain — barely-there film noise so the dark fields don't band */
@@ -42,7 +42,7 @@ body::after {
 
 a { color: var(--pink); text-decoration: none; }
 
-::selection { background: rgba(240, 160, 176, 0.3); }
+::selection { background: color-mix(in srgb, var(--pink) 30%, transparent); }
 
 a:focus-visible,
 button:focus-visible {
@@ -114,10 +114,10 @@ button:focus-visible {
 .sidebar-collapse:hover {
   background: var(--surface-2);
   color: var(--text-bright);
-  border-color: rgba(240, 160, 176, 0.45);
+  border-color: color-mix(in srgb, var(--pink) 45%, transparent);
 }
 
-/* the floating Mr. Mak nose that brings the menu back — only when collapsed */
+/* the floating Mr. Mik nose that brings the menu back — only when collapsed */
 .sidebar-reopen {
   position: absolute;
   top: 8px;
@@ -203,7 +203,7 @@ button:focus-visible {
 .sidebar-search input::placeholder { color: var(--text-muted); }
 .sidebar-search input:focus {
   outline: none;
-  border-color: rgba(240, 160, 176, 0.45);
+  border-color: color-mix(in srgb, var(--pink) 45%, transparent);
   background: var(--surface-2);
   box-shadow: var(--glow-pink);
 }
@@ -310,7 +310,7 @@ button:focus-visible {
 }
 .status-dot.active {
   background: var(--purple);
-  box-shadow: 0 0 8px rgba(183, 148, 244, 0.6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--purple) 60%, transparent);
 }
 .status-dot.done { background: var(--green); }
 .status-dot.archived { background: var(--text-muted); }
@@ -427,6 +427,10 @@ button:focus-visible {
   min-width: 0;
   max-width: 100%;
 }
+.topbar-new-chat{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:44px;min-height:32px;flex-shrink:0;border:1px solid var(--accent-medium);background:var(--accent-soft);color:var(--pink-bright);border-radius:999px;padding:6px 9px;cursor:pointer}
+.topbar-new-chat:hover{background:color-mix(in srgb, var(--pink) 16.47%, transparent)}
+.topbar-new-chat:disabled{opacity:.5;cursor:wait}
+.topbar-new-chat:focus-visible{outline:2px solid var(--pink);outline-offset:2px}
 
 .step-tabs {
   display: flex;
@@ -439,12 +443,9 @@ button:focus-visible {
   max-width: 100%;
 }
 .step-tabs::-webkit-scrollbar { display: none; }
-.app-layout:not([data-entity="my-dream-game"]) .topbar:has(.step-tabs){align-items:flex-start;gap:10px 20px}
-.app-layout:not([data-entity="my-dream-game"]) .topbar:has(.step-tabs) .breadcrumb{width:100%;min-height:24px}
-.app-layout:not([data-entity="my-dream-game"]) .topbar:has(.step-tabs) .topbar-right{width:100%;margin:0;align-items:flex-start}
 .app-layout:not([data-entity="my-dream-game"]) .step-tabs{flex:1;background:transparent;border:0;gap:5px;padding:0}
 .app-layout:not([data-entity="my-dream-game"]) .step-tab{border:1px solid #ffffff0c;padding:6px 10px;color:#a59dab;border-radius:7px}
-.app-layout:not([data-entity="my-dream-game"]) .step-tab.active{border-color:#f0a0b036;color:#f7bbca;background:#f0a0b012}
+.app-layout:not([data-entity="my-dream-game"]) .step-tab.active{border-color:color-mix(in srgb, var(--pink) 21.18%, transparent);color:#f7bbca;background:color-mix(in srgb, var(--pink) 7.06%, transparent)}
 
 .step-tab {
   padding: 4px 12px;
@@ -487,7 +488,7 @@ button:focus-visible {
 }
 .open-ext:hover {
   color: var(--pink);
-  border-color: rgba(240, 160, 176, 0.4);
+  border-color: color-mix(in srgb, var(--pink) 40%, transparent);
   box-shadow: var(--glow-pink);
 }
 
@@ -498,6 +499,16 @@ button:focus-visible {
   overflow: hidden;
   background: #101115;
 }
+.card-page-view { display:flex; flex-direction:column; min-height:0; }
+.card-page-body { flex:1; min-height:0; position:relative; overflow:hidden; }
+.card-page-nav { flex-shrink:0; padding:16px clamp(20px, 4vw, 56px) 0; background:#101115; }
+.card-page-nav .step-tabs { justify-content:flex-start; }
+.card-page-nav .step-tab { color:var(--text-dim); }
+.card-page-nav .step-tab.active { color:var(--pink-bright); }
+.topbar-right { flex-wrap:wrap; justify-content:flex-end; }
+.topbar-right > .card-actions-wrap { margin-left:4px; flex-shrink:0; }
+.file-context-menu.card-actions-menu button { display:flex; align-items:center; gap:9px; }
+.card-actions-menu svg { flex-shrink:0; }
 
 .report-document { position: relative; height: 100%; min-height: 0; background: #101115; }
 .report-document > .report-loading { position: absolute; inset: 0; background: #101115; }
@@ -601,25 +612,26 @@ button:focus-visible {
     background var(--t-med) var(--ease);
 }
 .mak-card:hover,
-.mak-card:focus-visible {
+.mak-card:focus-within {
   transform: translateY(-2px);
   background:
     linear-gradient(160deg, rgba(28, 28, 35, 0.88), rgba(17, 17, 22, 0.88)) padding-box,
     var(--edge) border-box;
   box-shadow: var(--shadow-2), var(--glow-pink);
 }
-.mak-card:focus-visible {
+.mak-card:focus-within {
   box-shadow: var(--shadow-2), var(--glow-pink), var(--focus-ring);
 }
 
 .mak-card.pinned,
 .mak-card.pinned:hover,
-.mak-card.pinned:focus-visible {
+.mak-card.pinned:focus-within {
   background:
     linear-gradient(160deg, rgba(26, 24, 20, 0.85), rgba(16, 15, 12, 0.85)) padding-box,
     var(--edge-amber) border-box;
 }
 .mak-card.pinned:hover { box-shadow: var(--shadow-2), var(--glow-amber); }
+.mak-card-cover{position:absolute;inset:0;z-index:1;border-radius:inherit}.mak-card-cover:focus-visible{outline:2px solid var(--pink);outline-offset:2px}.mak-card-pin{position:absolute;top:12px;right:12px;z-index:2;border:1px solid var(--hairline);border-radius:var(--radius-pill);background:var(--surface-1);color:var(--amber);padding:3px 7px;font:inherit;font-size:11px;cursor:pointer}.mak-card-pin:hover{border-color:var(--amber)}.card-top .status-dot{margin-right:27px}
 
 .entity-card {
   display: flex;
@@ -698,12 +710,12 @@ button:focus-visible {
   transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease);
 }
 .mak-card:hover .card-open,
-.mak-card:focus-visible .card-open {
+.mak-card:focus-within .card-open {
   opacity: 1;
   transform: none;
 }
 
-/* ─── Mr. Mak logo container ─── */
+/* ─── Mr. Mik logo container ─── */
 .mak-logo { flex-shrink: 0; }
 
 /* ─── Scrollbars ─── */
@@ -784,7 +796,7 @@ button:focus-visible {
   appearance: none;
   text-overflow: ellipsis;
 }
-.c3d-select:hover { border-color: rgba(240, 160, 176, 0.4); }
+.c3d-select:hover { border-color: color-mix(in srgb, var(--pink) 40%, transparent); }
 .c3d-select:focus-visible { outline: 1px solid var(--pink); outline-offset: 1px; }
 /* The open list is drawn by the OS, not by us. It ignores background on
    `option` and inherits the closed control's colour, which gave pale pink on
@@ -1067,3 +1079,4 @@ button:focus-visible {
   background: var(--green-dim);
   color: var(--green);
 }
+.topbar-card-pin{background:transparent;border:1px solid #ffffff28;border-radius:8px;color:#d9b6c9;padding:5px 9px;cursor:pointer;font:inherit;font-size:11px}.topbar-card-pin:hover{border-color:#d79ab7}

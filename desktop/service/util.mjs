@@ -16,7 +16,15 @@ export async function saveJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomBytes(5).toString('hex')}.tmp`;
   await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-  await rename(temp, file);
+  // Windows indexers/readers may briefly hold a replace target. Keep the atomic
+  // replacement and retry transient sharing failures rather than truncate it.
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(temp, file); break; }
+    catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 5) throw error;
+      await sleep(25 * (attempt + 1));
+    }
+  }
 }
 export const within = (root, file) => {
   const rel = path.relative(root, file);

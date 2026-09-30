@@ -41,4 +41,7 @@
       <path d="M-8-7C-4-14 3-15 8-9" stroke="#050608" stroke-width="1.8" stroke-linecap="round" opacity=".42" filter="url(#edge)"/>
     </g>
   </g>
+  <path d="M19 43C19 17 39 3 65 4C88 4 107 20 109 44C87 35 45 35 19 43Z" fill="#555966" stroke="#292b34" stroke-width="2"/>
+  <path d="M64 5C57 15 54 27 54 37M65 5C80 15 88 25 91 39" fill="none" stroke="#727786" stroke-width="1.8" opacity=".65"/>
+  <path d="M16 44C42 32 83 33 115 46C105 54 84 52 63 47C44 44 28 44 16 44Z" fill="#30323c" stroke="#20222b" stroke-width="1.5"/>
 </svg>

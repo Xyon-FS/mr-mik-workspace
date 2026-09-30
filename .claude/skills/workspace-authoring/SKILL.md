@@ -24,6 +24,13 @@ Update `workspace/workspace.json` with a stable ID, category, folder, readable
 title, creation date, last updated date and steps. `sample: true` is reserved for
 starter examples; ordinary work uses normal archiving behavior.
 
+For a chat launched in a linked repository, use the scoped Mr. Mak Workspace
+Bridge instead of writing into the Hub directly. Read `mrmak_chat_context` and
+the project cards first. Add or update HTML pages and copy supporting media
+into the selected card only when the
+user asks for that deliverable. The Bridge can also list other repositories of
+the same Mr. Mak project, but their presence does not authorize edits there.
+
 Open every changed tab at wide and narrow sizes. Check media and links, Markdown
 rendering and image close/download controls. Preserve the dark surface during
 loading. Report actual verification and any remaining limitations. Prepare

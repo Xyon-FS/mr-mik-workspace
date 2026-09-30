@@ -24,7 +24,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     try {
       if (files.length > 12) throw new Error('Attach up to 12 images at a time.')
       const paths: string[] = []
-      for (const file of files) paths.push((await uploadImage(file)).path)
+      for (const file of files) paths.push((await uploadImage(file, id)).path)
       await api(`/sessions/${id}/attach`, { paths })
       onAttachmentStatus(id, `${paths.length === 1 ? 'Image' : `${paths.length} images`} saved in inbox · path inserted`)
       terminalRef.current?.focus()
@@ -159,8 +159,10 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     const observer = new ResizeObserver(resize); observer.observe(host.current)
     subscribe()
     const focus = () => terminal.focus()
+    const focusSelected = (event: Event) => { if ((event as CustomEvent<string>).detail === id) terminal.focus() }
     window.addEventListener('focus', focus)
-    return () => { off(); input.dispose(); observer.disconnect(); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
+    window.addEventListener('mrmak-focus-terminal', focusSelected)
+    return () => { off(); input.dispose(); observer.disconnect(); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); window.removeEventListener('mrmak-focus-terminal', focusSelected); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
   }, [id, agent, onAttachmentStatus])
   useEffect(() => {
     const terminal = terminalRef.current
@@ -171,7 +173,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   useEffect(() => {
     if (terminalRef.current) { terminalRef.current.options.fontSize = fontSize; fitRef.current?.fit(); sendEvent({ type: 'resize', id, cols: terminalRef.current.cols, rows: terminalRef.current.rows }) }
   }, [fontSize, id])
-  return <div ref={area} className={`terminal-area ${appearance === 'focus' ? 'terminal-focus' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'none' }} onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); reportError('Drop original files or folders from Explorer into Mr. Mak Desktop. Paste clipboard images with Ctrl+V.') }}>
+  return <div ref={area} className={`terminal-area ${appearance === 'focus' ? 'terminal-focus' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'none' }} onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); reportError('Drop original files or folders from Explorer into Mr. Mik Desktop. Paste clipboard images with Ctrl+V.') }}>
     <div ref={host} className="terminal-host" aria-label="Interactive agent terminal" />
     {dragging && <div className="terminal-drop"><Icon name="attach" size={30} /><strong>Drop to insert paths</strong><span>Files, folders and images</span></div>}
   </div>

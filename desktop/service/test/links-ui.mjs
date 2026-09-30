@@ -32,7 +32,7 @@ try {
     assert.equal(opened.url(), expected);
     await opened.close();
   }
-  await page.goto(service.urls.workspace + '#/test/0');
+  await page.goto(service.urls.workspace + '#/test/0', { waitUntil: 'domcontentloaded', timeout: 30000 });
   const frame = page.frameLocator('iframe.report-frame');
   await popup(() => frame.getByText('External report link').click(), external);
   await frame.getByRole('heading', { name: 'Link report' }).waitFor();

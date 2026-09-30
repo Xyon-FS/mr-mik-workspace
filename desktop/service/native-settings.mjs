@@ -10,7 +10,7 @@ export class NativeSettings {
     if (pending) { clearTimeout(pending.timer); this.pending.delete(event.requestId); event.error ? pending.reject(new Error(event.error)) : pending.resolve(this.value); }
   }
   set(winKey) {
-    if (typeof winKey !== 'boolean') throw new Error('Choose whether the Win key should show Mr. Mak.');
+    if (typeof winKey !== 'boolean') throw new Error('Choose whether the Win key should show Mr. Mik.');
     if (!this.value.available) throw new Error('The Windows shortcut is not available.');
     if (this.pending.size) throw new Error('A shortcut change is already in progress.');
     const requestId = randomUUID();
@@ -20,5 +20,5 @@ export class NativeSettings {
       this.send({ type: 'native-settings', requestId, winKey });
     });
   }
-  close() { for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Mr. Mak is closing.')); } this.pending.clear(); }
+  close() { for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Mr. Mik is closing.')); } this.pending.clear(); }
 }

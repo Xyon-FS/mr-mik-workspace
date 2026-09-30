@@ -10,6 +10,8 @@ export interface WorkspaceStep {
 }
 
 export interface WorkspaceEntity {
+  projectId?: string | null
+  repositoryId?: string | null
   id: string
   title: string
   description: string
@@ -22,6 +24,8 @@ export interface WorkspaceEntity {
   updated?: string
   folder: string
   steps: WorkspaceStep[]
+  /** Existing project-repository files linked to this card without copying. */
+  artifacts?: { projectId: string; repositoryId?: string; path: string; title: string }[]
   /** Tab to open for a card link without an explicit step; otherwise use latest. */
   defaultStep?: number
   status: 'active' | 'done' | 'archived'

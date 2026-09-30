@@ -2,7 +2,6 @@ import path from 'node:path';
 import { readJson, saveJson, publicError } from './util.mjs';
 import { localDay } from './workspace.mjs';
 import { taskTitle } from './titles.mjs';
-import { defaultWorkerEffort } from './effort.mjs';
 
 const normalize = text => String(text || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const polite = text => String(text || '').trim().replace(/^(?:(?:ну|так|слушай|давай|пожалуйста|please|can you)[,\s]+)+/iu, '').replace(/[,\s]+пожалуйста[.!?]?$/iu, '').replace(/[.!?]+$/, '').trim();
@@ -76,7 +75,7 @@ export class QuickActions {
       if (card || chat) return async () => { await call(card ? 'update_workspace' : 'pin_chat', card ? { entityId: card.id, pinned } : { id: chat.id, pinned }); return `"${card?.title || chat.name}": ${pinned ? 'pinned' : 'unpinned'}.`; };
     }
     match = /^(?:закрой|close)\s+(.+)$/iu.exec(text);
-    if (match) { const { chat } = resolve(match[1]); return chat ? async () => { await call('close_chat', { id: chat.id }); return `Closed "${chat.name}". It is saved in History.`; } : null; }
+    if (match) { const { chat } = resolve(match[1]); return chat ? async () => { const result = await call('close_chat', { id: chat.id }); return `Closed "${chat.name}". ${result.savedInHistory ? 'It is saved in History.' : 'The unused chat was omitted from History.'}`; } : null; }
     match = /^(?:открой|покажи|open|show|switch to|переключись на)\s+(.+)$/iu.exec(text);
     if (match && !/новый|new|создай/iu.test(match[1])) {
       const subject = match[1];
@@ -93,7 +92,7 @@ export class QuickActions {
     if (match) {
       let name; try { name = taskTitle(match[2]); } catch { return null; }
       const agent = /claude|клод/iu.test(match[1] || '') ? 'claude' : /kimi/iu.test(match[1] || '') ? 'kimi' : 'codex';
-      return async () => { const chat = await call('open_chat', { agent, name, effort: defaultWorkerEffort }); return `Created "${chat.name}". The agent is starting.`; };
+      return async () => { const chat = await call('open_chat', { agent, name }); return `Created "${chat.name}". The agent is starting.`; };
     }
     return null;
   }

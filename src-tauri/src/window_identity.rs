@@ -1,4 +1,4 @@
-//! Two Shell identities inside one application; the Tauri data identifier stays unchanged.
+//! Two Shell identities inside Mr. Mik's distinct Tauri application identifier.
 use std::{fs, hash::{Hash, Hasher}, path::{Path, PathBuf}, sync::Mutex};
 use tauri::Manager;
 use windows::{core::{HSTRING, Interface}, Win32::{Foundation::HWND, Storage::EnhancedStorage::*,
@@ -43,7 +43,7 @@ pub fn set_window(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::erro
     window.set_icon(tauri::image::Image::from_bytes(png)?)?;
     let icon = icon_path(app, label)?;
     let command = format!("\"{}\" --show {label}", std::env::current_exe()?.display());
-    let title = if label == "chats" { "Mr. Mak Chats" } else { "Mr. Mak Workspace" };
+    let title = if label == "chats" { "Mr. Mik Chats" } else { "Mr. Mik Workspace" };
     unsafe {
         let hwnd = window.hwnd()?.0;
         let dpi = GetDpiForWindow(hwnd);
@@ -64,10 +64,10 @@ pub fn set_window(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::erro
 
 pub fn refresh_shortcuts(app: &tauri::AppHandle) {
     let mut shortcuts = Vec::new();
-    if let Ok(desktop) = app.path().desktop_dir() { shortcuts.push(desktop.join("Mr. Mak Workspace.lnk")); }
+    if let Ok(desktop) = app.path().desktop_dir() { shortcuts.push(desktop.join("Mr. Mik Workspace.lnk")); }
     if let Some(roaming) = std::env::var_os("APPDATA") {
         let root = PathBuf::from(roaming);
-        shortcuts.push(root.join("Microsoft/Windows/Start Menu/Programs/Mr. Mak Workspace.lnk"));
+        shortcuts.push(root.join("Microsoft/Windows/Start Menu/Programs/Mr. Mik Workspace.lnk"));
         let pinned = root.join("Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar");
         if let Ok(entries) = fs::read_dir(pinned) {
             shortcuts.extend(entries.flatten().map(|entry| entry.path()).filter(|path| path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))));

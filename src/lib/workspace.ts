@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkspaceState } from '../types'
-import { api, isDesktop } from '../desktop/client'
+import { api, isDesktop, onServiceEvent } from '../desktop/client'
 
 const POLL_MS = 30_000
 const ARCHIVE_DAYS = 7
@@ -41,6 +41,7 @@ export function useWorkspace() {
       setWorkspace(w => w ?? { entities: [] })
     }
   }, [])
+  useEffect(() => onServiceEvent(event => { if (['workspace-changed', 'projects-changed'].includes(event.type)) void reload() }), [reload])
 
   useEffect(() => {
     // Initial fetch — every setState inside reload happens after an await,

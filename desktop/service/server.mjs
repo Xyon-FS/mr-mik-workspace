@@ -1,24 +1,45 @@
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readFile, stat, realpath } from 'node:fs/promises';
+import os from 'node:os';
+import { readFile, stat, realpath, mkdir } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { parse as parseEnv } from 'dotenv';
+import { parse as parseToml } from 'smol-toml';
 import { Sessions } from './sessions.mjs';
+import { CodexModelPicker } from './model-picker.mjs';
+import { ClaudeModelPicker, ClaudeEffortPicker } from './claude-model-picker.mjs';
 import { Coordinator } from './coordinator.mjs';
+import { MakActions } from './mak-actions.mjs';
+import { codexTranscript, claudeTranscript } from './native-events.mjs';
 import { Files, serveFile } from './files.mjs';
 import { importFile, dragFiles, moveFile, recyclePath, MAX_FILE_BYTES } from './file-transfers.mjs';
 import { inventory } from './agents.mjs';
 import { Attachments, attachmentText, MAX_IMAGE_BYTES } from './attachments.mjs';
 import { ContextLibrary } from './context.mjs';
-import { taskTitle } from './titles.mjs';
-import { taskEffort } from './effort.mjs';
+import { englishTitle, taskTitle } from './titles.mjs';
+import { defaultWorkerEffort, defaultWorkerEfforts, claudeEfforts, workerDefault, taskEffort } from './effort.mjs';
 import { Workspace, localDay } from './workspace.mjs';
 import { QuickActions } from './quick-actions.mjs';
-import { defaultVoiceStyle, voiceSession } from './voice-profile.mjs';
+import { defaultVoiceStyle } from './voice-profile.mjs';
 import { NativeSettings } from './native-settings.mjs';
 import { McpInventory } from './mcp.mjs';
-import { body, equalSecret, json, publicError, readJson, realFile, saveJson, secret } from './util.mjs';
+import { Projects } from './projects.mjs';
+import { CardRecycler } from './card-removal.mjs';
+import { addExampleWorkspace } from './example-workspace.mjs';
+import { PortableArchive } from './portable-archive.mjs';
+import { WorkspaceSnapshot } from './workspace-snapshot.mjs';
+import { NativeDeletion } from './native-delete.mjs';
+import { WorkspaceBridge } from './workspace-bridge.mjs';
+import { chatOrientation, codexSessionInstructions } from './chat-orientation.mjs';
+import { CodexScopes } from './codex-scopes.mjs';
+import { effectiveCodex } from './codex-effective.mjs';
+import { CodexMcpEditor } from './codex-mcp-editor.mjs';
+import { ClaudeMcpEditor } from './claude-mcp-editor.mjs';
+import { ClaudeSettings } from './claude-settings.mjs';
+import { installedIde, openIde } from './ide.mjs';
+import { body, equalSecret, json, publicError, readJson, realFile, saveJson, secret, within } from './util.mjs';
 
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)); });
 
@@ -30,9 +51,16 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const library = new ContextLibrary(repo);
   const mcp = new McpInventory(repo, mcpOptions);
   const sessions = await new Sessions(repo, stateDir).init();
+  const modelPicker = new CodexModelPicker(sessions);
+  const claudeModelPicker = new ClaudeModelPicker(sessions);
+  const claudeEffortPicker = new ClaudeEffortPicker(sessions);
   const environment = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
   const settingsPath = path.join(stateDir, 'settings.json');
-  let settings = { defaultAgent: 'codex', defaultBypass: false, coordinatorModel: environment.MRMAK_COORDINATOR_MODEL?.trim() || null, terminalFontSize: 13, terminalAppearance: 'focus', coordinatorEffort: 'medium', voiceName: 'cedar', voiceStyle: defaultVoiceStyle, ...await readJson(settingsPath, {}) };
+  let settings = { defaultAgent: 'codex', defaultBypass: false, defaultWorkerEffort, coordinatorModel: environment.MRMAK_COORDINATOR_MODEL?.trim() || null, terminalFontSize: 13, terminalAppearance: 'focus', accentTheme: 'rose', coordinatorEffort: 'medium', voiceName: 'cedar', voiceStyle: defaultVoiceStyle, ...await readJson(settingsPath, {}) };
+  if (!defaultWorkerEfforts.includes(settings.defaultWorkerEffort)) settings.defaultWorkerEffort = defaultWorkerEffort;
+  if (!claudeEfforts.includes(settings.defaultClaudeWorkerEffort)) settings.defaultClaudeWorkerEffort = claudeEfforts.includes(settings.defaultWorkerEffort) ? settings.defaultWorkerEffort : 'high';
+  if (!defaultWorkerEfforts.includes(settings.coordinatorEffort)) settings.coordinatorEffort = 'medium';
+  if (!['rose', 'violet', 'blue', 'teal'].includes(settings.accentTheme)) settings.accentTheme = 'rose';
   let selectedId = sessions.active().some(item => item.id === settings.selectedId) ? settings.selectedId : sessions.active()[0]?.id || null;
   let workspaceRoute = settings.workspaceRoute || null;
   let settingsTimer;
@@ -53,11 +81,95 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const focus = id => { sessions.get(id); selectedId = id; settings.selectedId = id; scheduleSettings(); show('chats', { sessionId: id }); return { selectedId: id }; };
   const registry = async () => readJson(path.join(repo, 'workspace', 'workspace.json'), { entities: [] });
   const workspace = new Workspace(repo, () => broadcast('workspace-changed', {}));
-  const history = query => sessions.list().filter(item => !query || `${item.name} ${item.agent} ${item.cwd} ${item.preview || ''}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const projects = new Projects(repo, stateDir, () => { broadcast('projects-changed', {}); broadcast('workspace-changed', {}); });
+  const cardRecycler = new CardRecycler(native);
+  projects.recycleCardFolder = file => cardRecycler.recycle(file);
+  const portable = new PortableArchive(repo, stateDir, sessions, projects);
+  const snapshots = new WorkspaceSnapshot(repo, stateDir, projects);
+  const nativeDeletion = new NativeDeletion(sessions, stateDir);
+  const codexScopes = new CodexScopes(projects, mcpOptions);
+  const codexMcpEditor = new CodexMcpEditor(projects, mcpOptions);
+  const claudeMcpEditor = new ClaudeMcpEditor(projects, stateDir, mcpOptions);
+  const claudeSettings = new ClaudeSettings(projects, mcpOptions);
+  const projectMcps = new Map();
+  const projectMcp = async (id, repositoryId) => {
+    if (!id) return mcp;
+    if (!(await projects.get(id)).repositories.length) return mcp;
+    const root = await projects.root(id, repositoryId);
+    const key = `${id}:${repositoryId || 'primary'}`;
+    const previous = projectMcps.get(key);
+    if (previous?.repo === root) return previous;
+    previous?.close(); const next = new McpInventory(root, mcpOptions); projectMcps.set(key, next); return next;
+  };
+  const bridge = new WorkspaceBridge(projects, workspace, registry, { codexScopes, codexMcpEditor, claudeMcpEditor, claudeSettings, mcpInventory: async (id, repositoryId) => (await projectMcp(id, repositoryId)).list() });
+  const legacyProjectChatFolder = id => path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'MrMak', 'project-chats', id);
+  const projectChatFolder = id => path.join(repo, 'workspace', 'planning', id);
+  let cardMutation = false;
+  const changeCards = async action => {
+    if (cardMutation || coordinator.operationPromises.size) throw Object.assign(new Error('Wait for the current change or stop Mik before removing cards or registrations.'), { status: 409 });
+    cardMutation = true;
+    try { return await action(); } finally { cardMutation = false; }
+  };
+  const detachChats = async (matches, patch) => {
+    for (const session of sessions.items.values()) if (matches(session)) { bridge.revoke(session.id); Object.assign(session, patch); sessions.changed(session); }
+    await sessions.persist();
+  };
+  const sessionOptions = async options => {
+    if (cardMutation) throw new Error('Wait for the card or workspace change before opening a chat.');
+    if (!options.projectId) {
+      const card = options.cardId ? (await registry()).entities.find(item => item.id === options.cardId && !item.projectId) : null;
+      if (options.cardId && !card) throw new Error('Card is not associated with the global Hub.');
+      return { ...options, repositoryId: null, cardId: card?.id || null, ...(card ? { cwd: repo } : {}) };
+    }
+    const project = await projects.get(options.projectId);
+    const card = options.cardId ? (await registry()).entities.find(item => item.id === options.cardId && item.projectId === project.id) : null;
+    if (options.cardId && !card) throw new Error('Card is not associated with this project.');
+    const preferred = project.repositories.find(item => item.id === card?.repositoryId);
+    const repositoryId = options.repositoryId === 'hub' ? null : options.repositoryId || (card?.repositoryId ? preferred?.available ? preferred.id : null : project.repositories.find(item => item.available)?.id || null);
+    if (repositoryId && !project.repositories.some(item => item.id === repositoryId)) throw new Error('Repository is not associated with this project.');
+    const cwd = repositoryId ? await projects.root(project.id, repositoryId) : projectChatFolder(project.id);
+    if (!repositoryId) await mkdir(cwd, { recursive: true });
+    return { ...options, repositoryId, cardId: card?.id || null, cwd };
+  };
+  sessions.prepareLaunch = async session => {
+    if (cardMutation) throw new Error('Wait for the card or workspace change before opening or resuming a chat.');
+    const launch = async (project, card, linked) => {
+      const folderName = linked?.repositoryPath && path.basename(linked.repositoryPath);
+      const workingProjectName = linked ? !folderName || linked.name.toLowerCase() === folderName.toLowerCase() ? linked.name : `${linked.name} (${folderName})` : null;
+      const orientation = chatOrientation({ workspaceName: project?.name, cardName: card?.title, workingProjectName });
+      const instructions = session.agent === 'codex' ? await codexSessionInstructions(orientation, codexScopes.codexHome(), session.cwd) : null;
+      // Hub skills are consulted through the scoped Bridge. When Claude starts
+      // under this Hub, suppress native discovery so Hub Off cannot be bypassed.
+      const settings = session.agent === 'claude' && !linked ? { skillOverrides: Object.fromEntries((await projects.hubSkills(project?.id || null, 'claude')).map(skill => [skill.name, 'off'])) } : null;
+      return { script: fileURLToPath(new URL('./bridge-mcp.mjs', import.meta.url)), url: `${origin}/bridge`, token: bridge.issue(session.id, project?.id || null, card?.id || null, linked?.id || null, session.agent), orientation, instructions, settings };
+    };
+    if (!session.projectId) {
+      if (!['codex', 'claude'].includes(session.agent)) return null;
+      if ((await realpath(session.cwd)).toLowerCase() !== repo.toLowerCase()) return null;
+      const card = session.cardId ? (await registry()).entities.find(item => item.id === session.cardId && !item.projectId) : null;
+      return launch(null, card, null);
+    }
+    const root = session.repositoryId === null ? projectChatFolder(session.projectId) : await projects.root(session.projectId, session.repositoryId);
+    if (session.repositoryId === null) await mkdir(root, { recursive: true });
+    const actual = (await realpath(session.cwd)).toLowerCase();
+    const legacy = session.repositoryId === null ? await realpath(legacyProjectChatFolder(session.projectId)).catch(() => null) : null;
+    if (root.toLowerCase() !== actual && legacy?.toLowerCase() !== actual) throw new Error('Project location changed. Open a new chat; the existing conversation keeps its original folder.');
+    if (!['codex', 'claude'].includes(session.agent)) return null;
+    const project = await projects.get(session.projectId);
+    const card = session.cardId ? (await registry()).entities.find(item => item.id === session.cardId && item.projectId === project.id) : null;
+    const linked = project.repositories.find(item => item.id === session.repositoryId);
+    return launch(project, card, linked);
+  };
+  sessions.revokeBridge = id => bridge.revoke(id);
+  const history = query => sessions.list().filter(item => (!item.open || item.hasConversation || item.pinned || (item.agent === 'shell' && item.lastInputAt)) && (!query || `${item.name} ${item.agent} ${item.cwd} ${item.preview || ''}`.toLowerCase().includes(query.toLowerCase()))).sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
   const closeChat = async id => {
-    await sessions.remove(id);
+    const session = await sessions.remove(id);
+    // Opening a terminal is not a conversation. Keep native CLI data untouched,
+    // but discard an unused Mr. Mik tab instead of adding it to History.
+    const savedInHistory = !!(session.hasConversation || session.pinned || (session.agent === 'shell' && session.lastInputAt));
+    if (!savedInHistory) await sessions.forget(id);
     if (selectedId === id) { selectedId = sessions.active()[0]?.id || null; settings.selectedId = selectedId; scheduleSettings(); broadcast('selection', { selectedId }); }
-    return { closed: true, savedInHistory: true };
+    return { closed: true, savedInHistory };
   };
   const attach = async (id, paths, coordinator = false) => {
     const session = sessions.get(id);
@@ -66,9 +178,18 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     return { attached: verified, submitted: false };
   };
   const coordinator = await new Coordinator({
-    repo, stateDir, orientation: () => library.orientation(), settings: () => settings,
-    context: () => ({ repo, localDate: localDay(), selectedId, workspaceRoute, chats: sessions.active(), recentNotices: notices.slice(-5), recentRequests: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-6).map(({ text, result, status }) => ({ text, result, status })) }),
-    execute: async (name, args, operationId, requestText) => {
+    threadConfig: async () => {
+      const global = await codexScopes.list(null);
+      let hub;
+      try { hub = parseToml(await readFile(path.join(repo, '.codex', 'config.toml'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; })); }
+      catch { throw new Error('Hub Codex configuration is malformed or unreadable; Mak was not started.'); }
+      const components = [...global.rows.filter(item => ['mcp', 'plugin'].includes(item.kind)), ...Object.keys(hub.mcp_servers || {}).map(id => ({ kind: 'mcp', id })), ...Object.keys(hub.plugins || {}).map(id => ({ kind: 'plugin', id }))];
+      return { 'features.apps': false, web_search: 'disabled', mcp_servers: Object.fromEntries(components.filter(item => item.kind === 'mcp').map(item => [item.id, { enabled: false }])), plugins: Object.fromEntries(components.filter(item => item.kind === 'plugin').map(item => [item.id, { enabled: false }])) };
+    },
+    repo, stateDir, orientation: async () => 'Mr. Mik has a Global Hub and logical workspaces. Each workspace contains linked projects and cards. Cards, Knowledge, Processes and Inbox belong to the Hub, never the linked folders. Context is global; technical project rules stay in linked AGENTS.md. Use hub_catalog and hub_action_schema to discover Hub operations, then hub_action to invoke the scoped Bridge. Use visible Codex/Claude worker chats for actual project execution. Discover relevant skills and procedures, then read only what is needed. A request scope is immutable: UI navigation must not change its targets. Global/configuration changes and worker messages require a real UI confirmation, not a model-generated confirmed flag. Do not retry rejected actions. Configuration is not proof of a live MCP connection. Voice is disabled. Never install tools, approve agent permissions or delete native conversations through the coordinator.', settings: () => settings,
+    context: scope => scope ? makActions.context(scope) : ({ repo, activeProjectId: settings.selectedProjectId || null, localDate: localDay(), selectedId, workspaceRoute, chats: sessions.active(), recentNotices: notices.slice(-5), recentRequests: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-6).map(({ text, result, status }) => ({ text, result, status })) }),
+    execute: async (name, args, operationId, requestText, scope) => {
+      if (scope) return makActions.execute(name, args, operationId, scope);
       const latestRequest = requestText || coordinator.operations.get(operationId)?.text || '';
       switch (name) {
         case 'list_chats': return sessions.active();
@@ -76,7 +197,8 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         case 'reopen_chat': { const session = await sessions.resume(args.id); focus(session.id); return session; }
         case 'close_chat': return closeChat(args.id);
         case 'pin_chat': return sessions.pin(args.id, args.pinned);
-        case 'open_chat': { const session = await sessions.create({ ...args, name: taskTitle(args.name), effort: taskEffort(latestRequest, args.effort), bypass: args.bypass ?? settings.defaultBypass }); focus(session.id); return session; }
+        case 'list_projects': return projects.list();
+        case 'open_chat': { const session = await sessions.create(await sessionOptions({ ...args, name: taskTitle(args.name), effort: args.effort ? taskEffort(latestRequest, args.effort) : workerDefault(settings, args.agent), bypass: args.bypass ?? settings.defaultBypass })); focus(session.id); return session; }
         case 'read_chat': return sessions.read(args.id);
         case 'send_to_chat': return sessions.input(args.id, args.text, { coordinator: true, submit: true });
         case 'attach_files': return attach(args.id, args.paths, true);
@@ -95,30 +217,46 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         }
         case 'preview_file': { const preview = await files.preview(args.path); show('workspace', { preview }); return { shown: preview.path }; }
         case 'list_files': return files.list(args.path || repo, 'all', args.query || '');
-        case 'search_context': return library.search(args.query);
+        case 'search_context': {
+          const projectId = settings.selectedProjectId || '';
+          return { context: await library.search(args.query, ['context']), knowledge: await projects.searchResources('knowledge', projectId, args.query), processes: await projects.searchResources('process', projectId, args.query) };
+        }
         case 'read_context': return library.read(args.path, args.offset);
         case 'list_skills': return library.skills(args.query || '');
         case 'list_mcp': return mcp.list();
-        case 'get_app_settings': return { voice: settings.voiceName, style: settings.voiceStyle, model: coordinator.model || 'Codex default', effort: settings.coordinatorEffort, billing: 'Codex subscription for the coordinator; OpenAI API for voice' };
-        case 'update_voice': {
-          if (typeof args.style === 'string' && args.style.trim()) settings.voiceStyle = args.style.trim().slice(0, 1800);
-          if (['cedar', 'marin'].includes(args.voice)) settings.voiceName = args.voice;
-          await saveSettings(); broadcast('settings', { settings });
-          return { saved: true, voice: settings.voiceName, style: settings.voiceStyle, applies: 'Next voice connection. Reconnect to apply the saved voice and personality.' };
-        }
+        case 'get_app_settings': return { voice: 'disabled', model: coordinator.model || 'Codex default', effort: settings.coordinatorEffort, billing: 'Codex subscription for the coordinator' };
         default: throw new Error('Unknown coordinator tool');
       }
     },
   }).init();
+  const makActions = new MakActions({ repo, projects, sessions, workspace, registry, bridge, files, library, history, attach, closeChat, focus, show, coordinator: () => coordinator, settings: () => settings,
+    createChat: async (options, request) => sessions.create(await sessionOptions({ ...options, name: taskTitle(options.name), effort: options.effort ? taskEffort(request, options.effort) : workerDefault(settings, options.agent), bypass: settings.defaultBypass })),
+    navigate: async ({ projectId, cardId, section, step }) => {
+      settings.selectedProjectId = projectId;
+      workspaceRoute = cardId ? `#/${encodeURIComponent(cardId)}${Number.isInteger(step) ? '/' + step : ''}` : '';
+      settings.workspaceRoute = workspaceRoute; await saveSettings(); broadcast('settings', { settings });
+      show('workspace', { route: workspaceRoute, section }); return { shown: true, projectId, cardId, section };
+    },
+  });
   const quick = await new QuickActions({ stateDir, workspace, context: () => ({ chats: sessions.active(), route: workspaceRoute }), execute: (...args) => coordinator.execute(...args), completed: operation => broadcast('coordinator-result', { operation }) }).init();
   const askMak = async data => {
+    if (cardMutation) throw new Error('Wait for the card or workspace change before asking Mik.');
+    if (Object.hasOwn(data, 'scope')) {
+      if (typeof data.id !== 'string' || !/^[\w-]{1,128}$/.test(data.id)) throw new Error('Invalid Mak request ID.');
+      const scope = await makActions.scope(data.scope);
+      const existing = coordinator.operations.get(data.id);
+      if (existing?.scope && JSON.stringify(existing.scope) !== JSON.stringify(scope)) throw new Error('Request ID belongs to another scope.');
+      return coordinator.ask({ id: data.id, text: data.text, scope, conversationId: data.conversationId });
+    }
     if (coordinator.operationPromises.has(data.id) || coordinator.operations.has(data.id)) return coordinator.ask(data);
     return await quick.ask(data) || coordinator.ask(data);
   };
   coordinator.on('state', state => broadcast('coordinator-state', { state }));
   coordinator.on('result', operation => broadcast('coordinator-result', { operation }));
+  coordinator.on('confirmation', confirmation => broadcast('coordinator-confirmation', { confirmation }));
   coordinator.on('error-detail', error => broadcast('service-error', { error }));
   sessions.on('session', session => broadcast('session', { session }));
+  sessions.on('removed', ({ id }) => broadcast('removed', { id }));
   sessions.on('screen-cleared', ({ id }) => broadcast('screen-cleared', { id }));
   sessions.on('service-error', error => broadcast('service-error', { error: publicError(error) }));
   sessions.on('output', output => {
@@ -141,16 +279,23 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   function authorize(request) {
     if (request.headers.host !== new URL(origin).host) throw Object.assign(new Error('Unexpected host'), { status: 403 });
     if (request.headers.origin && request.headers.origin !== origin) throw Object.assign(new Error('Unexpected origin'), { status: 403 });
-    if (!equalSecret(request.headers.authorization, `Bearer ${token}`)) throw Object.assign(new Error('Open Mr. Mak from its desktop launcher'), { status: 401 });
+    if (!equalSecret(request.headers.authorization, `Bearer ${token}`)) throw Object.assign(new Error('Open Mr. Mik from its desktop launcher'), { status: 401 });
   }
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, origin);
       if (request.headers.host !== new URL(origin).host) throw Object.assign(new Error('Unexpected host'), { status: 403 });
-      if (url.pathname === '/health') return json(response, 200, { service: 'mrmak', version: '0.1.2' });
+      if (url.pathname === '/bridge') {
+        if (request.method !== 'POST' || request.headers.origin) throw Object.assign(new Error('Not allowed'), { status: 403 });
+        const data = await body(request, 3 * 1024 * 1024);
+        return json(response, 200, await bridge.call(String(request.headers.authorization || '').replace(/^Bearer /, ''), data.name, data.args));
+      }
+      if (url.pathname === '/health') return json(response, 200, { service: 'mrmik', version: '0.2.7' });
       if (url.pathname.startsWith('/api/')) {
         authorize(request);
         const method = request.method;
+        // Keep legacy transcripts, but never create a new paid voice session.
+        if (method === 'POST' && url.pathname === '/api/live/session') return json(response, 410, { error: 'Voice is temporarily unavailable in Mr. Mik.' });
         if (method === 'POST' && url.pathname === '/api/files/import') {
           if (Number(request.headers['content-length']) > MAX_FILE_BYTES) throw Object.assign(new Error('Choose files of 1 GB or less.'), { status: 413 });
           const result = await importFile(request, url.searchParams.get('folder'), url.searchParams.get('name'));
@@ -158,26 +303,158 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 201, result);
         }
         if (method === 'POST' && url.pathname === '/api/attachments') {
+          const sessionId = request.headers['x-session-id'];
+          // The chat's explicit project wins. An unassigned chat follows the
+          // workspace currently selected by the user when the image is pasted.
+          const projectId = (sessionId ? sessions.get(sessionId).projectId : null) || settings.selectedProjectId || null;
+          if (projectId) await projects.get(projectId);
           const chunks = []; let length = 0;
           for await (const chunk of request) { length += chunk.length; if (length > MAX_IMAGE_BYTES) throw Object.assign(new Error('Choose an image smaller than 25 MB.'), { status: 413 }); chunks.push(chunk); }
-          return json(response, 201, await attachments.save(Buffer.concat(chunks), decodeURIComponent(request.headers['x-file-name'] || 'Screenshot')));
+          const saved = await attachments.save(Buffer.concat(chunks), decodeURIComponent(request.headers['x-file-name'] || 'Screenshot'));
+          if (projectId) await projects.assignResource({ kind: 'inbox', path: path.relative(repo, saved.path).replaceAll('\\', '/'), projectId });
+          broadcast('workspace-changed', {});
+          return json(response, 201, saved);
         }
-        const data = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? await body(request, url.pathname === '/api/files/markdown' ? 12 * 1024 * 1024 : 256 * 1024) : {};
+        const data = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? await body(request, url.pathname === '/api/files/markdown' ? 12 * 1024 * 1024 : url.pathname === '/api/cards/page' ? 3 * 1024 * 1024 : 256 * 1024) : {};
+        if (cardMutation && url.pathname.startsWith('/api/workspace/')) throw Object.assign(new Error('Wait for the card or workspace change before transferring data.'), { status: 409 });
         if (method === 'GET' && url.pathname === '/api/bootstrap') {
-          const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
-          return json(response, 200, { repo, contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, voice: { configured: !!(keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY), owner: voiceOwner }, voiceHistory, operations: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-30) });
+          return json(response, 200, { repo, projects: await projects.list(), contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, voice: { configured: false, owner: voiceOwner }, voiceHistory, operations: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-30) });
+        }
+        if (method === 'GET' && url.pathname === '/api/projects') return json(response, 200, await projects.list());
+        if (method === 'POST' && url.pathname === '/api/workspace/export') { if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before exporting.'); await coordinator.saves; return json(response, 201, await projects.serialize(() => portable.exportTo(data.folder, { chats: data.chats }))); }
+        if (method === 'POST' && url.pathname === '/api/workspace/import/preview') return json(response, 200, await portable.preview(data.path));
+        if (method === 'POST' && url.pathname === '/api/workspace/snapshot/export') return json(response, 201, await projects.serialize(() => snapshots.exportTo(data.folder, data.projectId)));
+        if (method === 'POST' && url.pathname === '/api/workspace/snapshot/preview') return json(response, 200, await snapshots.preview(data.folder));
+        if (method === 'POST' && url.pathname === '/api/workspace/snapshot/update/preview') return json(response, 200, await snapshots.updatePreview(data.folder, data.projectId));
+        if (method === 'POST' && ['/api/workspace/snapshot/import', '/api/workspace/snapshot/update'].includes(url.pathname)) {
+          if (coordinator.operationPromises.size || sessions.active().length) throw new Error('Close worker chats and wait for Mik before updating or importing a workspace snapshot.');
+          const imported = url.pathname.endsWith('/import') ? await snapshots.importFrom(data.folder, data) : await snapshots.update(data.folder, data.projectId);
+          broadcast('workspace-changed', {}); broadcast('projects-changed', {});
+          return json(response, 200, imported);
+        }
+        if (method === 'POST' && url.pathname === '/api/workspace/import') {
+          if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before importing.');
+          await coordinator.saves; await coordinator.disconnect();
+          const imported = await projects.serialize(() => portable.importFrom(data.path, { relinks: data.relinks, replaceNative: data.replaceNative, replaceHub: data.replaceHub, restoreSettings: data.restoreSettings === true }));
+          if (imported.restoredSettings) {
+            const restored = { ...imported.restoredSettings };
+            if (restored.defaultAgent && !inventory().some(agent => agent.id === restored.defaultAgent && agent.available)) delete restored.defaultAgent;
+            Object.assign(settings, restored); await saveSettings(); broadcast('settings', { settings });
+          }
+          broadcast('workspace-changed', {}); broadcast('projects-changed', {});
+          await coordinator.init(); coordinator.threads.clear(); coordinator.usedThreads.clear();
+          return json(response, 200, imported);
+        }
+        if (method === 'GET' && url.pathname === '/api/hub/skills') return json(response, 200, await projects.hubSkills(url.searchParams.get('projectId') || null, url.searchParams.get('agent') || 'codex'));
+        if (method === 'POST' && url.pathname === '/api/hub/skills/scope') return json(response, 200, await projects.setHubSkillScope(data));
+        if (method === 'POST' && url.pathname === '/api/skills/create') return json(response, 201, await projects.createSkill(data));
+        if (method === 'POST' && url.pathname === '/api/chats/quick') {
+          const project = data.projectId ? await projects.get(data.projectId) : null;
+          const card = data.cardId ? (await registry()).entities.find(item => item.id === data.cardId && (item.projectId || null) === (project?.id || null)) : null;
+          if (data.cardId && !card) throw new Error('Card is not associated with this workspace.');
+          const linked = card?.repositoryId ? project?.repositories.find(item => item.id === card.repositoryId) : null;
+          if (card?.repositoryId && !linked?.available) throw new Error('The card’s linked project folder is unavailable. Choose a working project in New chat.');
+          let name = 'Workspace planning';
+          if (card) { try { name = englishTitle(card.title, 'Card chat'); } catch { name = 'Card chat'; } }
+          const agent = data.agent || 'codex';
+          if (!['codex', 'claude'].includes(agent)) throw new Error('Choose Codex or Claude for a quick chat.');
+          const session = await sessions.create(await sessionOptions({ agent, name, projectId: project?.id || null, cardId: card?.id || null, repositoryId: linked?.id || 'hub', cwd: project ? undefined : repo, effort: workerDefault(settings, agent), bypass: settings.defaultBypass }));
+          focus(session.id);
+          return json(response, 201, session);
+        }
+        if (method === 'POST' && url.pathname === '/api/chats/compose') {
+          if (data.projectId) await projects.get(data.projectId);
+          if (data.cardId && !(await registry()).entities.some(item => item.id === data.cardId && item.projectId === data.projectId)) throw new Error('Card is not associated with this project.');
+          show('chats', { compose: { projectId: data.projectId || null, cardId: data.cardId || null } });
+          return json(response, 200, { opened: true });
+        }
+        if (method === 'GET' && url.pathname === '/api/codex/scopes') return json(response, 200, await codexScopes.list(url.searchParams.get('projectId'), url.searchParams.get('repositoryId')));
+        if (method === 'GET' && url.pathname === '/api/codex/effective') return json(response, 200, await effectiveCodex(await projects.root(url.searchParams.get('projectId'), url.searchParams.get('repositoryId')), { ...process.env, ...(mcpOptions?.env || {}) }));
+        if (method === 'POST' && url.pathname === '/api/codex/scopes') return json(response, 200, await codexScopes.set(data.projectId, data));
+        if (method === 'GET' && url.pathname === '/api/codex/mcp-managed') return json(response, 200, await codexMcpEditor.list(url.searchParams.get('scope'), url.searchParams.get('projectId'), url.searchParams.get('repositoryId')));
+        if (method === 'POST' && url.pathname === '/api/codex/mcp-managed') return json(response, 200, await codexMcpEditor.change(data));
+        if (method === 'GET' && url.pathname === '/api/claude/mcp-managed') return json(response, 200, await claudeMcpEditor.list(url.searchParams.get('projectId'), url.searchParams.get('repositoryId'), url.searchParams.get('scope') || 'local'));
+        if (method === 'POST' && url.pathname === '/api/claude/mcp-managed') return json(response, 200, await claudeMcpEditor.change(data));
+        if (method === 'GET' && url.pathname === '/api/claude/scopes') return json(response, 200, await claudeSettings.list(url.searchParams.get('projectId'), url.searchParams.get('repositoryId')));
+        if (method === 'POST' && url.pathname === '/api/claude/scopes') return json(response, 200, await claudeSettings.set(data.projectId, data));
+        if (method === 'POST' && url.pathname === '/api/projects') return json(response, 201, await projects.save(data));
+        if (method === 'POST' && url.pathname === '/api/projects/example') return json(response, 201, await addExampleWorkspace(projects));
+        if (method === 'POST' && url.pathname === '/api/projects/repositories') return json(response, 201, await projects.saveRepository(data));
+        if (method === 'POST' && url.pathname === '/api/projects/repositories/remove') {
+          if (sessions.list().some(item => item.open && item.projectId === data.projectId && item.repositoryId === data.repositoryId)) throw Object.assign(new Error('Close chats working in this linked project before removing its registration.'), { status: 409 });
+          return json(response, 200, await changeCards(async () => {
+            if (data.cardAction === 'delete') {
+              const affected = (await registry()).entities.filter(card => card.projectId === data.projectId && card.repositoryId === data.repositoryId).map(card => card.id);
+              if (sessions.list().some(item => item.open && affected.includes(item.cardId))) throw Object.assign(new Error('Close chats associated with these cards before deleting them.'), { status: 409 });
+            }
+            const result = await projects.removeRepository(data);
+            await detachChats(item => item.projectId === data.projectId && item.repositoryId === data.repositoryId, { repositoryId: null });
+            if (data.cardAction === 'delete') await detachChats(item => result.cardIds.includes(item.cardId), { cardId: null });
+            return result;
+          }));
+        }
+        if (method === 'GET' && url.pathname === '/api/projects/ide') return json(response, 200, { ide: installedIde()?.name || null });
+        if (method === 'POST' && url.pathname === '/api/projects/open-ide') return json(response, 200, await openIde(await projects.root(data.projectId)));
+        const projectRoute = /^\/api\/projects\/([\w-]+)$/.exec(url.pathname);
+        if (projectRoute && method === 'GET') return json(response, 200, await projects.inspect(projectRoute[1]));
+        if (projectRoute && method === 'DELETE') {
+          if (sessions.list().some(item => item.open && item.projectId === projectRoute[1])) throw Object.assign(new Error('Close this workspace’s chats before removing its registration.'), { status: 409 });
+          return json(response, 200, await changeCards(async () => {
+            const result = await projects.remove(projectRoute[1], data);
+            await detachChats(item => item.projectId === projectRoute[1], { projectId: null, repositoryId: null, ...(data.cardAction === 'delete' ? { cardId: null } : {}) });
+            if (settings.selectedProjectId === projectRoute[1]) { settings.selectedProjectId = null; scheduleSettings(); broadcast('settings', { settings }); }
+            return result;
+          }));
+        }
+        if (method === 'POST' && url.pathname === '/api/cards/delete') {
+          if (data.confirm !== true) throw new Error('Confirm deletion of this card.');
+          if (sessions.list().some(item => item.open && item.cardId === data.id)) throw Object.assign(new Error('Close this card’s chats before deleting it.'), { status: 409 });
+          return json(response, 200, await changeCards(async () => {
+            const result = await projects.removeCard(data.id);
+            await detachChats(item => item.cardId === data.id, { cardId: null }); return result;
+          }));
+        }
+        if (method === 'POST' && url.pathname === '/api/cards/status') return json(response, 200, await projects.serialize(() => workspace.update(data.id, { status: data.status, ...(data.status === 'archived' ? { pinned: false } : {}) })));
+        if (method === 'POST' && url.pathname === '/api/cards/assign') return json(response, 200, await projects.assignCard(data.id, data.projectId));
+        if (method === 'POST' && url.pathname === '/api/cards/repository') return json(response, 200, await projects.assignCardRepository(data.id, data.repositoryId));
+        if (method === 'POST' && url.pathname === '/api/cards') return json(response, 201, await projects.createCard(data));
+        if (method === 'POST' && url.pathname === '/api/cards/note') return json(response, 201, await projects.addCardNote(data));
+        if (method === 'POST' && url.pathname === '/api/cards/page') return json(response, 201, await projects.addCardPage(data));
+        if (method === 'PUT' && url.pathname === '/api/cards/page') return json(response, 200, await projects.updateCardPage(data));
+        if (method === 'POST' && url.pathname === '/api/cards/asset') return json(response, 201, await projects.importCardAsset(data));
+        if (method === 'POST' && url.pathname === '/api/cards/artifact') return json(response, 201, await projects.linkArtifact(data));
+        if (method === 'GET' && url.pathname === '/api/cards/artifact/preview') return json(response, 200, await files.preview(await projects.artifactLocation(url.searchParams.get('projectId'), url.searchParams.get('id'), url.searchParams.get('path'), url.searchParams.get('repositoryId'))));
+        if (method === 'GET' && url.pathname === '/api/resources') return json(response, 200, await projects.resources(url.searchParams.get('kind'), url.searchParams.get('projectId') || '', url.searchParams.get('scope') || 'all'));
+        if (method === 'GET' && url.pathname === '/api/resources/location') {
+          const item = (await projects.resources(url.searchParams.get('kind'), '', 'all')).find(resource => resource.id === url.searchParams.get('id'));
+          if (!item) throw new Error('Resource was not found.');
+          return json(response, 200, { path: await projects.resourceLocation(item) });
+        }
+        if (method === 'POST' && url.pathname === '/api/resources/assign') return json(response, 200, await projects.assignResource(data));
+        if (method === 'POST' && url.pathname === '/api/resources/unlink') return json(response, 200, await projects.unlinkResource(data.kind, data.id));
+        if (method === 'POST' && url.pathname === '/api/resources/recycled') return json(response, 200, await projects.cleanupRecycledResource(data.path));
+        if (method === 'POST' && url.pathname === '/api/resources/link') return json(response, 201, await projects.linkDocument(data));
+        if (method === 'POST' && url.pathname === '/api/resources/import') return json(response, 201, await projects.importResource(data));
+        if (method === 'GET' && url.pathname === '/api/resources/preview') {
+          const resource = (await projects.resources(url.searchParams.get('kind'), '', 'all')).find(item => item.id === url.searchParams.get('id'));
+          if (!resource) throw new Error('Resource was not found.');
+          return json(response, 200, await files.preview(await projects.resourceLocation(resource)));
         }
         if (method === 'GET' && url.pathname === '/api/workspace') return json(response, 200, await registry());
+        if (method === 'POST' && url.pathname === '/api/cards/pin') {
+          if (typeof data.pinned !== 'boolean') throw new Error('Choose a pin state.');
+          return json(response, 200, await projects.serialize(() => workspace.update(data.id, { pinned: data.pinned })));
+        }
         if (method === 'GET' && url.pathname === '/api/native/settings') return json(response, 200, nativeSettings.value);
-        if (method === 'GET' && url.pathname === '/api/mcp') return json(response, 200, await mcp.list());
-        if (method === 'POST' && url.pathname === '/api/mcp/check') return json(response, 200, await mcp.check(data.id));
+        if (method === 'GET' && url.pathname === '/api/mcp') return json(response, 200, await (await projectMcp(url.searchParams.get('projectId'), url.searchParams.get('repositoryId'))).list());
+        if (method === 'POST' && url.pathname === '/api/mcp/check') return json(response, 200, await (await projectMcp(data.projectId, data.repositoryId)).check(data.id));
         if (method === 'POST' && url.pathname === '/api/native/settings') return json(response, 200, await nativeSettings.set(data.winKey));
         if (method === 'GET' && url.pathname === '/api/history') return json(response, 200, history(url.searchParams.get('q') || ''));
-        if (method === 'POST' && url.pathname === '/api/history/import') return json(response, 201, await sessions.importConversation(data));
+        if (method === 'POST' && url.pathname === '/api/history/import') return json(response, 201, await sessions.importConversation(await sessionOptions(data)));
         if (method === 'GET' && url.pathname === '/api/files') return json(response, 200, await files.list(url.searchParams.get('path') || repo, url.searchParams.get('mode') || 'main', url.searchParams.get('q') || ''));
         if (method === 'POST' && url.pathname === '/api/files/pick') {
           if (typeof data.requestId !== 'string' || !/^[a-f\d-]{36}$/i.test(data.requestId)) throw new Error('Invalid file picker request.');
-          native({ type: 'pick-files', window: 'chats', requestId: data.requestId });
+          native({ type: 'pick-files', window: data.window === 'workspace' ? 'workspace' : 'chats', requestId: data.requestId, ...(data.folder === true ? { folder: true } : {}) });
           return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/files/drag') {
@@ -192,6 +469,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         }
         if (method === 'POST' && url.pathname === '/api/files/recycle') {
           const file = await recyclePath(data.path, repo);
+          if ((await projects.list()).some(project => project.repositoryPath && within(file, project.repositoryPath))) throw new Error('Registered project roots and their parent folders cannot be deleted here.');
           native({ type: 'recycle-file', path: file });
           return json(response, 200, { requested: true, path: file });
         }
@@ -201,28 +479,73 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 200, preview);
         }
         if (method === 'POST' && url.pathname === '/api/settings') {
+          if (data.defaultWorkerEffort !== undefined && !defaultWorkerEfforts.includes(data.defaultWorkerEffort) || data.defaultClaudeWorkerEffort !== undefined && !claudeEfforts.includes(data.defaultClaudeWorkerEffort) || data.coordinatorEffort !== undefined && !defaultWorkerEfforts.includes(data.coordinatorEffort)) throw new Error('Invalid reasoning level.');
+          if (data.selectedProjectId !== undefined) { if (data.selectedProjectId) await projects.get(data.selectedProjectId); settings.selectedProjectId = data.selectedProjectId || null; }
           if (inventory().some(item => item.id === data.defaultAgent)) settings.defaultAgent = data.defaultAgent;
           if (typeof data.defaultBypass === 'boolean') settings.defaultBypass = data.defaultBypass;
+          if (defaultWorkerEfforts.includes(data.defaultWorkerEffort)) settings.defaultWorkerEffort = data.defaultWorkerEffort;
+          if (claudeEfforts.includes(data.defaultClaudeWorkerEffort)) settings.defaultClaudeWorkerEffort = data.defaultClaudeWorkerEffort;
           if (Number.isInteger(data.terminalFontSize) && data.terminalFontSize >= 10 && data.terminalFontSize <= 24) settings.terminalFontSize = data.terminalFontSize;
           if (['focus', 'original'].includes(data.terminalAppearance)) settings.terminalAppearance = data.terminalAppearance;
-          if (['medium', 'high'].includes(data.coordinatorEffort)) settings.coordinatorEffort = data.coordinatorEffort;
-          if (['cedar', 'marin'].includes(data.voiceName)) settings.voiceName = data.voiceName;
+          if (['rose', 'violet', 'blue', 'teal'].includes(data.accentTheme)) settings.accentTheme = data.accentTheme;
+          if (defaultWorkerEfforts.includes(data.coordinatorEffort)) settings.coordinatorEffort = data.coordinatorEffort;
           await saveSettings(); broadcast('settings', { settings }); return json(response, 200, settings);
         }
-        if (method === 'POST' && url.pathname === '/api/sessions') { const session = await sessions.create({ ...data, bypass: data.bypass ?? settings.defaultBypass }); focus(session.id); return json(response, 201, session); }
+        if (method === 'POST' && url.pathname === '/api/sessions') { const session = await sessions.create(await sessionOptions({ ...data, effort: data.effort ?? workerDefault(settings, data.agent), bypass: data.bypass ?? settings.defaultBypass })); focus(session.id); return json(response, 201, session); }
+        const modelRoute = /^\/api\/sessions\/([\w-]+)\/model-picker$/.exec(url.pathname);
+        const effortRoute = /^\/api\/sessions\/([\w-]+)\/reasoning-picker$/.exec(url.pathname);
+        if (method === 'POST' && effortRoute) {
+          const picker = sessions.get(effortRoute[1]).agent === 'claude' ? claudeEffortPicker : modelPicker;
+          return json(response, 200, data.action === 'open' ? await picker.openEffort(effortRoute[1]) : data.action === 'choose' ? await picker.chooseEffort(effortRoute[1], data.effort) : await picker.cancelEffort(effortRoute[1]));
+        }
+        if (method === 'POST' && modelRoute) {
+          if (!['open', 'choose', 'cancel'].includes(data.action)) throw new Error('Unknown model picker action.');
+          const picker = sessions.get(modelRoute[1]).agent === 'claude' ? claudeModelPicker : modelPicker;
+          return json(response, 200, data.action === 'open' ? await picker.open(modelRoute[1]) : data.action === 'choose' ? await picker.choose(modelRoute[1], data.model) : await picker.cancel(modelRoute[1]));
+        }
         const sessionRoute = /^\/api\/sessions\/([\w-]+)(?:\/(\w+))?$/.exec(url.pathname);
         if (sessionRoute) {
           const [, id, action] = sessionRoute;
           if (method === 'GET' && action === 'screen') return json(response, 200, await sessions.read(id));
           if (method === 'POST' && action === 'focus') return json(response, 200, focus(id));
+          if (method === 'POST' && action === 'fork') {
+            const source = sessions.get(id);
+            if (!['codex', 'claude'].includes(source.agent) || !source.nativeId || source.activity === 'working') throw new Error('Fork requires an idle Codex/Claude chat with a captured native conversation ID.');
+            const transcript = source.agent === 'codex' ? await codexTranscript(source.nativeId) : await claudeTranscript(source.cwd, source.nativeId, { search: true });
+            if (!transcript) throw new Error('The native conversation cannot be located. Reconnect it before forking.');
+            const fork = await sessions.create(await sessionOptions({ agent: source.agent, name: `Fork · ${source.name}`, projectId: source.projectId, repositoryId: source.repositoryId || 'hub', cardId: source.cardId, cwd: source.cwd, bypass: source.bypass, effort: source.effort, resumeId: source.nativeId, fork: true, forkPath: transcript }));
+            focus(fork.id); return json(response, 201, fork);
+          }
+          if (method === 'POST' && action === 'control') {
+            const session = sessions.get(id);
+            if (!session.process || !['codex', 'claude'].includes(session.agent)) throw new Error('Control requires a running Codex/Claude terminal.');
+            if (data.action === 'interrupt') {
+              if (session.activity !== 'working') throw new Error('This chat is not reporting an active turn.');
+              return json(response, 200, sessions.input(id, '\x1b'));
+            }
+            if (data.action !== 'submit' || session.activity === 'working' || session.attention) throw new Error('The terminal is not ready to submit. Handle native prompts directly.');
+            return json(response, 200, sessions.input(id, '\r'));
+          }
           if (method === 'POST' && action === 'stop') return json(response, 200, sessions.stop(id));
           if (method === 'POST' && action === 'resume') { const session = await sessions.resume(id, data.nativeId); focus(id); return json(response, 200, session); }
           if (method === 'POST' && action === 'attach') return json(response, 200, await attach(id, data.paths));
           if (method === 'POST' && action === 'clear') return json(response, 200, await sessions.clearScreen(id));
+          if (method === 'POST' && action === 'archive') return json(response, 200, await sessions.archive(id, data.archived));
+          if (method === 'POST' && action === 'deleteplan') return json(response, 200, await nativeDeletion.plan(id));
+          if (method === 'POST' && action === 'deletenative') return json(response, 200, await nativeDeletion.confirm(id, data.token, data.name));
           if (method === 'POST' && action === 'reorder') return json(response, 200, await sessions.reorder(id, data.targetId, data.position));
           if (method === 'POST' && action === 'input') return json(response, 200, sessions.input(id, data.text, { coordinator: data.paste !== false, submit: data.submit !== false }));
+          if (method === 'PATCH' && !action && 'projectId' in data) {
+            const session = sessions.get(id);
+            const project = data.projectId ? await projects.get(data.projectId) : null;
+            const repository = project?.repositories.find(item => item.available && item.repositoryPath.toLowerCase() === (session.cwd || '').toLowerCase());
+            if (project && !repository && ![projectChatFolder(project.id), legacyProjectChatFolder(project.id)].some(folder => folder.toLowerCase() === session.cwd.toLowerCase())) throw new Error('This conversation belongs to a different working folder.');
+            bridge.revoke(id); session.projectId = project?.id || null; session.repositoryId = repository?.id || null; session.cardId = null; sessions.changed(session); await sessions.persist();
+            return json(response, 200, sessions.list().find(item => item.id === id));
+          }
           if (method === 'PATCH' && !action) return json(response, 200, typeof data.pinned === 'boolean' ? sessions.pin(id, data.pinned) : 'tabColor' in data ? sessions.color(id, data.tabColor) : sessions.rename(id, data.name));
           if (method === 'DELETE' && !action) return json(response, 200, await closeChat(id));
+          if (method === 'DELETE' && action === 'forget') return json(response, 200, await sessions.forget(id));
         }
         if (method === 'POST' && url.pathname === '/api/window') {
           if (!['chats', 'workspace'].includes(data.window) || !['show', 'hide', 'minimize', 'pin'].includes(data.action)) throw new Error('Unknown window action');
@@ -232,7 +555,31 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           const file = await realpath(path.resolve(data.path));
           native({ type: 'reveal', path: file }); return json(response, 200, { requested: true });
         }
+        if (method === 'GET' && url.pathname === '/api/coordinator') {
+          const projectId = url.searchParams.get('projectId') || null;
+          const conversations = coordinator.conversations.conversations.filter(item => item.projectId === projectId).map(({ id, title, at, parentId, threadId }) => ({ id, title, at, parentId, canFork: !!threadId }));
+          if (coordinator.history(projectId, 'legacy').length) conversations.unshift({ id: 'legacy', title: 'Previous Mak History · view only', at: '', canFork: false });
+          const selected = coordinator.conversations.selected[projectId || 'global'] || (conversations.some(item => item.id === 'legacy') ? 'legacy' : null);
+          const current = selected && selected !== 'legacy' ? coordinator.conversation(projectId, selected) : null;
+          return json(response, 200, { history: selected ? coordinator.history(projectId, selected) : [], conversations, selected, effort: current?.effort || settings.coordinatorEffort, model: current?.model || null, state: coordinator.state, confirmations: [...coordinator.confirmations.values()].map(item => item.confirmation), active: coordinator.active?.operationId || null });
+        }
+        if (method === 'GET' && url.pathname === '/api/reasoning') {
+          const result = { codex: { model: '', efforts: [], defaultEffort: 'medium' }, codexWorker: { model: '', efforts: [], defaultEffort: 'medium' }, claude: { efforts: claudeEfforts, note: 'Native Claude effort levels; model and organization limits are enforced by Claude.' } };
+          const errors = [];
+          try { result.codex = await coordinator.reasoningCapabilities(url.searchParams.get('model') || undefined); } catch (error) { errors.push(publicError(error)); }
+          try { result.codexWorker = await coordinator.reasoningCapabilities(undefined, { worker: true }); } catch (error) { errors.push(publicError(error)); }
+          return json(response, 200, { ...result, ...(errors.length ? { error: errors.join(' ') } : {}) });
+        }
+        if (method === 'POST' && url.pathname === '/api/coordinator/conversation') {
+          const projectId = data.projectId || null; if (projectId) await projects.get(projectId);
+          if (data.action === 'model') return json(response, 200, await coordinator.setModel(projectId, data.id, data.model));
+          if (data.action === 'effort') return json(response, 200, await coordinator.setEffort(projectId, data.id, data.effort));
+          if (data.action === 'retry') { if (coordinator.operationPromises.size) throw new Error('Wait for Mak before reconnecting.'); const conversation = coordinator.conversation(projectId); if (!conversation) throw new Error('Create a conversation first.'); await coordinator.start(); await coordinator.ensureThread({ projectId }, conversation); return json(response, 200, { ready: true }); }
+          return json(response, 200, data.action === 'select' ? await coordinator.selectConversation(projectId, data.id) : data.action === 'new' || data.action === 'fork' ? await coordinator.newConversation(projectId, data.action === 'fork') : (() => { throw new Error('Unknown conversation action.'); })());
+        }
         if (method === 'POST' && url.pathname === '/api/coordinator') return json(response, 200, await askMak(data));
+        if (method === 'POST' && url.pathname === '/api/coordinator/confirm') return json(response, 200, coordinator.confirm(data.id, data.approved));
+        if (method === 'POST' && url.pathname === '/api/coordinator/cancel') return json(response, 200, await coordinator.cancel(data.id));
         if (method === 'POST' && url.pathname === '/api/coordinator/prepare') { await coordinator.start(); return json(response, 200, { ready: true, model: coordinator.model }); }
         if (method === 'POST' && url.pathname === '/api/live/transcript') {
           if (typeof data.id !== 'string' || data.id.length > 200 || !Array.isArray(data.captions)) throw new Error('A voice session and captions are required.');
@@ -246,24 +593,6 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         if (method === 'POST' && url.pathname === '/api/live/release') {
           if (voiceOwner?.clientId === data.clientId) { voiceOwner = null; broadcast('voice-owner', { owner: null }); }
           return json(response, 200, { released: true });
-        }
-        if (method === 'POST' && url.pathname === '/api/live/session') {
-          if (voiceOwner && voiceOwner.clientId !== data.clientId) throw new Error(`Voice is already active in the ${voiceOwner.surface} window`);
-          if (typeof data.sdp !== 'string' || !data.sdp.trim() || typeof data.clientId !== 'string') throw new Error('A microphone connection is required');
-          const keys = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
-          const key = keys.OPENAI_API_KEY || keys.OPENAI_KEY || process.env.OPENAI_API_KEY;
-          if (!key) throw new Error('Add OPENAI_API_KEY to the repository .env, then press the nose again.');
-          voiceOwner = { clientId: data.clientId, surface: data.surface === 'chats' ? 'chats' : 'workspace' };
-          broadcast('voice-owner', { owner: voiceOwner });
-          try {
-            const result = await fetch('https://api.openai.com/v1/live/sessions', {
-              method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(30000),
-                body: JSON.stringify({ session: voiceSession(settings), transport: { type: 'webrtc', sdp: data.sdp } }),
-            });
-            const value = await result.json().catch(() => ({}));
-            if (!result.ok) throw new Error(`OpenAI Live (${result.status}): ${value.error?.message || 'Session could not be started'}`);
-            return json(response, 201, value);
-          } catch (error) { voiceOwner = null; broadcast('voice-owner', { owner: null }); throw error; }
         }
         throw Object.assign(new Error('Endpoint not found'), { status: 404 });
       }
@@ -315,12 +644,12 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   try { watcher = watch(path.join(repo, 'workspace', 'workspace.json'), () => broadcast('workspace-changed', {})); watcher.on('error', () => {}); } catch { /* Registry may be created after first setup. */ }
   const restoreTimer = restoreSessions ? setTimeout(() => sessions.restore().catch(error => sessions.emit('service-error', error)), 100) : null;
   return {
-    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, files,
+    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, files, projects, bridge,
     urls: { workspace: `${origin}/?desktop=1&surface=workspace&token=${token}`, chats: `${origin}/?desktop=1&surface=chats&token=${token}` },
-      nativeMessage: event => nativeSettings.receive(event),
+      nativeMessage: event => { nativeSettings.receive(event); cardRecycler.receive(event); },
       async close() {
-        if (closing) return; closing = true; mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
-      watcher?.close(); clearTimeout(restoreTimer); coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await quick.saves; await workspace.writes;
+        if (closing) return; closing = true; bridge.close(); cardRecycler.close(); for (const inventory of projectMcps.values()) inventory.close(); await projects.writes.catch(() => {}); mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
+      watcher?.close(); clearTimeout(restoreTimer); coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await coordinator.queue; await coordinator.saves; await quick.saves; await workspace.writes;
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();
       server.closeAllConnections(); contentServer.closeAllConnections();

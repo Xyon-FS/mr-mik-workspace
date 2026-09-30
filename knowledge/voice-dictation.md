@@ -1,26 +1,24 @@
 # Optional local dictation
 
-Dictation puts recognized text into the focused terminal or text field.
-Mr. Mak's voice assistant instead carries on a conversation and can call tools.
-You can use either, both or neither.
+Dictation puts recognized text into the focused terminal or text field. It is
+independent of conversational voice assistance, which is disabled in Mr. Mik.
+The `voice-dictation-setup` skill provides instructions, not a bundled voice
+application, API subscription or automatic installation.
 
-[Wispr Local](https://github.com/nsoth/wispr-local) is one Windows option built
-around whisper.cpp. Review its language and GPU build defaults before installing.
-Follow its README to select English and settings appropriate for the recipient's
-machine. The project also documents optional
-cloud text formatting. This template includes setup instructions, not a bundled
-copy of Wispr Local or another user's customized build.
+[Wispr Local](https://github.com/nsoth/wispr-local) is the upstream example
+referenced by this skill. Check its current instructions, operating-system
+support, language and CPU/GPU requirements before choosing or installing it.
+Keep any dictation application in its own folder and use the recipient's own
+configuration. A CUDA build requires the corresponding supported runtime.
 
-Use a separate folder for the dictation app. Start with the language you actually
-speak and a model that fits your memory budget. Verify recognition in a text
-editor before testing it in an agent terminal. A successful microphone recording
-does not prove that text injection reached the intended window.
+Choose a language, local model and non-conflicting hotkey with the user. Test
+silence, a short phrase, technical names and several recordings in a text editor
+before testing an agent terminal. Do not automatically submit the recognized
+text. Confirm text reaches the intended window and recordings recover after an
+error.
 
-Choose a non-conflicting push-to-talk shortcut. Test silence, a short phrase,
-technical names and several recordings in succession. Do not auto-submit text
-while diagnosing dictation. Keep cloud formatting off for a fully local
-transcription workflow; enabling it sends recognized text to that provider.
-
-Record the chosen model, build settings and recovery steps in a local setup
-note. Leave microphone recordings, transcripts and credentials out of a public
-handoff. Always check upstream instructions again on the recipient's machine.
+Keep optional cloud formatting disabled unless explicitly requested; enabling
+it sends recognized text to the selected provider. Credentials, recordings and
+transcripts belong in private local storage, not the public source repository.
+The Hub skill is Off by default and can be enabled for the chosen agent and
+workspace without enabling conversational voice or any paid service.

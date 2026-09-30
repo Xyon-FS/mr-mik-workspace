@@ -1,4 +1,4 @@
-# Mr. Mak Workspace
+# Mr. Mik Workspace
 
 Read [AGENTS.md](AGENTS.md) for the repository rules and
 [getting started](docs/getting-started.md) for setup.

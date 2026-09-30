@@ -1,7 +1,8 @@
 import type { WorkspaceEntity } from '../types'
 import { entityHash } from '../lib/route'
 import { categoryIcon } from '../lib/categories'
-import { contentUrl } from '../desktop/client'
+import { api, contentUrl, isDesktop, reportError } from '../desktop/client'
+import CardActions from '../desktop/CardActions'
 
 /**
  * The design-system card: glass surface over the aura, gradient edge
@@ -11,12 +12,13 @@ import { contentUrl } from '../desktop/client'
  */
 export default function MakCard({ entity }: { entity: WorkspaceEntity }) {
   const steps = entity.steps.length
-  return (
-    <a
-      href={entityHash(entity.id)}
+  const card = (
+    <div
       className={`mak-card entity-card${entity.pinned ? ' pinned' : ''}`}
       data-entity={entity.id}
     >
+      <a className="mak-card-cover" href={entityHash(entity.id)} aria-label={entity.title} />
+      {isDesktop && <button className="mak-card-pin" aria-label={`${entity.pinned ? 'Unpin' : 'Pin'} card ${entity.title}`} title={entity.pinned ? 'Unpin card' : 'Pin card'} onClick={() => void api('/cards/pin', { id: entity.id, pinned: !entity.pinned }).catch(reportError)}>📌</button>}
       <div className="card-top">
         <span className="chip">
           <span aria-hidden="true">{categoryIcon(entity.category)}</span>
@@ -43,6 +45,7 @@ export default function MakCard({ entity }: { entity: WorkspaceEntity }) {
           open →
         </span>
       </div>
-    </a>
+    </div>
   )
+  return isDesktop ? <CardActions entity={entity}>{card}</CardActions> : card
 }

@@ -6,7 +6,8 @@ import MakLogo from './components/MakLogo'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import HomeGrid from './components/HomeGrid'
-import { contentUrl, isDesktop } from './desktop/client'
+import ReportBoundary from './components/ReportBoundary'
+import { contentUrl, isDesktop, useDesktop } from './desktop/client'
 
 const Compare3D = lazy(() => import('./components/Compare3D'))
 const ReportViewer = lazy(() => import('./components/ReportViewer'))
@@ -20,6 +21,7 @@ const byFreshness = (a: WorkspaceEntity, b: WorkspaceEntity) =>
   lastTouched(b).localeCompare(lastTouched(a)) || statusRank(a) - statusRank(b)
 
 export default function App() {
+  const desktop = useDesktop()
   const { workspace, offline, lastSync } = useWorkspace()
   const [route, setRoute] = useState<Route>(parseHash)
   const [query, setQuery] = useState('')
@@ -33,7 +35,7 @@ export default function App() {
     localStorage.setItem('mak.sidebarCollapsed', collapsed ? '1' : '0')
   }, [collapsed])
 
-  const entities = workspace?.entities ?? []
+  const entities = (workspace?.entities ?? []).filter(item => !isDesktop || !desktop.settings.selectedProjectId || item.projectId === desktop.settings.selectedProjectId)
   const entity = entities.find(e => e.id === route.id) ?? null
 
   const stepIndex = entity
@@ -69,7 +71,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = entity ? `Mr. Mak — ${entity.title}` : 'Mr. Mak — Workspace'
+    document.title = entity ? `Mr. Mik — ${entity.title}` : 'Mr. Mik — Workspace'
   }, [entity])
 
   const goHome = useCallback(() => {
@@ -117,7 +119,10 @@ export default function App() {
   const flat = showArchived || searching
   const grouped = new Map<string, WorkspaceEntity[]>()
   for (const e of rest) {
-    const cat = flat ? 'by date' : e.category || 'other'
+    const cat = flat ? 'by date' : isDesktop ? desktop.settings.selectedProjectId
+      ? e.repositoryId ? desktop.projects.find(project => project.id === desktop.settings.selectedProjectId)?.repositories.find(linked => linked.id === e.repositoryId)?.name || 'Unlinked project' : 'Workspace-wide cards'
+      : desktop.projects.find(project => project.id === e.projectId)?.name || 'Mr. Mik Hub'
+      : e.category || 'other'
     if (!grouped.has(cat)) grouped.set(cat, [])
     grouped.get(cat)!.push(e)
   }
@@ -143,7 +148,7 @@ export default function App() {
       <button
         className="sidebar-reopen"
         onClick={() => setCollapsed(false)}
-        title="Show menu — press Mr. Mak's nose ( [ )"
+        title="Show menu — press Mr. Mik's nose ( [ )"
         aria-label="Show menu"
       >
         <MakLogo size={38} animated={route.id !== 'my-dream-game'} />
@@ -152,15 +157,20 @@ export default function App() {
       <main className="main">
         <Topbar
           entity={entity}
-          stepIndex={stepIndex}
-          onStep={selectStep}
+          projectId={desktop.settings.selectedProjectId}
+          workspaceName={isDesktop ? desktop.projects.find(project => project.id === (entity ? entity.projectId : desktop.settings.selectedProjectId))?.name || 'Global Hub' : undefined}
           onHome={goHome}
           // A compare3d step's "report" is a JSON manifest — opening it raw in a
           // tab helps nobody, so the external link is hidden for those.
           reportUrl={step?.viewer === 'compare3d' ? null : reportUrl}
         />
 
-        <div className="content">
+        <div className="content card-page-view">
+          {entity && entity.steps.length > 1 && <nav className="card-page-nav" aria-label="Card pages"><div className="step-tabs" role="tablist" aria-label="Card pages">
+            {entity.steps.map((page, index) => <button key={index} role="tab" aria-selected={index === stepIndex} className={`step-tab${index === stepIndex ? ' active' : ''}`} onClick={() => selectStep(entity.id, index)} title={page.name}>{page.name}</button>)}
+          </div></nav>}
+          <div className="card-page-body">
+          <ReportBoundary key={reportUrl || 'home'} onHome={goHome}>
           {entity && reportUrl && step?.viewer === 'compare3d' ? (
             <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><Compare3D
               key={reportUrl}
@@ -169,6 +179,8 @@ export default function App() {
             /></Suspense>
           ) : entity && reportUrl ? (
             <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><ReportViewer key={reportUrl} url={reportUrl} title={step?.name ?? entity.title} relativePath={`workspace/${entity.folder}/${step?.path}`} /></Suspense>
+          ) : entity ? (
+            <section className="desk-muted"><h2>{entity.title}</h2><p>{entity.description}</p><p>No report steps yet. Add a note through the project's Codex Workspace Bridge or the normal Workspace authoring workflow.</p></section>
           ) : (
             <HomeGrid
               entities={entities}
@@ -179,6 +191,8 @@ export default function App() {
               query={query}
             />
           )}
+          </ReportBoundary>
+          </div>
         </div>
       </main>
     </div>

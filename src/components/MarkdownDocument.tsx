@@ -13,9 +13,10 @@ function restoreDraft(key: string, fallback: string) {
 }
 
 export function MarkdownView({ text, baseUrl }: { text: string; baseUrl?: string }) {
+  const base = baseUrl ? new URL(baseUrl, window.location.href).href : undefined
   return <article className="mak-markdown"><Markdown remarkPlugins={[remarkGfm]} components={{
-    a: ({ href, children }) => <a href={href?.startsWith('#') ? href : href && baseUrl ? new URL(href, baseUrl).href : href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer">{children}</a>,
-    img: ({ src, alt }) => <ZoomImage src={typeof src === 'string' ? baseUrl ? new URL(src, baseUrl).href : src : undefined} alt={alt} />,
+    a: ({ href, children }) => <a href={href?.startsWith('#') ? href : href && base ? new URL(href, base).href : href} target={href?.startsWith('#') ? undefined : '_blank'} rel="noreferrer">{children}</a>,
+    img: ({ src, alt }) => <ZoomImage src={typeof src === 'string' ? base ? new URL(src, base).href : src : undefined} alt={alt} />,
   }}>{text}</Markdown></article>
 }
 

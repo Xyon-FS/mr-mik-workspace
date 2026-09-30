@@ -6,7 +6,7 @@ import { realFile, saveJson } from './util.mjs';
 
 const execute = promisify(execFile);
 export const localDay = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const brief = ({ id, title, description, status, created, updated, pinned, steps }) => ({ id, title, description, status, created, updated, pinned: !!pinned, steps: (steps || []).map(({ name }, index) => ({ name, index })) });
+const brief = ({ id, title, description, status, created, updated, pinned, steps, artifacts, projectId }) => ({ id, title, description, status, created, updated, pinned: !!pinned, steps: (steps || []).map(({ name }, index) => ({ name, index })), artifacts: (artifacts || []).filter(item => item.projectId === projectId).map(({ path, title }) => ({ path, title })) });
 
 export class Workspace {
   constructor(repo, changed = () => {}) { this.repo = repo; this.file = path.join(repo, 'workspace', 'workspace.json'); this.changed = changed; this.writes = Promise.resolve(); }

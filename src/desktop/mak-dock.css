@@ -1,0 +1,13 @@
+.mak-dock{position:absolute;z-index:80;right:18px;bottom:18px;display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:calc(100% - 24px);max-height:calc(100% - 36px);pointer-events:none}
+.mak-launcher{pointer-events:auto;display:flex;align-items:center;justify-content:center;width:42px;height:42px;flex-shrink:0;padding:5px;border:1px solid var(--accent-border);border-radius:50%;background:var(--surface-1);box-shadow:0 4px 20px #0005;color:var(--pink);cursor:pointer;transition:background .2s,box-shadow .2s}
+.mak-launcher:hover,.mak-launcher[aria-expanded=true]{background:var(--accent-soft);box-shadow:0 4px 20px #0005,0 0 18px var(--accent-soft)}
+.mak-launcher:focus-visible{outline:2px solid var(--pink-bright);outline-offset:3px}
+.mak-header-actions{display:flex;gap:2px}.mak-header-actions .desk-icon{width:24px;height:26px}.mak-retry{margin:6px 16px;flex:none}.mak-panel .mak-orientation{font-size:10px}
+.mak-dock .mak-panel{width:420px;max-width:100%;max-height:calc(100% - 52px);min-height:0;flex:0 1 auto;border:1px solid var(--accent-border);background:var(--accent-overlay);box-shadow:0 20px 65px #0009;border-radius:15px;backdrop-filter:blur(25px)}
+.mak-dock .mak-panel>header{flex:none}.mak-panel header strong{color:var(--text)}.mak-panel header small{color:var(--text-dim)}
+.mak-panel .voice-tabs{flex:none}.mak-panel .voice-tabs>button{color:var(--text-dim)}.mak-panel .voice-tabs>button.selected{color:var(--pink-bright);border-bottom-color:var(--pink)}
+.mak-panel .mak-orientation{flex:none;padding:8px 17px}.mak-panel .mak-orientation p{margin:5px 0 0;font-size:9px}.mak-panel .mak-targets{padding:8px 16px;flex:none}
+.mak-panel .mak-conversation{flex:1 1 auto;min-height:70px;max-height:min(40vh,390px);padding:12px 17px 6px}.mak-panel .voice-welcome p{font:25px/1.25 var(--font-display);color:var(--pink-bright)}.mak-panel .voice-welcome>span{color:var(--text-dim)}
+.mak-panel .mak-operation{padding:0 0 12px;margin-bottom:12px}.mak-panel .caption{color:var(--text);font-size:12px;line-height:1.65}.mak-panel .caption.user{color:var(--text-dim)}.mak-panel .caption>span{color:var(--text-muted)}.mak-panel .caption.assistant>span{color:var(--pink-bright)}.mak-panel .mak-answer{margin-top:10px!important}.mak-panel .mak-answer pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}.mak-panel .mak-answer a{color:var(--pink-bright)}
+.mak-panel .mak-confirmation{max-height:22vh}.mak-panel .mak-composer{flex:none;margin:8px 16px}.mak-panel .mak-composer textarea{min-height:38px;max-height:100px}.mak-panel footer{flex:none;border-top:1px solid var(--hairline)}
+@media(max-width:650px){.mak-dock{right:12px;bottom:12px}.mak-dock .mak-panel{width:370px}.mak-panel .mak-targets{gap:4px}}

@@ -4,13 +4,12 @@
 
 Use the right-hand Settings rail for the available display and behavior controls.
 Terminal text settings and tab colors live with Chats. The Win-key shortcut is
-optional: when enabled, a single Win press returns to hidden Mr. Mak windows;
+optional: when enabled, a single Win press returns to hidden Mr. Mik windows;
 when they are already in view, it opens Start. Win combinations remain normal.
 The template leaves it disabled.
 
 Choose chat permission bypass deliberately. Ordinary permissions are the default.
-Voice settings can adjust the voice profile, speed and conversation behavior.
-Some voice changes take effect on the next voice connection.
+Voice settings are hidden while Mr. Mik voice is temporarily disabled.
 
 ## Change with an agent
 

@@ -21,11 +21,15 @@ __pycache__/
 *.pyc
 *.tsbuildinfo
 src-tauri/target/
+src-tauri/target-*/
+release/
 src-tauri/gen/
 public/workspace
 *.log
 
 # Local inputs and jobs
+*.mrmak.zip
+*.mrmar.zip
 inbox/*
 !inbox/.gitkeep
 **/job.json

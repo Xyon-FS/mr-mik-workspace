@@ -1,0 +1,2 @@
+.mak-working-target{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 3px;color:var(--text-muted);font-size:10px}.mak-working-target small{font-size:9px;color:var(--text-dim)}.mak-working-target span{overflow-wrap:anywhere;text-align:right}
+.mak-reasoning{display:flex;align-items:center;gap:9px;padding:5px 14px;color:var(--text-muted);font-size:10px}.mak-reasoning .desk-dark-select{width:130px}.mak-reasoning small{font-size:10px}.mak-reasoning span[title]{font-size:9px;color:var(--text-dim)}

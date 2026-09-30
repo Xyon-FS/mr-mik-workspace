@@ -23,7 +23,7 @@ ws.on('message', raw => {
   if (event.type === 'session.started') {
     result.started = true;
     inputTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN && !closing) ws.send(JSON.stringify({ type: 'session.input_audio.append', audio: Buffer.alloc(4800).toString('base64') })); }, 100);
-    ws.send(JSON.stringify({ type: 'session.commentary.append', event_id: 'connection_test', delegation_id: null, content: 'The local connection is ready. Say: Mr. Mak is ready.' }));
+    ws.send(JSON.stringify({ type: 'session.commentary.append', event_id: 'connection_test', delegation_id: null, content: 'The local connection is ready. Say: Mr. Mik is ready.' }));
     setTimeout(finish, 13000);
   }
   if (event.type === 'session.output_audio.delta') result.audioBytes += Buffer.from(event.delta, 'base64').length;

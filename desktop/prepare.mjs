@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, writeFile, access, realpath, rm } from 'node:fs/pr
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { gameSkillPack } from './service/skill-pack.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = path.join(repo, '.cache', 'desktop-runtime');
@@ -24,17 +25,35 @@ await cp(serviceSource, path.join(runtime, 'service'), { recursive: true, filter
 // A checkout can itself live under a cache/worktree directory. Validate the
 // payload before npm can resolve an unrelated parent package.json.
 for (const file of ['package.json', 'package-lock.json', 'main.mjs', 'server.mjs']) await access(path.join(runtime, 'service', file));
+for (const name of gameSkillPack) await cp(path.join(repo, '.agents/skills', name), path.join(runtime, 'service/skill-pack', name), { recursive: true });
+await cp(path.join(repo, 'knowledge/voice-dictation.md'), path.join(runtime, 'service/skill-pack/voice-dictation.md'));
+await cp(path.join(repo, 'processes/workspace-authoring.md'), path.join(runtime, 'service/skill-pack/workspace-authoring.md'));
+await cp(path.join(repo, 'LICENSE'), path.join(runtime, 'service/skill-pack/LICENSE'));
+await cp(path.join(repo, 'THIRD_PARTY_NOTICES.md'), path.join(runtime, 'service/skill-pack/NOTICE.md'));
 run(['ci', '--omit=dev'], path.join(runtime, 'service'));
 await cp(path.join(repo, 'dist'), path.join(runtime, 'ui'), { recursive: true });
 // Vite deliberately does not copy the enormous workspace junction. Bundle only UI assets.
 try { await access(path.join(repo, 'public', 'assets')); await cp(path.join(repo, 'public', 'assets'), path.join(runtime, 'ui', 'assets'), { recursive: true }); } catch { /* Optional brand assets. */ }
-await writeFile(path.join(runtime, 'README.txt'), 'Mr. Mak local runtime. Node.js and native ConPTY bindings are bundled. User repositories, keys and CLI logins are not included.\n');
+await writeFile(path.join(runtime, 'README.txt'), 'Mr. Mik local runtime. Node.js and native ConPTY bindings are bundled. User repositories, keys and CLI logins are not included.\n');
 const nodeLicense = path.join(path.dirname(process.execPath), 'LICENSE');
 let license;
 try { license = await readFile(nodeLicense); } catch {
-  const response = await fetch(`https://raw.githubusercontent.com/nodejs/node/${process.version}/LICENSE`);
-  if (!response.ok) throw new Error('Could not retrieve the license for the bundled Node runtime');
-  license = await response.text();
+  // Reuse an already bundled license only for the same Node version. This keeps
+  // repeat desktop builds possible when the build machine is temporarily offline.
+  for (const target of ['target', 'target-isolated']) {
+    const previous = path.join(repo, 'src-tauri', target, 'release', 'runtime');
+    const binary = path.join(previous, 'node.exe');
+    const version = spawnSync(binary, ['--version'], { encoding: 'utf8', windowsHide: true });
+    if (version.status === 0 && version.stdout.trim() === process.version) {
+      license = await readFile(path.join(previous, 'NODE-LICENSE.txt')).catch(() => null);
+      if (license) break;
+    }
+  }
+  if (!license) {
+    const response = await fetch(`https://raw.githubusercontent.com/nodejs/node/${process.version}/LICENSE`);
+    if (!response.ok) throw new Error('Could not retrieve the license for the bundled Node runtime');
+    license = await response.text();
+  }
 }
 await writeFile(path.join(runtime, 'NODE-LICENSE.txt'), license);
 console.log('Desktop runtime prepared: Node, native terminals and production UI.');

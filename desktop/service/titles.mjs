@@ -9,7 +9,7 @@ export function englishTitle(value, fallback = 'New conversation') {
 export function restoredTitle(value, index) {
   if (/^(codex|claude|kimi)$/i.test(value || '')) return `Conversation ${index + 1}`;
   try { return englishTitle(value, `Conversation ${index + 1}`); }
-  catch { return /голос/i.test(value || '') ? 'Mr. Mak voice' : `Conversation ${index + 1}`; }
+  catch { return /голос/i.test(value || '') ? 'Mr. Mik voice' : `Conversation ${index + 1}`; }
 }
 
 export function taskTitle(value) {

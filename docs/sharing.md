@@ -20,5 +20,8 @@ single folder. The complete `.claude/skills` copies can be shared with Claude
 users as well. Run `npm run skills:sync` after changing the maintained source.
 
 An agent preparing a release should run lint, service tests, template checks
-and the desktop build. Check the four starter cards in a fresh browser session,
-inspect the staged file list, then publish the source and installer checksum.
+and the desktop build. Validate the empty starter in a fresh browser session,
+inspect the staged file list, then publish reviewed source and installer/portable
+checksums manually. Use `source:clean` for an allowlisted clean copy; use workspace
+snapshots for selected content, not full private Hub archives. Preserve Mr. Mak's
+license and attribution and identify the fork as Mr. Mik.

@@ -16,7 +16,7 @@ async function fixture() {
   await mkdir(path.join(repo, 'workspace', 'A space'), { recursive: true });
   await mkdir(path.join(repo, 'inbox')); await mkdir(path.join(repo, 'projects'));
   await mkdir(path.join(repo, 'ui'));
-  await writeFile(path.join(repo, 'ui', 'index.html'), '<html>Mr. Mak UI</html>');
+  await writeFile(path.join(repo, 'ui', 'index.html'), '<html>Mr. Mik UI</html>');
   await writeFile(path.join(repo, 'workspace', 'workspace.json'), JSON.stringify({ entities: [] }));
   await writeFile(path.join(repo, 'workspace', 'A space', 'report.html'), '<html><img src="image.bin"></html>');
   await writeFile(path.join(repo, 'workspace', 'A space', 'image.bin'), Buffer.from('0123456789'));
@@ -36,8 +36,11 @@ test('local authorization and report isolation protect the terminal service', as
     const wrongHost = await new Promise(resolve => { http.get(service.origin + '/api/bootstrap', { headers: { Host: 'attacker.example', Authorization: `Bearer ${service.token}` } }, response => { response.resume(); resolve(response.statusCode); }); });
     assert.equal(wrongHost, 403);
     const bootstrap = await (await request('/bootstrap')).json();
-    assert.equal(bootstrap.voice.configured, true);
+    assert.equal(bootstrap.voice.configured, false);
     assert.equal(JSON.stringify(bootstrap).includes('not-a-real-key'), false);
+    const disabledVoice = await request('/live/session', { sdp: 'test-offer', clientId: 'test-client' });
+    assert.equal(disabledVoice.status, 410);
+    assert.match((await disabledVoice.json()).error, /temporarily unavailable/i);
     assert.notEqual(new URL(bootstrap.contentBase).origin, service.origin);
     const report = service.files.url(path.join(repo, 'workspace', 'A space', 'report.html'));
     const response = await fetch(report);
@@ -180,6 +183,51 @@ test('History preserves closed and pinned chats while startup restores only open
   } finally { await reopened?.close(); await service.close(); }
 });
 
+test('History archives and removes only Mr. Mik records, never a native transcript', async () => {
+  const { service, repo, request } = await fixture();
+  try {
+    const nativeId = '00000000-0000-0000-0000-000000000127';
+    const nativeFile = path.join(repo, 'native-transcript.jsonl');
+    await writeFile(nativeFile, '{"type":"session_meta"}\n');
+    const chat = await service.sessions.importConversation({ agent: 'codex', nativeId, name: 'Old chat', cwd: repo });
+    await service.sessions.read(chat.id);
+    await service.sessions.persist();
+    const screen = path.join(repo, '.mrmak', `screen-${chat.id}.json`);
+    assert.equal((await request(`/sessions/${chat.id}/archive`, { archived: true })).status, 200);
+    assert.equal(service.sessions.get(chat.id).archived, true);
+    assert.equal((await request(`/sessions/${chat.id}/archive`, { archived: false })).status, 200);
+    assert.equal(service.sessions.get(chat.id).archived, false);
+    const removed = await fetch(service.origin + `/api/sessions/${chat.id}/forget`, { method: 'DELETE', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(removed.status, 200);
+    assert.equal((await removed.json()).nativeConversationUntouched, true);
+    assert.equal((await request('/history')).status, 200);
+    assert.equal((await (await request('/history')).json()).some(item => item.id === chat.id), false);
+    assert.equal(await readFile(nativeFile, 'utf8'), '{"type":"session_meta"}\n');
+    await assert.rejects(readFile(screen), { code: 'ENOENT' });
+  } finally { await service.close(); }
+});
+
+test('closing an unused chat omits it from Mr. Mik History', { skip: process.platform !== 'win32', timeout: 30000 }, async () => {
+  const { service, repo, request } = await fixture();
+  const close = id => fetch(service.origin + `/api/sessions/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${service.token}` } });
+  try {
+    const empty = await service.sessions.create({ agent: 'shell', name: 'Unused chat', cwd: repo });
+    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
+    const result = await close(empty.id);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).savedInHistory, false);
+    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
+    await assert.rejects(readFile(path.join(repo, '.mrmak', `screen-${empty.id}.json`)), { code: 'ENOENT' });
+
+    const used = await service.sessions.create({ agent: 'shell', name: 'Used terminal', cwd: repo });
+    service.sessions.input(used.id, 'Write-Output used\r');
+    assert.equal((await (await request('/history')).json()).some(item => item.id === used.id), true);
+    const kept = await close(used.id);
+    assert.equal((await kept.json()).savedInHistory, true);
+    assert.equal((await (await request('/history')).json()).some(item => item.id === used.id), true);
+  } finally { await service.close(); }
+});
+
 test('pasted images are saved in inbox and inserted as a quoted path without submitting', { skip: process.platform !== 'win32', timeout: 20000 }, async () => {
   const { service, repo } = await fixture();
   try {
@@ -202,6 +250,40 @@ test('pasted images are saved in inbox and inserted as a quoted path without sub
     assert.equal((await attached.json()).submitted, false);
     await until(async () => (await service.sessions.read(shell.id, 150)).screen.includes('Screenshot sample'));
     assert.equal(service.sessions.get(shell.id).status, 'running');
+  } finally { await service.close(); }
+});
+
+test('pasted images use the chat project, then the selected workspace for unassigned chats', async () => {
+  const { service, repo, request } = await fixture();
+  try {
+    const external = await mkdtemp(path.join(root, '.cache', 'project-test-'));
+    const project = await service.projects.save({ name: 'Image project', repositoryPath: external });
+    const projectChat = await service.sessions.importConversation({ agent: 'codex', nativeId: 'image-project-chat', name: 'Project chat', cwd: external, projectId: project.id });
+    const globalChat = await service.sessions.importConversation({ agent: 'codex', nativeId: 'image-global-chat', name: 'Global chat', cwd: repo });
+    const image = await readFile(path.join(root, 'src-tauri', 'icons', '32x32.png'));
+    const upload = sessionId => fetch(service.origin + '/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'X-File-Name': encodeURIComponent('Screenshot.png'), 'X-Session-Id': sessionId }, body: image });
+
+    await request('/settings', { selectedProjectId: null });
+    const projectResponse = await upload(projectChat.id);
+    assert.equal(projectResponse.status, 201);
+    const projectImage = await projectResponse.json();
+    assert.ok(projectImage.path.startsWith(path.join(repo, 'inbox', 'attachments') + path.sep));
+
+    await request('/settings', { selectedProjectId: project.id });
+    const globalResponse = await upload(globalChat.id);
+    assert.equal(globalResponse.status, 201);
+    const selectedImage = await globalResponse.json();
+    await request('/settings', { selectedProjectId: null });
+    const unassignedResponse = await upload(globalChat.id);
+    assert.equal(unassignedResponse.status, 201);
+    const unassignedImage = await unassignedResponse.json();
+    const assigned = await service.projects.resources('inbox', project.id, 'project');
+    assert.deepEqual(assigned.map(item => path.join(repo, item.path)).sort(), [projectImage.path, selectedImage.path].sort());
+    assert.ok((await service.projects.resources('inbox', '', 'global')).some(item => path.join(repo, item.path) === unassignedImage.path));
+    assert.deepEqual(await readFile(projectImage.path), image);
+    assert.deepEqual(await readFile(selectedImage.path), image);
+    assert.deepEqual(await readFile(unassignedImage.path), image);
+    assert.equal((await upload('unknown-chat')).status, 404);
   } finally { await service.close(); }
 });
 

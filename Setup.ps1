@@ -12,12 +12,10 @@ try {
   $taskCargo = Get-Command cargo -ErrorAction SilentlyContinue
   $taskCodex = Get-Command codex -ErrorAction SilentlyContinue
   $taskClaude = Get-Command claude -ErrorAction SilentlyContinue
-  Write-Host 'Mr. Mak Workspace setup'
+  Write-Host 'Mr. Mik Workspace setup'
   Write-Host ('Node: ' + [bool]$taskNode + ' | npm: ' + [bool]$taskNpm + ' | Rust: ' + [bool]$taskCargo)
   Write-Host ('Codex CLI: ' + [bool]$taskCodex + ' | Claude Code CLI: ' + [bool]$taskClaude)
-  if (-not $taskCodex -and -not $taskClaude) {
-    throw 'Install and sign in to Codex CLI and/or Claude Code CLI before setting up this Workspace. See docs/getting-started.md.'
-  }
+  if (-not $taskCodex -and -not $taskClaude) { Write-Host 'No agent CLI found. You can build/preview without an account; install an agent separately to use chats.' }
   if ($Mode -eq 'Check') {
     Write-Host 'The Windows installer needs no build toolchain. See docs/getting-started.md.'
     Write-Host 'Source preview: .\Setup.ps1 -Mode Preview'
@@ -38,6 +36,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed. Keep the output and ask your setup agent to inspect it.' }
     $taskBundle = Join-Path $taskRoot 'src-tauri/target/release/bundle/nsis'
     Write-Host ('Installer ready in ' + $taskBundle)
-    Write-Host 'Run the installer, then double-click Start Mr. Mak.cmd.'
+    Write-Host 'Run the installer, then double-click Start Mr. Mik.cmd.'
   }
 } finally { Pop-Location }

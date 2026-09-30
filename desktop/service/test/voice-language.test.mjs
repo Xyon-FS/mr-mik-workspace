@@ -39,5 +39,6 @@ test('quick command confirmations and empty results are English without a model'
   }
   chats = [];
   assert.equal((await actions.ask({ id: 'empty', text: 'list chats' })).result, 'There are no open chats.');
-  assert.ok(calls.some(call => call.name === 'open_chat' && call.args.effort === 'xhigh'));
+  // Quick commands defer effort to the user's configured default in server.mjs.
+  assert.ok(calls.some(call => call.name === 'open_chat' && call.args.effort === undefined));
 });

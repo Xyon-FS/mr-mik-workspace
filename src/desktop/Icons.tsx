@@ -14,7 +14,12 @@ export function Nose({ size = 30, tone = 'pink' }: { size?: number; tone?: 'pink
 }
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
   const paths: Record<string, string> = {
+    archive: 'M3 3h18v5H3ZM5 8v13h14V8M9 12h6',
+    trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
+    fork: 'M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM18 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM6 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM6 7v10M18 7v3a3 3 0 0 1-3 3H6',
+    mak: 'M4 4h16v12H9l-5 4ZM8 8h8M8 12h5',
     help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM9.1 8a3 3 0 0 1 5.8 1c0 2-3 2-3 4M12 17h.01',
+    projects: 'M3 7V5h6l2 2h10v13H3ZM7 11h10M7 15h7', knowledge: 'M3 5h8a4 4 0 0 1 4 4v11H7a4 4 0 0 0-4 1ZM21 5h-4a4 4 0 0 0-4 4v11h4a4 4 0 0 1 4 1Z', process: 'M4 6h16M4 12h16M4 18h16M7 4v4M12 10v4M17 16v4', inbox: 'M3 4h18l-2 16H5ZM3 14h6l2 3h2l2-3h6',
     mcp: 'M8 3v5M16 3v5M5 8h14v3a7 7 0 0 1-14 0ZM12 18v4',
     skills: 'M12 3 2 8l10 5 10-5ZM5 10v7l7 4 7-4v-7M22 8v7', settings: 'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6',
     plus: 'M12 5v14M5 12h14', close: 'm6 6 12 12M18 6 6 18', folder: 'M3 7V5h6l2 2h10v13H3Z', files: 'M7 3h10l4 4v14H7ZM3 7v14',
@@ -25,6 +30,8 @@ export function Icon({ name, size = 18, style }: { name: string; size?: number; 
     send: 'm4 4 17 8-17 8 4-8ZM8 12h13', pin: 'm8 3 8 0-1 7 4 4H5l4-4ZM12 14v7', more: 'M5 12h.1M12 12h.1M19 12h.1',
     terminal: 'm5 7 5 5-5 5M13 17h6', bell: 'M5 16h14l-2-3V8a5 5 0 0 0-10 0v5ZM10 20h4', refresh: 'M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M18 18A8 8 0 0 1 5 16',
     history: 'M3 5v5h5M4 9a9 9 0 1 1 0 6M12 7v5l3 2', attach: 'm8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2M5 15l9-9', clean: 'm9 4 11 11M6 7l11 11-4 4L2 11ZM2 22h20',
+    eye: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6',
+    eyeOff: 'M3 3l18 18M10.6 5.1A11.1 11.1 0 0 1 12 5c6.4 0 10 7 10 7a14.8 14.8 0 0 1-3.1 3.9M6.1 6.1C3.4 8 2 12 2 12s3.6 7 10 7c1.5 0 2.9-.4 4.1-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2',
   }
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true"><path d={paths[name] || paths.files} /></svg>
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">{name === 'more' ? [5, 12, 19].map(x => <circle key={x} cx={x} cy="12" r="1.6" fill="currentColor" stroke="none" />) : <path d={paths[name] || paths.files} />}</svg>
 }

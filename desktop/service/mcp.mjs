@@ -54,9 +54,9 @@ export class McpInventory {
     const paths = {
       codexUser: path.join(codexHome, 'config.toml'), codexProject: path.join(this.repo, '.codex/config.toml'),
       claudeUser: this.env.CLAUDE_CONFIG_DIR ? path.join(claudeHome, '.claude.json') : path.join(this.home, '.claude.json'),
-      claudeProject: path.join(this.repo, '.mcp.json'), claudeSettings: path.join(claudeHome, 'settings.json'),
+      claudeProject: path.join(this.repo, '.mcp.json'), claudeDisabled: path.join(claudeHome, 'mrmak-disabled-mcp.json'), claudeSettings: path.join(claudeHome, 'settings.json'),
       claudeProjectSettings: path.join(this.repo, '.claude/settings.json'), claudeLocalSettings: path.join(this.repo, '.claude/settings.local.json'),
-      kimiUser: path.join(this.home, '.kimi/mcp.json'), kimiProject: path.join(this.repo, '.kimi-code/mcp.json'),
+      kimiUser: path.join(this.env.KIMI_CODE_HOME || path.join(this.home, '.kimi-code'), 'mcp.json'), kimiProject: path.join(this.repo, '.kimi-code/mcp.json'),
       cursorUser: path.join(this.home, '.cursor/mcp.json'), cursorProject: path.join(this.repo, '.cursor/mcp.json'),
     };
     const values = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, await read(file)])));
@@ -64,6 +64,7 @@ export class McpInventory {
     add('codex', 'global', paths.codexUser, values.codexUser.mcp_servers, 10);
     add('codex', 'project', paths.codexProject, values.codexProject.mcp_servers, 20);
     add('claude', 'global', paths.claudeUser, values.claudeUser.mcpServers, 10);
+    add('claude', 'global', paths.claudeDisabled, Object.fromEntries(Object.entries({ ...object(values.claudeUser.mrmakDisabledMcpServers), ...object(values.claudeDisabled.mcpServers) }).filter(([name]) => !values.claudeUser.mcpServers?.[name]).map(([name, config]) => [name, { ...config, disabled: true }])), 10);
     add('claude', 'project', paths.claudeProject, values.claudeProject.mcpServers, 20);
     const localProject = Object.entries(object(values.claudeUser.projects)).find(([folder]) => key(folder) === key(this.repo))?.[1] || {};
     add('claude', 'local', paths.claudeUser, localProject.mcpServers, 30);
@@ -90,8 +91,9 @@ export class McpInventory {
       const versions = (await readdir(folder, { withFileTypes: true }).catch(() => [])).filter(item => item.isDirectory()).map(item => item.name).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
       if (!versions.length) continue;
       const root = path.join(folder, versions[0]);
-      const manifest = await read(path.join(root, '.codex-plugin/plugin.json'));
-      const configFile = typeof manifest.mcpServers === 'string' ? path.resolve(root, manifest.mcpServers) : path.join(root, '.mcp.json');
+      const portable = (await stat(path.join(root, 'plugin.json')).catch(() => null))?.isFile();
+      const manifest = portable ? await read(path.join(root, 'plugin.json')) : await read(path.join(root, '.codex-plugin/plugin.json'));
+      const configFile = portable ? path.join(root, 'mcp.json') : typeof manifest.mcpServers === 'string' ? path.resolve(root, manifest.mcpServers) : path.join(root, '.mcp.json');
       if (!key(configFile).startsWith(key(root) + '/')) continue;
       const config = typeof manifest.mcpServers === 'object' ? manifest.mcpServers : await read(configFile);
       const servers = config.mcpServers || config;
@@ -131,15 +133,18 @@ export class McpInventory {
       if (config.bearer_token_env_var) {
         if (env[config.bearer_token_env_var]) headers.Authorization = `Bearer ${env[config.bearer_token_env_var]}`; else missing.add(config.bearer_token_env_var);
       }
-      const disabled = config.enabled === false || config.disabled === true || winner.restricted || (winner.plugin && !winner.pluginEnabled)
-        || (winner.client === 'claude' && [...(claudeSettings.disabledMcpjsonServers || []), ...(localProject.disabledMcpjsonServers || [])].includes(winner.name));
+      // Claude does not implement Codex-style enabled/disabled fields in a
+      // server definition. Inactive recovery entries are identified by source.
+      const disabled = (winner.client === 'claude' ? winner.file === paths.claudeDisabled : config.enabled === false || config.disabled === true) || winner.restricted || (winner.plugin && !winner.pluginEnabled)
+        || (winner.client === 'claude' && [...(claudeSettings.disabledMcpjsonServers || []), ...(localProject.disabledMcpjsonServers || []), ...(localProject.disabledMcpServers || [])].includes(winner.name));
       const approvalNeeded = winner.client === 'claude' && winner.scope === 'project' && !claudeSettings.enableAllProjectMcpServers
         && ![...(claudeSettings.enabledMcpjsonServers || []), ...(localProject.enabledMcpjsonServers || [])].includes(winner.name);
       const cwd = expanded.cwd ? path.resolve(winner.pluginRoot || this.repo, expanded.cwd) : winner.pluginRoot || this.repo;
       const executable = expanded.command ? commandPath(/^[.][\\/]/.test(expanded.command) ? path.resolve(cwd, expanded.command) : expanded.command, this.env) : null;
       let endpoint = ''; if (expanded.url) { try { endpoint = new URL(expanded.url).origin; } catch { endpoint = 'Invalid address'; } }
-      const transport = config.type === 'sse' ? 'sse' : config.url ? 'http' : 'stdio';
-      const readiness = disabled ? 'disabled' : hostManaged ? 'managed' : missing.size ? 'missing-env' : transport === 'stdio' && !executable ? 'missing-command' : approvalNeeded ? 'approval' : 'configured';
+      const transport = config.type === 'sse' ? 'sse' : config.type === 'ws' ? 'ws' : config.url ? 'http' : 'stdio';
+      const malformedClaude = winner.client === 'claude' && !!config.url && !['http', 'streamable-http', 'sse', 'ws'].includes(config.type);
+      const readiness = disabled ? 'disabled' : malformedClaude ? 'invalid-config' : transport === 'ws' ? 'unsupported-check' : hostManaged ? 'managed' : missing.size ? 'missing-env' : transport === 'stdio' && !executable ? 'missing-command' : approvalNeeded ? 'approval' : 'configured';
       const fingerprint = digest([config, [...missing], headers, expanded.env, expanded.url, cwd, executable]);
       const checked = this.checks.get(id);
       const connection = checked?.fingerprint === fingerprint ? { ...checked.result, stale: Date.now() - Date.parse(checked.result.checkedAt) > 5 * 60000 } : null;
@@ -148,7 +153,7 @@ export class McpInventory {
         endpoint, executable: config.command ? path.basename(expanded.command) : null, plugin: winner.plugin || null,
         sources: [...layers].reverse().map(item => ({ scope: item.scope, path: item.file, effective: item === winner })),
         missingEnv: [...missing], credentialNames: Object.keys(headers), connection,
-        canCheck: !disabled && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper,
+        canCheck: !disabled && !malformedClaude && transport !== 'ws' && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper,
       };
       servers.push(data);
       const childEnv = { ...getDefaultEnvironment(), ...object(expanded.env) };
@@ -160,7 +165,7 @@ export class McpInventory {
   }
   async list() { return (await this.scan()).public; }
   async check(id) {
-    if (this.closed) throw new Error('Mr. Mak is closing.');
+    if (this.closed) throw new Error('Mr. Mik is closing.');
     if (this.pending.has(id)) return this.pending.get(id).promise;
     if (this.pending.size >= 2) throw new Error('Two connection checks are running. Wait for one to finish.');
     const entry = (await this.scan()).raw.get(id);

@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, appendFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, appendFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { Sessions } from '../sessions.mjs';
 import { createService } from '../server.mjs';
-import { nativeActivity, tailNativeFile } from '../native-events.mjs';
+import { codexTranscriptForChat, nativeActivity, tailNativeFile } from '../native-events.mjs';
 import { sleep } from '../util.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -113,6 +113,46 @@ test('New chat with a native ID and History resume capture the transcript bounda
     await appendFile(file, extra);
     await sessions.resume(created.id);
     assert.deepEqual(boundaries[1], { file, offset: Buffer.byteLength(old + extra) });
+  } finally { if (original === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = original; await sessions.close(); }
+});
+
+test('History recovers an uncaptured Codex ID only from an unambiguous native rollout', async () => {
+  const { repo, sessions, item } = await fixture();
+  const original = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(repo, 'codex-home');
+  const folder = path.join(process.env.CODEX_HOME, 'sessions', '2026', '09', '12');
+  await mkdir(folder, { recursive: true });
+  const nativeId = '00000000-0000-0000-0000-000000000124';
+  const createdAt = new Date().toISOString();
+  const file = path.join(folder, `rollout-${nativeId}.jsonl`);
+  await writeFile(file, JSON.stringify({ timestamp: createdAt, type: 'session_meta', payload: { id: nativeId, cwd: repo, source: 'cli', originator: `mrmak_chat_${item.id}` } }) + '\n');
+  item.cwd = repo; item.createdAt = createdAt; item.hasConversation = true; item.status = 'stopped';
+  sessions.launch = async (_session, resumeId, boundary) => { assert.equal(resumeId, nativeId); assert.deepEqual(boundary, { file, offset: (await stat(file)).size }); };
+  try {
+    const recovered = await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt });
+    assert.equal(recovered.id, nativeId);
+    assert.equal(recovered.owned, true);
+    const resumed = await sessions.resume(item.id);
+    assert.equal(resumed.nativeId, nativeId);
+    assert.equal(resumed.open, true);
+  } finally { if (original === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = original; await sessions.close(); }
+});
+
+test('legacy Codex recovery rejects ambiguous or already claimed rollout IDs', async () => {
+  const { repo, sessions, item } = await fixture();
+  const original = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(repo, 'codex-home');
+  const folder = path.join(process.env.CODEX_HOME, 'sessions', '2026', '09', '12');
+  await mkdir(folder, { recursive: true });
+  const createdAt = new Date().toISOString();
+  const ids = ['00000000-0000-0000-0000-000000000125', '00000000-0000-0000-0000-000000000126'];
+  try {
+    const write = id => writeFile(path.join(folder, `rollout-${id}.jsonl`), JSON.stringify({ timestamp: createdAt, type: 'session_meta', payload: { id, cwd: repo, source: 'cli' } }) + '\n');
+    await write(ids[0]);
+    assert.equal((await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, allowLegacy: true }))?.id, ids[0]);
+    await write(ids[1]);
+    assert.equal(await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, allowLegacy: true }), null);
+    assert.equal((await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, claimedIds: [ids[0]], allowLegacy: true }))?.id, ids[1]);
   } finally { if (original === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = original; await sessions.close(); }
 });
 

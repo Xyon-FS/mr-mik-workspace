@@ -1,5 +1,5 @@
 /* ────────────────────────────────────────────────────────────────
-   Mr. Mak design system — “Luminous Mak” tokens
+   Mr. Mik design system — “Luminous Mak” tokens
    Dark glass over near-black, pink→purple gradient edges,
    Fraunces display serif + Inter body. Single source of truth —
    mirrored for generated reports in scripts/shared/report_style.py.
@@ -26,14 +26,17 @@
   /* ── Brand ── */
   --pink: #f0a0b0;
   --pink-bright: #ffc2cf;
+  --accent-soft: color-mix(in srgb, var(--pink) 12%, transparent);
+  --accent-medium: color-mix(in srgb, var(--pink) 28%, transparent);
+  --accent-border: color-mix(in srgb, var(--pink) 46%, transparent);
   --purple: #b794f4;
   --green: #6ee7a0;
   --amber: #eab56e;
   --blue: #7eb8ff;
   --red: #e87070;
 
-  --pink-dim: rgba(240, 160, 176, 0.14);
-  --purple-dim: rgba(183, 148, 244, 0.14);
+  --pink-dim: color-mix(in srgb, var(--pink) 14%, transparent);
+  --purple-dim: color-mix(in srgb, var(--purple) 14%, transparent);
   --green-dim: rgba(110, 231, 160, 0.13);
   --amber-dim: rgba(234, 181, 110, 0.13);
   --red-dim: rgba(232, 112, 112, 0.13);
@@ -43,8 +46,8 @@
   --hairline-strong: rgba(255, 255, 255, 0.13);
   --edge: linear-gradient(
     135deg,
-    rgba(240, 160, 176, 0.38),
-    rgba(183, 148, 244, 0.22) 45%,
+    color-mix(in srgb, var(--pink) 38%, transparent),
+    color-mix(in srgb, var(--purple) 22%, transparent) 45%,
     rgba(255, 255, 255, 0.07) 80%
   );
   --edge-soft: linear-gradient(
@@ -55,17 +58,17 @@
   --edge-amber: linear-gradient(
     135deg,
     rgba(234, 181, 110, 0.5),
-    rgba(240, 160, 176, 0.2) 60%,
+    color-mix(in srgb, var(--pink) 20%, transparent) 60%,
     rgba(255, 255, 255, 0.06)
   );
 
   /* ── Depth & glow ── */
   --shadow-1: 0 2px 10px rgba(0, 0, 0, 0.35);
   --shadow-2: 0 6px 24px rgba(0, 0, 0, 0.45);
-  --glow-pink: 0 0 28px rgba(240, 160, 176, 0.14);
-  --glow-pink-strong: 0 0 36px rgba(240, 160, 176, 0.22);
+  --glow-pink: 0 0 28px color-mix(in srgb, var(--pink) 14%, transparent);
+  --glow-pink-strong: 0 0 36px color-mix(in srgb, var(--pink) 22%, transparent);
   --glow-amber: 0 0 24px rgba(234, 181, 110, 0.12);
-  --focus-ring: 0 0 0 2px rgba(240, 160, 176, 0.55);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--pink) 55%, transparent);
 
   /* ── Type ── */
   --font-body: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -86,4 +89,20 @@
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --t-fast: 120ms;
   --t-med: 220ms;
+}
+
+:root[data-accent-theme="violet"] {
+  --pink: #baadff;
+  --pink-bright: #d9d0ff;
+  --purple: #9687d8;
+}
+:root[data-accent-theme="blue"] {
+  --pink: #83c5ff;
+  --pink-bright: #b6ddff;
+  --purple: #7a9ece;
+}
+:root[data-accent-theme="teal"] {
+  --pink: #79d8c6;
+  --pink-bright: #abe9db;
+  --purple: #79b6bf;
 }

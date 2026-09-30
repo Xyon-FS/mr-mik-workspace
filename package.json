@@ -1,9 +1,13 @@
 {
-  "name": "mr-mak-workspace",
+  "name": "mr-mik",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.7",
   "type": "module",
   "scripts": {
+    "postinstall": "npm --prefix desktop/service ci",
+    "release:package": "node scripts/package-release.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "source:clean": "node scripts/package-source.mjs",
     "predev": "node scripts/ensure-workspace-link.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -14,7 +18,7 @@
     "desktop:build": "tauri build",
     "desktop:dev": "tauri dev",
     "desktop:test": "node --test desktop/service/test/*.test.mjs",
-    "desktop:test:ui": "node desktop/service/test/ui.mjs && node desktop/service/test/links-ui.mjs && node desktop/service/test/scroll-ui.mjs",
+    "desktop:test:ui": "node desktop/service/test/ui.mjs && node desktop/service/test/links-ui.mjs && node desktop/service/test/scroll-ui.mjs && node desktop/service/test/cards-ui.mjs && node desktop/service/test/demo-ui.mjs",
     "test": "npm run desktop:test",
     "test:template": "node scripts/check-template.mjs && node scripts/sync-skills.mjs --check",
     "skills:sync": "node scripts/sync-skills.mjs"

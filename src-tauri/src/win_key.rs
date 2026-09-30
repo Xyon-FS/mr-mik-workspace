@@ -1,4 +1,4 @@
-//! A bare Windows-key tap recalls Mr. Mak. All Windows-key chords pass through.
+//! A bare Windows-key tap recalls Mr. Mik. All Windows-key chords pass through.
 //! The hook only tracks key state; no key contents are recorded or sent anywhere.
 use std::{cell::Cell, sync::{atomic::{AtomicBool, AtomicU32, Ordering}, mpsc, Mutex}, thread::JoinHandle};
 use windows_sys::Win32::{Foundation::*, System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
