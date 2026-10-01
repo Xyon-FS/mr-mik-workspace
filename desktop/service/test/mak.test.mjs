@@ -7,6 +7,7 @@ import { createService } from '../server.mjs';
 import { makHistory, mergeMakHistory } from '../mak-history.mjs';
 import { Coordinator } from '../coordinator.mjs';
 import { randomUUID } from 'node:crypto';
+import { codexCommandFixture } from './cli-fixture.mjs';
 
 export async function makFixture() {
   const base = await mkdtemp(path.join(os.tmpdir(), 'mrmak-coordinator-'));
@@ -200,7 +201,8 @@ test('Mak resumes the same native thread after restart; new/fork/history stay is
   } finally { await service.close(); }
 });
 
-test('CLI submit/interrupt are scoped terminal keys and do not close a process; native fork keeps associations', async () => {
+test('CLI submit/interrupt are scoped terminal keys and do not close a process; native fork keeps associations', async t => {
+  const binary = await codexCommandFixture(t);
   const { service, request, saveProject } = await makFixture();
   const project = await saveProject('Controls');
   try {
@@ -214,6 +216,7 @@ test('CLI submit/interrupt are scoped terminal keys and do not close a process; 
     await assert.rejects(request(`/sessions/${session.id}/control`, { action: 'submit' }), /not ready/);
     const { terminalCommand } = await import('../agents.mjs');
     const codex = terminalCommand('codex', { resumeId: session.nativeId, fork: true, cwd: session.cwd });
+    assert.equal(codex.file, binary.file); assert.equal(codex.args[0], binary.script);
     assert.ok(codex.args.includes('fork')); assert.ok(!codex.args.includes('resume'));
     const oldAppData = process.env.APPDATA;
     try {

@@ -1,5 +1,12 @@
 # Release verification — Mr. Mik
 
+## Post-release CI portability correction
+
+- GitHub's clean Windows runner exposed three command-construction tests relying on an installed Codex CLI and one terminal attachment timeout. Local results alone had not covered that environment.
+- The three tests now assert an isolated npm command fixture, which throws if executed, and restore their environment afterward. No Codex installation, login or test skip is required.
+- Attachment coverage waits for the PowerShell prompt instead of a fixed delay, uses a wide terminal for long checkout paths and asserts the exact literal input with no Enter. The native screen assertion remains enabled.
+- All 161 local service tests, lint, clean-template checks and frontend build passed after correction. GitHub runner validation is separate. Release 0.2.7 assets and tag are not rewritten.
+
 ## 0.2.7 — Core Hub skill defaults
 
 - Added focused tests for fresh public defaults, both agents' workspace Off/Inherit and preservation of existing scope bytes, plus compact orientation without full skill content.

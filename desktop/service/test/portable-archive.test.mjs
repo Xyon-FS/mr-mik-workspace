@@ -7,6 +7,7 @@ import { Sessions } from '../sessions.mjs';
 import { PortableArchive } from '../portable-archive.mjs';
 import { claudeTranscript, codexTranscript } from '../native-events.mjs';
 import { terminalCommand } from '../agents.mjs';
+import { codexCommandFixture } from './cli-fixture.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const projectId = '22222222-2222-4222-8222-222222222222';
@@ -57,8 +58,10 @@ test('Mak text History travels in light/full archives and merges continuations b
   assert.ok(!JSON.stringify(imported).includes('nativeThreadId'));
 });
 
-test('Codex resume explicitly uses the relinked working folder', () => {
+test('Codex resume explicitly uses the relinked working folder', async t => {
+  const binary = await codexCommandFixture(t);
   const command = terminalCommand('codex', { resumeId: id, cwd: 'C:\\Projects\\Game' });
+  assert.equal(command.file, binary.file); assert.equal(command.args[0], binary.script);
   const index = command.args.indexOf('--cd');
   assert.ok(index >= 0);
   assert.equal(command.args[index + 1], 'C:\\Projects\\Game');

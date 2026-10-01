@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — CI portability
+
+- Command-construction tests now use an isolated, never-executed Codex npm fixture instead of relying on a locally installed CLI or account.
+- The image attachment terminal test waits for the PowerShell prompt, verifies the exact quoted input without submission, and avoids filename wrapping in long checkout paths.
+- These are test-only corrections; published 0.2.7 binaries and its release tag remain unchanged.
+
 ## 0.2.7 — Core Hub skill defaults (2026-10-01)
 
 - New source and portable Hubs enable workspace-authoring and feature-handoff for both Codex and Claude; every other Hub skill stays Off. Public starter defaults are separate from saved user scope settings, and existing Hubs are not migrated.

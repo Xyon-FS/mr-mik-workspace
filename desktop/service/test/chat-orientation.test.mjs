@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { chatOrientation, codexSessionInstructions } from '../chat-orientation.mjs';
 import { claudeBinary, terminalCommand } from '../agents.mjs';
+import { codexCommandFixture } from './cli-fixture.mjs';
 
 test('chat routing keeps the Hub and linked project distinct without preloading inventories', () => {
   const text = chatOrientation({ workspaceName: 'Exercise Unity', cardName: 'Exercise Unity Develop', workingProjectName: 'Unity' });
@@ -20,7 +21,8 @@ test('chat routing keeps the Hub and linked project distinct without preloading 
   assert.match(global, /Knowledge and Processes are global/);
 });
 
-test('Codex session instruction override preserves the effective native instruction and does not edit configs', async () => {
+test('Codex session instruction override preserves the effective native instruction and does not edit configs', async t => {
+  const binary = await codexCommandFixture(t);
   const base = await mkdtemp(path.join(os.tmpdir(), 'mrmak-orientation-'));
   const home = path.join(base, 'codex'), cwd = path.join(base, 'project');
   await mkdir(path.join(cwd, '.codex'), { recursive: true });
@@ -33,6 +35,8 @@ test('Codex session instruction override preserves the effective native instruct
   assert.equal(await readFile(userFile, 'utf8'), 'developer_instructions = "User instruction"\n');
   assert.equal(await readFile(projectFile, 'utf8'), 'developer_instructions = "Project instruction"\n');
   const launch = terminalCommand('codex', { bridge: { script: path.join(base, 'bridge-mcp.mjs'), instructions: result } });
+  assert.equal(launch.file, binary.file);
+  assert.equal(launch.args[0], binary.script);
   assert.ok(launch.args.includes(`developer_instructions=${JSON.stringify(result)}`));
 });
 

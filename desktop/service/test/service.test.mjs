@@ -243,11 +243,17 @@ test('pasted images are saved in inbox and inserted as a quoted path without sub
     assert.equal(rejected.status, 400);
     const unauthenticated = await fetch(service.origin + '/api/attachments', { method: 'POST', body: image });
     assert.equal(unauthenticated.status, 401);
-    const shell = await service.sessions.create({ agent: 'shell', name: 'Attachment input', cwd: repo });
-    await sleep(450);
+    // Wait for PowerShell readiness rather than racing startup on a cold runner.
+    // A wide terminal keeps long CI checkout paths from splitting the filename.
+    const shell = await service.sessions.create({ agent: 'shell', name: 'Attachment input', cwd: repo, cols: 500 });
+    await until(async () => /\bPS [^\r\n]*>/.test((await service.sessions.read(shell.id, 150)).screen));
+    const proc = service.sessions.get(shell.id).process;
+    const write = proc.write.bind(proc), input = [];
+    proc.write = data => { input.push(data); return write(data); };
     const attached = await fetch(service.origin + `/api/sessions/${shell.id}/attach`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [saved.path] }) });
     assert.equal(attached.status, 200);
     assert.equal((await attached.json()).submitted, false);
+    assert.deepEqual(input, ["'" + saved.path.replaceAll("'", "''") + "' "]);
     await until(async () => (await service.sessions.read(shell.id, 150)).screen.includes('Screenshot sample'));
     assert.equal(service.sessions.get(shell.id).status, 'running');
   } finally { await service.close(); }
