@@ -2,6 +2,7 @@
 
 ## 0.2.9 — Compact provider controls
 
+- Fixed the offline OpenCode History unit test accidentally probing the installed CLI during resume. Native version/storage preflight is mocked explicitly; observed-ID recovery and native-boundary invocation remain asserted. CI does not need OpenCode installed for this test; application behavior is unchanged.
 - Replaced OpenCode's text Connect button with a compact, keyboard-accessible plus icon and Connect provider tooltip. Connected providers remain grouped with their own status/sign-out controls; the native-authentication notice is shorter without implying successful login.
 - Distributable builds now use plain incremented app versions without preview suffixes. Updated app, npm/native metadata, health and workspace-snapshot version labels; previous release packages and user Hubs remain untouched.
 

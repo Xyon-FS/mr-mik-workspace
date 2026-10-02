@@ -127,8 +127,15 @@ test('OpenCode History recovers its own observed ID and never assigns Codex reas
   const file = path.join(stateDir, 'opencode', `${id}.json`);
   await writeFile(file, JSON.stringify({ chatId: id, nativeId: 'ses_owned', launchId: 'previous', revision: 1 }));
   let resumed;
+  // This unit test covers observed History identity, not the installed CLI's
+  // version/storage preflight. Isolate that boundary just like terminal launch.
+  const boundary = t.mock.method(sessions, 'nativeBoundary', async (session, nativeId) => {
+    assert.equal(session, item); assert.equal(nativeId, 'ses_owned');
+    return null;
+  });
   sessions.launch = async (_session, nativeId) => { resumed = nativeId; };
   await sessions.resume(id);
+  assert.equal(boundary.mock.callCount(), 1);
   assert.equal(resumed, 'ses_owned'); assert.equal(item.effort, undefined);
   await sessions.remove(id); await sessions.forget(id);
   assert.equal(await stat(file).catch(() => null), null);

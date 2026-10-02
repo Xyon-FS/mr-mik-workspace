@@ -1,5 +1,11 @@
 # Release verification — Mr. Mik
 
+## 2026-10-02 — Offline CI History fixture correction
+
+- The OpenCode History unit test mocked terminal launch but still invoked the real version/storage boundary. This passed on an OpenCode-equipped workstation and failed on the clean GitHub runner. The fixture now mocks that boundary and asserts its exact session/native-ID arguments and single invocation; production checks are unchanged.
+- All eight OpenCode unit tests pass with only Windows system directories on PATH. Full regression with agent installations excluded from PATH: 287 tests, 284 passed, three existing installed-Codex acceptance checks skipped, zero failures. No OpenCode installation was added to CI, and the failing test was not skipped.
+- Only test and documentation files changed. Existing 0.2.9 installer/portable packages remain valid; no app rebuild, account action or native chat launch is required for this correction.
+
 ## 2026-10-02 — 0.2.9 compact provider controls
 
 - Final pre-push regression: all 287 service tests passed. Source/privacy-path checks and ignore rules exclude runtime state, native conversation files, credentials, build caches and release binaries. GitHub publication of release assets remains a separate maintainer action.
