@@ -4,6 +4,7 @@ use std::{fs, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, C
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 use tauri_plugin_window_state::StateFlags;
 mod external_links;
+mod launch_profile;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
@@ -127,10 +128,11 @@ fn create_hub(app: &tauri::AppHandle, root: &std::path::Path) -> Result<(), Box<
 fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let config = app.path().app_config_dir()?.join("repository.json");
     let args: Vec<String> = std::env::args().collect();
-    let supplied = args.iter().position(|v| v == "--repo").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let supplied = launch_profile::supplied_hub(&args);
     let saved = fs::read_to_string(&config).ok().and_then(|s| serde_json::from_str::<String>(&s).ok()).map(PathBuf::from);
     let current = std::env::current_dir().ok().filter(|root| root.join("workspace/workspace.json").is_file());
-    let mut selected = supplied.or(saved).or(current);
+    let portable = std::env::current_exe().ok().and_then(|exe| launch_profile::portable_root(&exe));
+    let mut selected = supplied.or(saved).or_else(|| portable.as_deref().map(launch_profile::portable_hub)).or(current);
     loop {
         if let Some(ref root) = selected {
             if valid_hub(root) {
@@ -149,7 +151,7 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
             .set_buttons(rfd::MessageButtons::YesNoCancelCustom("Create a new Hub".into(), "Open an existing Hub".into(), "Cancel".into())).show();
         match choice {
             rfd::MessageDialogResult::Custom(label) if label == "Create a new Hub" => {
-                let default = app.path().document_dir()?.join("Mr. Mik/MyHub");
+                let default = portable.as_deref().map(launch_profile::portable_hub).unwrap_or(app.path().document_dir()?.join("Mr. Mik/MyHub"));
                 let location = rfd::MessageDialog::new().set_title("Create your Hub")
                     .set_description(format!("Create MyHub at:\n{}\n\nOr choose a parent folder: a new MyHub folder will be created inside it. Existing folders are never overwritten.", default.display()))
                     .set_buttons(rfd::MessageButtons::YesNoCancelCustom("Use default location".into(), "Choose another location".into(), "Cancel".into())).show();
@@ -281,6 +283,11 @@ fn restore_default_layout(app: &tauri::AppHandle, source: &str) -> Result<(), Bo
 }
 
 fn main() {
+    let mut context = tauri::generate_context!();
+    if let Ok(executable) = std::env::current_exe() {
+        let args: Vec<String> = std::env::args().collect();
+        context.config_mut().identifier = launch_profile::identifier(&context.config().identifier, &executable, &args);
+    }
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if args.iter().any(|arg| arg == "--quit") { app.exit(0); }
@@ -447,7 +454,7 @@ fn main() {
                 .on_tray_icon_event(|tray, event| { if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event { reveal(tray.app_handle(), "chats"); } })
                 .build(app)?;
             Ok(())
-        }).build(tauri::generate_context!());
+        }).build(context);
     match result {
         Ok(app) => app.run(|app, event| {
             if let tauri::RunEvent::Exit = event {

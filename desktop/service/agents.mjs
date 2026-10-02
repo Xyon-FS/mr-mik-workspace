@@ -4,6 +4,7 @@ import os from 'node:os';
 import { parse as parseEnv } from 'dotenv';
 import { spawnSync } from 'node:child_process';
 import { resolveOpenCodeBinary } from './opencode-binary.mjs';
+import { codexPermissionMode } from './codex-permissions.mjs';
 
 const claudeCapabilities = new Map();
 export function claudePromptRefreshSupported(binary = claudeBinary()) {
@@ -91,7 +92,7 @@ export function claudeBridgeArgs(script) {
   return ['--mcp-config', JSON.stringify(config)];
 }
 
-export function terminalCommand(agent, { bypass = false, resumeId, resumePath, nativeId, effort, bridge, cwd, fork = false, env = process.env, openCodeFamily = 1 } = {}) {
+export function terminalCommand(agent, { bypass = false, codexPermissions, resumeId, resumePath, nativeId, effort, bridge, cwd, fork = false, env = process.env, openCodeFamily = 1 } = {}) {
   if (!AGENTS.some(item => item.id === agent)) throw new Error('Unknown agent');
   const binary = agent === 'codex' ? codexBinary() : agent === 'claude' ? claudeBinary() : agent === 'opencode' ? openCodeBinary(env) : { file: commandPath(AGENTS.find(item => item.id === agent).command), args: [] };
   if (!binary.file) throw new Error(`${agent} is not installed on this computer`);
@@ -101,9 +102,12 @@ export function terminalCommand(agent, { bypass = false, resumeId, resumePath, n
     if (resumeId && cwd) args.push('--cd', cwd);
     // Inline mode retains xterm scrollback for new and resumed conversations.
     args.push('--no-alt-screen');
-    if (bypass) args.push('--dangerously-bypass-approvals-and-sandbox');
+    const permissions = codexPermissionMode(codexPermissions, bypass);
+    if (permissions === 'bypass') args.push('--dangerously-bypass-approvals-and-sandbox');
+    if (permissions === 'full-access') args.push('--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"');
     if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
     if (bridge) {
+      if (permissions === 'native' && bridge.codexWritableRoots === true) for (const folder of bridge.contentDirectories || []) args.push('--add-dir', folder);
       args.push(...codexBridgeArgs(bridge.script));
       if (bridge.instructions) args.push('-c', `developer_instructions=${JSON.stringify(bridge.instructions)}`);
     }
@@ -114,6 +118,7 @@ export function terminalCommand(agent, { bypass = false, resumeId, resumePath, n
     if (bypass) args.push('--dangerously-skip-permissions');
     if (effort) args.push('--effort', effort);
     if (bridge) {
+      for (const folder of bridge.contentDirectories || []) args.push('--add-dir', folder);
       args.push(...claudeBridgeArgs(bridge.script));
       if (bridge.orientation) args.push('--append-system-prompt', bridge.orientation);
       if (bridge.settings && Object.keys(bridge.settings).length) args.push('--settings', JSON.stringify(bridge.settings));

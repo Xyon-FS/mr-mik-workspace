@@ -37,7 +37,7 @@ Download the `windows-x64_setup.exe` asset, install it and launch **Mr. Mik**. I
 
 On first launch, choose **Create a new Hub** or **Open an existing Hub**. Creation prepares `Documents/Mr. Mik/MyHub` with starter examples and skills; you can choose another parent folder instead. Existing folders are never overwritten. Opening uses a prepared Mr. Mik/Mr. Mak Hub containing `workspace/workspace.json`, without importing or copying it. Your selection is remembered. An ordinary Unity/Blender/code folder is a *linked project*, not the Hub to select here. To restore an exported archive, create/open a Hub first, then use **Settings → Transfer Hub → Import**.
 
-**Beta 0.2.9:** keep backups, especially before transfers and removal actions. Not every clean Windows installation or provider setup has been validated.
+**Beta 0.2.10:** keep backups, especially before transfers and removal actions. Not every clean Windows installation or provider setup has been validated.
 
 ## Connect your agent
 

@@ -8,7 +8,7 @@ optional: when enabled, a single Win press returns to hidden Mr. Mik windows;
 when they are already in view, it opens Start. Win combinations remain normal.
 The template leaves it disabled.
 
-Choose chat permission bypass deliberately. Ordinary permissions are the default.
+Choose Codex permissions deliberately: native CLI configuration, full access with user approvals, or bypass without approval prompts. The default only affects new chats; a per-chat change automatically restarts the same conversation when the CLI is idle, its prompt is empty and native dialogs are closed. Other agents retain their separate bypass setting. Native configuration is the fresh-install default; existing choices are preserved. Explicit denials remain in force in all modes.
 Voice settings are hidden while Mr. Mik voice is temporarily disabled.
 
 ## Change with an agent

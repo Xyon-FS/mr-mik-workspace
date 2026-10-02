@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { parse as parseEnv } from 'dotenv';
 import { parse as parseToml } from 'smol-toml';
 import { Sessions } from './sessions.mjs';
+import { codexPermissionMode } from './codex-permissions.mjs';
 import { CodexModelPicker } from './model-picker.mjs';
 import { ClaudeModelPicker, ClaudeEffortPicker } from './claude-model-picker.mjs';
 import { OpenCodePicker } from './opencode-picker.mjs';
@@ -37,7 +38,8 @@ import { PortableArchive } from './portable-archive.mjs';
 import { WorkspaceSnapshot } from './workspace-snapshot.mjs';
 import { NativeDeletion } from './native-delete.mjs';
 import { WorkspaceBridge } from './workspace-bridge.mjs';
-import { chatOrientation, codexSessionInstructions } from './chat-orientation.mjs';
+import { hubContentDirectories } from './hub-files.mjs';
+import { chatOrientation, codexSessionInstructions, codexAllowsAdditionalDirectories } from './chat-orientation.mjs';
 import { CodexScopes } from './codex-scopes.mjs';
 import { effectiveCodex } from './codex-effective.mjs';
 import { CodexMcpEditor } from './codex-mcp-editor.mjs';
@@ -66,6 +68,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const environment = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
   const settingsPath = path.join(stateDir, 'settings.json');
   let settings = { defaultAgent: 'codex', defaultBypass: false, defaultWorkerEffort, coordinatorModel: environment.MRMAK_COORDINATOR_MODEL?.trim() || null, terminalFontSize: 13, terminalAppearance: 'focus', accentTheme: 'rose', coordinatorEffort: 'medium', voiceName: 'cedar', voiceStyle: defaultVoiceStyle, ...await readJson(settingsPath, {}) };
+  settings.defaultCodexPermissions = codexPermissionMode(settings.defaultCodexPermissions, settings.defaultBypass);
   if (!defaultWorkerEfforts.includes(settings.defaultWorkerEffort)) settings.defaultWorkerEffort = defaultWorkerEffort;
   if (!claudeEfforts.includes(settings.defaultClaudeWorkerEffort)) settings.defaultClaudeWorkerEffort = claudeEfforts.includes(settings.defaultWorkerEffort) ? settings.defaultWorkerEffort : 'high';
   if (!defaultWorkerEfforts.includes(settings.coordinatorEffort)) settings.coordinatorEffort = 'medium';
@@ -127,6 +130,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     restart: (session, guard) => sessions.restartTools(session, guard),
   });
   sessions.captureTools = session => toolRefresh.capture(session);
+  sessions.permissionReady = session => toolRefresh.ready(session);
   sessions.toolsLaunched = (session, baseline) => toolRefresh.launched(session, baseline);
   toolRefresh.wrap(codexScopes, 'set', (_projectId, change) => ['mcp', 'plugin', 'skill'].includes(change.kind));
   toolRefresh.wrap(codexMcpEditor, 'change', () => true);
@@ -159,6 +163,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     await sessions.persist();
   };
   const sessionOptions = async options => {
+    if ((options.agent || "codex") === "codex") options = { ...options, codexPermissions: codexPermissionMode(options.codexPermissions ?? settings.defaultCodexPermissions, options.bypass ?? settings.defaultBypass) };
     if (cardMutation) throw new Error('Wait for the card or workspace change before opening a chat.');
     if (!options.projectId) {
       const card = options.cardId ? (await registry()).entities.find(item => item.id === options.cardId && !item.projectId) : null;
@@ -186,7 +191,9 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       // under this Hub, suppress native discovery so Hub Off cannot be bypassed.
       const settings = session.agent === 'claude' && !linked ? { skillOverrides: Object.fromEntries((await projects.hubSkills(project?.id || null, 'claude')).map(skill => [skill.name, 'off'])) } : null;
       const hubSkills = session.agent === 'opencode' && !linked ? await projects.hubSkills(project?.id || null, 'opencode') : [];
-      return { script: fileURLToPath(new URL('./bridge-mcp.mjs', import.meta.url)), url: `${origin}/bridge`, token: preview ? '' : bridge.issue(session.id, project?.id || null, card?.id || null, linked?.id || null, session.agent), orientation, instructions, settings, hubSkillNames: hubSkills.map(skill => skill.name), hubSkillIds: hubSkills.map(skill => skill.id) };
+      const contentDirectories = await hubContentDirectories(projects, (await registry()).entities, project?.id || null);
+      const codexWritableRoots = session.agent === 'codex' && await codexAllowsAdditionalDirectories(codexScopes.codexHome(), session.cwd);
+      return { script: fileURLToPath(new URL('./bridge-mcp.mjs', import.meta.url)), url: `${origin}/bridge`, token: preview ? '' : bridge.issue(session.id, project?.id || null, card?.id || null, linked?.id || null, session.agent), orientation, instructions, settings, contentDirectories, codexWritableRoots, hubSkillNames: hubSkills.map(skill => skill.name), hubSkillIds: hubSkills.map(skill => skill.id) };
     };
     if (!session.projectId) {
       if (!['codex', 'claude', 'opencode'].includes(session.agent)) return null;
@@ -535,7 +542,9 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           if (data.defaultWorkerEffort !== undefined && !defaultWorkerEfforts.includes(data.defaultWorkerEffort) || data.defaultClaudeWorkerEffort !== undefined && !claudeEfforts.includes(data.defaultClaudeWorkerEffort) || data.coordinatorEffort !== undefined && !defaultWorkerEfforts.includes(data.coordinatorEffort)) throw new Error('Invalid reasoning level.');
           if (data.selectedProjectId !== undefined) { if (data.selectedProjectId) await projects.get(data.selectedProjectId); settings.selectedProjectId = data.selectedProjectId || null; }
           if (inventory().some(item => item.id === data.defaultAgent)) settings.defaultAgent = data.defaultAgent;
+          if (data.defaultCodexPermissions != null) codexPermissionMode(data.defaultCodexPermissions);
           if (typeof data.defaultBypass === 'boolean') settings.defaultBypass = data.defaultBypass;
+          if (data.defaultCodexPermissions != null) settings.defaultCodexPermissions = data.defaultCodexPermissions;
           if (defaultWorkerEfforts.includes(data.defaultWorkerEffort)) settings.defaultWorkerEffort = data.defaultWorkerEffort;
           if (claudeEfforts.includes(data.defaultClaudeWorkerEffort)) settings.defaultClaudeWorkerEffort = data.defaultClaudeWorkerEffort;
           if (Number.isInteger(data.terminalFontSize) && data.terminalFontSize >= 10 && data.terminalFontSize <= 24) settings.terminalFontSize = data.terminalFontSize;
@@ -544,7 +553,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           if (defaultWorkerEfforts.includes(data.coordinatorEffort)) settings.coordinatorEffort = data.coordinatorEffort;
           await saveSettings(); broadcast('settings', { settings }); return json(response, 200, settings);
         }
-        if (method === 'POST' && url.pathname === '/api/sessions') { const session = await sessions.create(await sessionOptions({ ...data, effort: data.effort ?? workerDefault(settings, data.agent), bypass: data.bypass ?? settings.defaultBypass })); focus(session.id); return json(response, 201, session); }
+        if (method === 'POST' && url.pathname === '/api/sessions') { const session = await sessions.create(await sessionOptions({ ...data, codexPermissions: data.codexPermissions ?? (typeof data.bypass === "boolean" ? codexPermissionMode(undefined, data.bypass) : undefined), effort: data.effort ?? workerDefault(settings, data.agent), bypass: data.bypass ?? settings.defaultBypass })); focus(session.id); return json(response, 201, session); }
         const modelRoute = /^\/api\/sessions\/([\w-]+)\/model-picker$/.exec(url.pathname);
         const effortRoute = /^\/api\/sessions\/([\w-]+)\/reasoning-picker$/.exec(url.pathname);
         if (method === 'POST' && effortRoute) {
@@ -569,7 +578,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
             if (!['codex', 'claude', 'opencode'].includes(source.agent) || !source.nativeId || source.activity !== 'idle') throw new Error('Fork requires an idle agent chat with a captured native conversation ID.');
             const transcript = source.agent === 'opencode' ? source.nativeId : source.agent === 'codex' ? await codexTranscript(source.nativeId) : await claudeTranscript(source.cwd, source.nativeId, { search: true });
             if (!transcript) throw new Error('The native conversation cannot be located. Reconnect it before forking.');
-            const fork = await sessions.create(await sessionOptions({ agent: source.agent, name: `Fork · ${source.name}`, projectId: source.projectId, repositoryId: source.repositoryId || 'hub', cardId: source.cardId, cwd: source.cwd, bypass: source.bypass, effort: source.effort, resumeId: source.nativeId, fork: true, forkPath: transcript }));
+            const fork = await sessions.create(await sessionOptions({ agent: source.agent, name: `Fork · ${source.name}`, projectId: source.projectId, repositoryId: source.repositoryId || 'hub', cardId: source.cardId, cwd: source.cwd, bypass: source.bypass, codexPermissions: source.codexPermissions, effort: source.effort, resumeId: source.nativeId, fork: true, forkPath: transcript }));
             focus(fork.id); return json(response, 201, fork);
           }
           if (method === 'POST' && action === 'control') {
@@ -584,6 +593,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
             if (session.agent === 'opencode') { await openCodePicker.command(id, 'submit'); return json(response, 200, { submitted: true }); }
             return json(response, 200, sessions.input(id, '\r'));
           }
+          if (method === 'POST' && action === 'permissions') return json(response, 200, await sessions.setCodexPermissions(id, data.codexPermissions));
           if (method === 'POST' && action === 'stop') return json(response, 200, sessions.stop(id));
           if (method === 'POST' && action === 'resume') { const session = await sessions.resume(id, data.nativeId); focus(id); return json(response, 200, session); }
           if (method === 'POST' && action === 'attach') return json(response, 200, await attach(id, data.paths));

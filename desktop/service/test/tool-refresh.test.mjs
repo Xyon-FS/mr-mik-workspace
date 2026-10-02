@@ -129,7 +129,7 @@ test('guarded resume keeps native ID and working associations, blocks input duri
   const chat = sessions.make({ id: 'fixture', name: 'Fixture', agent: 'codex', cwd: repo, projectId: 'workspace', repositoryId: 'unity', cardId: 'card', nativeId: 'native-id', hasConversation: true, open: true, activity: 'idle', bypass: false, effort: 'high' });
   const exitHandlers = [];
   const proc = { onExit: callback => { exitHandlers.push(callback); return { dispose() {} }; } };
-  chat.process = proc; sessions.items.set(chat.id, chat);
+  chat.process = proc; chat.launchedCodexPermissions = chat.codexPermissions; sessions.items.set(chat.id, chat);
   sessions.nativeBoundary = async () => ({ file: transcript, offset: 3 });
   let previews = 0, resumed;
   sessions.prepareLaunch = async (_chat, options) => { assert.equal(options.preview, true); previews++; return null; };

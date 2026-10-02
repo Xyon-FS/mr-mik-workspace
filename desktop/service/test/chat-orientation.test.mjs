@@ -10,8 +10,8 @@ import { codexCommandFixture } from './cli-fixture.mjs';
 test('chat routing keeps the Hub and linked project distinct without preloading inventories', () => {
   const text = chatOrientation({ workspaceName: 'Exercise Unity', cardName: 'Exercise Unity Develop', workingProjectName: 'Unity' });
   assert.match(text, /selected Hub card "Exercise Unity Develop"/);
-  assert.match(text, /HTML page use mrmak_add_card_page/);
-  assert.match(text, /never create Hub content in the linked project/);
+  assert.match(text, /resolve mrmak_hub_destination/);
+  assert.match(text, /Never put Hub content in the linked project/);
   assert.match(text, /Knowledge and Processes default to this workspace/);
   assert.match(text, /If the Bridge is unavailable/);
   assert.ok(text.length < 2200);
@@ -34,10 +34,12 @@ test('Codex session instruction override preserves the effective native instruct
   assert.equal(result, 'Project instruction\n\nHub routing');
   assert.equal(await readFile(userFile, 'utf8'), 'developer_instructions = "User instruction"\n');
   assert.equal(await readFile(projectFile, 'utf8'), 'developer_instructions = "Project instruction"\n');
-  const launch = terminalCommand('codex', { bridge: { script: path.join(base, 'bridge-mcp.mjs'), instructions: result } });
+  const launch = terminalCommand('codex', { bridge: { script: path.join(base, 'bridge-mcp.mjs'), instructions: result, contentDirectories: [base], codexWritableRoots: true } });
   assert.equal(launch.file, binary.file);
   assert.equal(launch.args[0], binary.script);
   assert.ok(launch.args.includes(`developer_instructions=${JSON.stringify(result)}`));
+  assert.equal(launch.args[launch.args.indexOf('--add-dir') + 1], base);
+  assert.ok(!launch.args.includes('--dangerously-bypass-approvals-and-sandbox'));
 });
 
 test('Claude terminal command appends the Hub rule without replacing its native prompt', async () => {
@@ -47,8 +49,10 @@ test('Claude terminal command appends the Hub rule without replacing its native 
   const previous = process.env.PATH;
   try {
     process.env.PATH = `${base}${path.delimiter}${previous || ''}`;
-    const command = terminalCommand('claude', { bridge: { script: path.join(base, 'bridge.mjs'), orientation: 'Hub routing' } });
+    const command = terminalCommand('claude', { bridge: { script: path.join(base, 'bridge.mjs'), orientation: 'Hub routing', contentDirectories: [base] } });
     assert.equal(command.file, executable);
+    assert.equal(command.args[command.args.indexOf('--add-dir') + 1], base);
+    assert.ok(!command.args.includes('--dangerously-skip-permissions'));
     const config = JSON.parse(command.args[command.args.indexOf('--mcp-config') + 1]);
     assert.deepEqual(config.mcpServers.mrmak_workspace.args, [path.join(base, 'bridge.mjs')]);
     assert.equal(config.mcpServers.mrmak_workspace.env.MRMAK_BRIDGE_TOKEN, '${MRMAK_BRIDGE_TOKEN}');

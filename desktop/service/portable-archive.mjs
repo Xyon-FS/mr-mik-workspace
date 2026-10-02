@@ -8,6 +8,7 @@ import path from 'node:path';
 import { Zip, ZipDeflate, Unzip, UnzipInflate, UnzipPassThrough } from 'fflate';
 import { codexTranscript, claudeTranscript } from './native-events.mjs';
 import { readJson, saveJson, within } from './util.mjs';
+import { codexPermissionMode } from './codex-permissions.mjs';
 import { makHistory, mergeMakHistory } from './mak-history.mjs';
 import { makConversations, mergeMakConversations } from './mak-conversations.mjs';
 import { workerEfforts, claudeEfforts } from './effort.mjs';
@@ -262,7 +263,7 @@ export class PortableArchive {
     for (const relative of included) await walk(this.repo, relative, entries);
     const sessions = this.sessions.list().map(({ toolRefresh, ...saved }) => { void toolRefresh; return saved; });
     const settings = await readJson(path.join(this.stateDir, 'settings.json'), {});
-    const portableSettings = Object.fromEntries(['defaultAgent', 'defaultBypass', 'defaultWorkerEffort', 'defaultClaudeWorkerEffort', 'terminalFontSize', 'terminalAppearance', 'accentTheme', 'coordinatorEffort', 'voiceName', 'selectedProjectId'].filter(key => key in settings).map(key => [key, settings[key]]));
+    const portableSettings = Object.fromEntries(['defaultAgent', 'defaultBypass', 'defaultCodexPermissions', 'defaultWorkerEffort', 'defaultClaudeWorkerEffort', 'terminalFontSize', 'terminalAppearance', 'accentTheme', 'coordinatorEffort', 'voiceName', 'selectedProjectId'].filter(key => key in settings).map(key => [key, settings[key]]));
     const stateFiles = { 'state/sessions.json': sessions, 'state/settings.json': portableSettings, 'state/inbox.json': await readJson(path.join(this.stateDir, 'inbox.json'), { resources: [] }) };
     stateFiles['state/mak-history.json'] = makHistory(await readJson(path.join(this.stateDir, 'mak-history.json'), { operations: [] }));
     const mak = makConversations(await readJson(path.join(this.stateDir, 'mak-conversations.json'), { conversations: [], selected: {} }));
@@ -377,6 +378,7 @@ export class PortableArchive {
         return field ? value[field] : value;
       };
       const sessions = await jsonArray('state/sessions.json');
+      for (const session of sessions) if (session?.agent === 'codex') codexPermissionMode(session.codexPermissions, session.bypass);
       await jsonArray('projects/registry.json', 'projects');
       await jsonArray('workspace/workspace.json', 'entities');
       await jsonArray('state/inbox.json', 'resources');
@@ -564,6 +566,7 @@ export class PortableArchive {
         const portable = {};
         if (['codex', 'claude', 'opencode', 'kimi', 'shell'].includes(incoming.defaultAgent)) portable.defaultAgent = incoming.defaultAgent;
         if (typeof incoming.defaultBypass === 'boolean') portable.defaultBypass = incoming.defaultBypass;
+        if (incoming.defaultCodexPermissions != null || typeof incoming.defaultBypass === 'boolean') portable.defaultCodexPermissions = codexPermissionMode(incoming.defaultCodexPermissions, incoming.defaultBypass);
         if (workerEfforts.includes(incoming.defaultWorkerEffort)) portable.defaultWorkerEffort = incoming.defaultWorkerEffort;
         if (claudeEfforts.includes(incoming.defaultClaudeWorkerEffort)) portable.defaultClaudeWorkerEffort = incoming.defaultClaudeWorkerEffort;
         if (Number.isInteger(incoming.terminalFontSize) && incoming.terminalFontSize >= 10 && incoming.terminalFontSize <= 24) portable.terminalFontSize = incoming.terminalFontSize;

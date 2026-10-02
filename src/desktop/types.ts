@@ -2,7 +2,10 @@ export type AgentId = 'codex' | 'claude' | 'opencode' | 'kimi' | 'shell'
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export interface ReasoningCapabilities { codex: { model: string; efforts: ReasoningEffort[]; defaultEffort: ReasoningEffort; models?: { model: string; label: string }[] }; codexWorker: { model: string; efforts: ReasoningEffort[]; defaultEffort: ReasoningEffort }; claude: { efforts: ReasoningEffort[]; note: string }; error?: string }
 export interface AgentInfo { id: AgentId; label: string; color: string; available: boolean; subscription: boolean }
+export type CodexPermissions = 'native' | 'full-access' | 'bypass'
 export interface ChatSession {
+  codexPermissions?: CodexPermissions
+  codexPermissionsPending?: boolean
   projectId?: string | null
   repositoryId?: string | null
   cardId?: string | null
@@ -20,7 +23,7 @@ export interface ChatSession {
 export interface Notice { id: string; sessionId: string; name: string; kind: string; text: string; at: string }
 export interface MakScope { projectId: string | null; repositoryId: string | null; cardId: string | null; selectedId: string | null }
 export interface Operation { id: string; text: string; status: string; result?: string; at: string; scope?: MakScope }
-export interface Settings { selectedProjectId?: string | null; defaultAgent: AgentId; defaultBypass: boolean; defaultWorkerEffort: ReasoningEffort; defaultClaudeWorkerEffort?: ReasoningEffort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; accentTheme?: 'rose' | 'violet' | 'blue' | 'teal'; workspaceRoute?: string | null; selectedId?: string | null; coordinatorEffort?: ReasoningEffort; voiceName?: string; voiceStyle?: string }
+export interface Settings { selectedProjectId?: string | null; defaultAgent: AgentId; defaultBypass: boolean; defaultCodexPermissions?: CodexPermissions; defaultWorkerEffort: ReasoningEffort; defaultClaudeWorkerEffort?: ReasoningEffort; terminalFontSize?: number; terminalAppearance?: 'focus' | 'original'; accentTheme?: 'rose' | 'violet' | 'blue' | 'teal'; workspaceRoute?: string | null; selectedId?: string | null; coordinatorEffort?: ReasoningEffort; voiceName?: string; voiceStyle?: string }
 export interface Project { id: string; name: string; type: string; status: string; repositories: { id: string; name: string; repositoryPath: string | null; available: boolean }[]; repositoryPath: string | null; available: boolean; branch?: string | null; detected?: Record<string, boolean> }
 export interface LibraryResource { id: string; kind: string; path: string; title: string; projectId: string | null; repositoryProjectId?: string }
 export interface VoiceOwner { clientId: string; surface: 'chats' | 'workspace' }

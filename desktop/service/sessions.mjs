@@ -12,11 +12,13 @@ import { englishTitle, restoredTitle } from './titles.mjs';
 import { defaultWorkerEffort, workerEfforts, claudeEfforts } from './effort.mjs';
 import { openCodeLaunchEnvironment, openCodeRuntimeConfig, openCodeVersion, openCodeStateFile, readOpenCodeState, watchOpenCode, validSessionId } from './opencode.mjs';
 import { lookupV2Session } from './opencode-v2-session.mjs';
+import { codexPermissionMode } from './codex-permissions.mjs';
 
 const { Terminal } = headless;
 const publicSession = session => {
   const { id, name, agent, cwd, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError, toolRefresh } = session;
-  return { id, name, agent, cwd, projectId: session.projectId || null, repositoryId: session.repositoryId ?? null, cardId: session.cardId || null, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, archived: !!session.archived, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError, nativeUnavailable: session.nativeUnavailable || null, toolRefresh: toolRefresh || null };
+  const permissions = agent === 'codex' ? { codexPermissions: codexPermissionMode(session.codexPermissions, bypass), codexPermissionsPending: !!session.process && session.launchedCodexPermissions !== codexPermissionMode(session.codexPermissions, bypass) } : {};
+  return { ...permissions, id, name, agent, cwd, projectId: session.projectId || null, repositoryId: session.repositoryId ?? null, cardId: session.cardId || null, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, archived: !!session.archived, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError, nativeUnavailable: session.nativeUnavailable || null, toolRefresh: toolRefresh || null };
 };
 
 export class Sessions extends EventEmitter {
@@ -38,13 +40,16 @@ export class Sessions extends EventEmitter {
       this.items.set(item.id, item);
       if (item.open) await this.hydrate(item);
     }
-    this.timer = setInterval(() => { if (this.dirty) this.persist().catch(error => this.emit('service-error', error)); }, 3000);
+    this.timer = setInterval(() => {
+      if (this.dirty) this.persist().catch(error => this.emit('service-error', error));
+      for (const session of this.items.values()) void this.applyCodexPermissions(session).catch(error => this.emit('service-error', error));
+    }, 3000);
     this.timer.unref();
     return this;
   }
 
   make(metadata) {
-    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, ...metadata, toolRefresh: null, effort: ['codex', 'claude'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, pendingOutput: '', outputTimer: null };
+    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, ...metadata, ...(metadata.agent === "codex" ? { codexPermissions: codexPermissionMode(metadata.codexPermissions, metadata.bypass), bypass: codexPermissionMode(metadata.codexPermissions, metadata.bypass) === "bypass" } : {}), toolRefresh: null, effort: ['codex', 'claude'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, pendingOutput: '', outputTimer: null };
   }
 
   async hydrate(session) {
@@ -93,7 +98,7 @@ export class Sessions extends EventEmitter {
     const session = this.make({
       id: randomUUID(), agent, name: englishTitle(options.name, `Conversation ${this.items.size + 1}`),
       tabOrder: Math.max(-1, ...this.list().map(item => item.tabOrder)) + 1,
-      cwd, projectId: options.projectId || null, repositoryId: options.repositoryId ?? null, cardId: options.cardId || null, bypass: options.bypass === true, createdAt: now, lastInputAt: null, lastOutputAt: null,
+      cwd, projectId: options.projectId || null, repositoryId: options.repositoryId ?? null, cardId: options.cardId || null, bypass: agent === "codex" ? codexPermissionMode(options.codexPermissions, options.bypass) === "bypass" : options.bypass === true, codexPermissions: agent === "codex" ? codexPermissionMode(options.codexPermissions, options.bypass) : undefined, createdAt: now, lastInputAt: null, lastOutputAt: null,
       effort: options.effort,
       status: 'starting', nativeId: options.fork ? agent === 'claude' ? randomUUID() : null : options.resumeId || (agent === 'claude' ? randomUUID() : null),
       open: true, pinned: false, archived: false, updatedAt: now, preview: '', hasConversation: !!options.resumeId, restoreError: null,
@@ -107,7 +112,7 @@ export class Sessions extends EventEmitter {
     return publicSession(session);
   }
 
-  async importConversation({ agent, nativeId, name, cwd, projectId = null, pinned = false, bypass = false }) {
+  async importConversation({ agent, nativeId, name, cwd, projectId = null, pinned = false, bypass = false, codexPermissions }) {
     if (!['codex', 'claude', 'kimi', 'opencode'].includes(agent) || typeof nativeId !== 'string' || !nativeId.trim()) throw new Error('Choose an agent and its native conversation ID.');
     nativeId = nativeId.trim();
     if (agent === 'opencode' && !validSessionId(nativeId)) throw new Error('Invalid OpenCode conversation ID.');
@@ -116,7 +121,7 @@ export class Sessions extends EventEmitter {
     const existing = [...this.items.values()].find(item => item.agent === agent && item.nativeId === nativeId);
     if (existing) { existing.name = englishTitle(name, existing.name); existing.pinned = pinned; this.changed(existing); await this.persist(); return publicSession(existing); }
     const now = new Date().toISOString();
-    const session = this.make({ id: randomUUID(), agent, nativeId, name: englishTitle(name), cwd: path.resolve(cwd || this.repo), projectId, bypass, pinned, archived: false, open: false, status: 'stopped', createdAt: now, updatedAt: now, hasConversation: true, lastInputAt: null, lastOutputAt: null, preview: '', cols: 90, rows: 32, attention: false });
+    const session = this.make({ id: randomUUID(), agent, nativeId, name: englishTitle(name), cwd: path.resolve(cwd || this.repo), projectId, bypass, codexPermissions, pinned, archived: false, open: false, status: 'stopped', createdAt: now, updatedAt: now, hasConversation: true, lastInputAt: null, lastOutputAt: null, preview: '', cols: 90, rows: 32, attention: false });
     this.items.set(session.id, session); this.changed(session); await this.persist();
     return publicSession(session);
   }
@@ -133,8 +138,9 @@ export class Sessions extends EventEmitter {
       env = launch.env; session.openCodeLaunchId = launch.launchId; session.openCodeFamily = launch.family;
       if (launch.family === 2 && launch.nativeId) session.nativeId = launch.nativeId;
     }
-    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId: session.agent === 'opencode' && session.openCodeFamily === 2 ? session.nativeId : resumeId, resumePath: session.agent === 'claude' && resumeId ? nativeWatch?.resumePath || nativeWatch?.file : null, nativeId: session.nativeId, effort: session.effort, bridge, cwd: session.cwd, fork: !!nativeWatch?.fork && !(session.agent === 'opencode' && session.openCodeFamily === 2), env, openCodeFamily: session.openCodeFamily });
+    const command = terminalCommand(session.agent, { bypass: session.bypass, codexPermissions: session.codexPermissions, resumeId: session.agent === 'opencode' && session.openCodeFamily === 2 ? session.nativeId : resumeId, resumePath: session.agent === 'claude' && resumeId ? nativeWatch?.resumePath || nativeWatch?.file : null, nativeId: session.nativeId, effort: session.effort, bridge, cwd: session.cwd, fork: !!nativeWatch?.fork && !(session.agent === 'opencode' && session.openCodeFamily === 2), env, openCodeFamily: session.openCodeFamily });
     const proc = pty.spawn(command.file, command.args, { name: 'xterm-256color', cwd: session.cwd, env, cols: session.cols, rows: session.rows, useConpty: true, useConptyDll: true });
+    if (session.agent === 'codex') session.launchedCodexPermissions = codexPermissionMode(session.codexPermissions, session.bypass);
     session.process = proc;
     session.deviceReplies?.dispose();
     // Inactive tabs still have a terminal: answer device queries without needing
@@ -330,6 +336,32 @@ export class Sessions extends EventEmitter {
     session.process?.resize(cols, rows);
     this.dirty = true;
   }
+  async setCodexPermissions(id, value) {
+    const session = this.get(id);
+    if (session.agent !== 'codex') throw new Error('This permission setting is only available for Codex.');
+    if (session.toolUpdating || session.stopping) throw new Error('Wait for the terminal restart or close before changing Codex permissions.');
+    if (value == null) throw new Error('Choose a Codex permission mode.');
+    session.codexPermissions = codexPermissionMode(value);
+    session.bypass = session.codexPermissions === 'bypass';
+    session.updatedAt = new Date().toISOString();
+    session.permissionRefreshFailed = false;
+    this.changed(session);
+    await this.persist();
+    await this.applyCodexPermissions(session);
+    return publicSession(session);
+  }
+  async applyCodexPermissions(session) {
+    if (this.closed || session.agent !== 'codex' || !session.open || !session.process || session.launchedCodexPermissions === session.codexPermissions || session.permissionRefreshFailed || session.permissionApplying || session.stopping || session.toolUpdating || session.activity !== 'idle' || session.attention || !this.permissionReady) return;
+    session.permissionApplying = true;
+    const proc = session.process, inputAt = session.lastInputAt, desired = session.codexPermissions;
+    try {
+      if (!await this.permissionReady(session) || session.process !== proc || session.lastInputAt !== inputAt || session.codexPermissions !== desired || session.activity !== 'idle' || !session.open || this.closed) return;
+      await this.restartTools(session, { process: proc, inputAt, permissions: true });
+    } catch (error) {
+      session.permissionRefreshFailed = true;
+      throw error;
+    } finally { session.permissionApplying = false; }
+  }
   rename(id, name) { const session = this.get(id); session.name = englishTitle(name, session.name); this.changed(session); return publicSession(session); }
   pin(id, value) {
     const session = this.get(id);
@@ -446,17 +478,19 @@ export class Sessions extends EventEmitter {
     await this.persist();
     return publicSession(session);
   }
-  async restartTools(session, { process: expected, inputAt }) {
-    if (!session.nativeId || !session.hasConversation || session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle') throw new Error('Chat changed before the MCP refresh.');
+  async restartTools(session, { process: expected, inputAt, permissions = false }) {
+    const desiredPermissions = session.codexPermissions;
+    if (!permissions && session.agent === 'codex' && session.launchedCodexPermissions !== session.codexPermissions) throw new Error('Codex permissions changed. Wait for the automatic restart before refreshing tools.');
+    if (((!permissions || session.hasConversation) && (!session.nativeId || !session.hasConversation)) || session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle' || !session.open || this.closed) throw new Error('Chat changed before the native restart.');
     const boundary = await this.nativeBoundary(session, session.nativeId);
-    if (session.agent !== 'opencode' && (!boundary || !(await stat(boundary.file).catch(() => null))?.isFile())) throw new Error('The native conversation cannot be located; the terminal was not stopped.');
+    if (session.agent !== 'opencode' && (!permissions || session.hasConversation) && (!boundary || !(await stat(boundary.file).catch(() => null))?.isFile())) throw new Error('The native conversation cannot be located; the terminal was not stopped.');
     // Preflight configuration and command construction before closing anything.
     const bridge = await this.prepareLaunch?.(session, { preview: true });
     const env = childEnvironment(session.projectId ? session.cwd : this.repo);
     const openCodeFamily = session.agent === 'opencode' && Number(openCodeVersion(env).split('.')[0]) >= 2 ? 2 : 1;
-    terminalCommand(session.agent, { resumeId: session.nativeId, resumePath: boundary?.file, cwd: session.cwd, bypass: session.bypass, effort: session.effort, bridge, env, openCodeFamily });
+    terminalCommand(session.agent, { resumeId: session.nativeId, resumePath: boundary?.file, cwd: session.cwd, bypass: session.bypass, codexPermissions: session.codexPermissions, effort: session.effort, bridge, env, openCodeFamily });
     if (session.agent === 'opencode') openCodeRuntimeConfig(env, bridge, openCodeFamily);
-    if (session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle') throw new Error('Chat changed before the MCP refresh.');
+    if (session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle' || !session.open || this.closed || session.agent === 'codex' && (permissions ? session.codexPermissions !== desiredPermissions : session.launchedCodexPermissions !== session.codexPermissions)) throw new Error('Chat or permissions changed before the native restart.');
     session.toolUpdating = true;
     try {
       await new Promise((resolve, reject) => {
@@ -515,7 +549,7 @@ export class Sessions extends EventEmitter {
   async persist() {
     this.dirty = false;
     this.saveChain = this.saveChain.catch(() => {}).then(async () => {
-      await saveJson(path.join(this.stateDir, 'sessions.json'), this.list().map(({ toolRefresh, ...saved }) => { void toolRefresh; return saved; }));
+      await saveJson(path.join(this.stateDir, 'sessions.json'), this.list().map(({ toolRefresh, codexPermissionsPending, ...saved }) => { void toolRefresh; void codexPermissionsPending; return saved; }));
       for (const session of this.items.values()) {
         if (!session.terminal) continue;
         await new Promise(resolve => session.terminal.write('', resolve));

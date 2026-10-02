@@ -1,6 +1,7 @@
 import { secret, within } from './util.mjs';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { HubFiles } from './hub-files.mjs';
 
 export const bridgeTools = [
   { name: 'mrmak_create_card', description: 'Create an explicitly requested Hub card in this workspace. Defaults to the chat’s linked working project; pass repositoryId null for a workspace-wide card. Category changes the card label and icon, not its scope.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, category: { type: 'string', enum: ['project', 'dev', 'research', 'game', 'image-gen', 'analytics', 'lead-magnet', 'other'] }, repositoryId: { type: ['string', 'null'] } }, required: ['title'], additionalProperties: false } },
@@ -32,17 +33,31 @@ export const bridgeTools = [
   { name: 'mrmak_manage_skill', description: 'Create an explicitly requested Hub or linked-project skill, change a Hub skill global/workspace switch, or change a native Codex/Claude/OpenCode skill switch. Linked writes require explicit user approval.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['create', 'scope', 'native-toggle'] }, agent: { type: 'string', enum: ['codex', 'claude', 'opencode'] }, target: { type: 'string', enum: ['hub', 'linked'] }, scope: { type: 'string', enum: ['global', 'workspace'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, instructions: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
   { name: 'mrmak_tool_settings', description: 'List global or selected linked-project Codex/Claude/OpenCode settings and declared MCP servers. Configuration is not proof of a live connection.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['global', 'project'] }, repositoryId: { type: 'string' } }, additionalProperties: false } },
   { name: 'mrmak_manage_tool', description: 'Change an explicitly requested Codex or Claude MCP/plugin switch, add an MCP definition, or change an OpenCode MCP or verified V2 server-plugin exclusion. Native V2 plugin IDs must be verified in the selected open chat; On removes an exact exclusion, never bypasses inherited/wildcard policy or installs a package. Never installs credentials; affected chats update when safe or show a pending configuration update.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['codex-switch', 'mcp-definition', 'claude-override', 'opencode-switch'] }, agent: { type: 'string', enum: ['codex', 'claude', 'opencode'] }, kind: { type: 'string', enum: ['mcp', 'plugin'] }, scope: { type: 'string', enum: ['global', 'project'] }, name: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, transport: { type: 'string', enum: ['http', 'stdio'] }, url: { type: 'string' }, command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
-];
+].filter(tool => !['mrmak_add_card_note', 'mrmak_add_card_page', 'mrmak_update_card_page', 'mrmak_create_resource', 'mrmak_update_resource'].includes(tool.name));
+bridgeTools.push(
+  { name: 'mrmak_hub_destination', description: 'Resolve a Hub card page/note, Knowledge, Process, Context or skill file. Returns a native filesystem path, not document contents. Write/edit using native CLI tools; permission rejection stops the operation. New card pages and library documents need a title. Context and skill authoring require explicit approval.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['card', 'knowledge', 'process', 'context', 'skill'] }, id: { type: 'string' }, path: { type: 'string' }, title: { type: 'string' }, format: { type: 'string', enum: ['html', 'markdown'] }, scope: { type: 'string', enum: ['workspace', 'global'] }, name: { type: 'string' }, target: { type: 'string', enum: ['hub', 'linked'] }, repositoryId: { type: 'string' }, confirmed: { type: 'boolean' } }, required: ['kind'], additionalProperties: false } },
+  { name: 'mrmak_register_hub_file', description: 'Register/refresh a file already written with native CLI tools at a resolved Hub destination. Does not write or copy document contents. Never call after a denied or failed write.', inputSchema: { type: 'object', properties: { destinationId: { type: 'string' } }, required: ['destinationId'], additionalProperties: false } },
+);
+// Keep configuration actions, but no content-writing schema is exposed as a fallback.
+const contextTool = bridgeTools.find(tool => tool.name === 'mrmak_context');
+contextTool.inputSchema.properties.action.enum = ['list', 'read'];
+for (const key of ['text', 'expectedRevision', 'confirmed']) delete contextTool.inputSchema.properties[key];
+contextTool.description = 'List or read global Context Markdown. Authoring uses mrmak_hub_destination and native CLI permissions, not this tool.';
+const skillTool = bridgeTools.find(tool => tool.name === 'mrmak_manage_skill');
+skillTool.inputSchema.properties.action.enum = ['scope', 'native-toggle'];
+for (const key of ['target', 'name', 'description', 'instructions']) delete skillTool.inputSchema.properties[key];
+skillTool.description = 'Change Hub availability or a supported native skill switch after approval. Author skill files with mrmak_hub_destination and native CLI tools.';
+bridgeTools.find(tool => tool.name === 'mrmak_read_card').description = 'Read a card summary: only the first page is converted to plain text and limited to 12,000 characters. This is not editable source. Resolve mrmak_hub_destination to list every page and read its original file with native tools.';
 
 export class WorkspaceBridge {
-  constructor(projects, workspace, registry, services = {}) { Object.assign(this, { projects, workspace, registry, services }); this.grants = new Map(); }
+  constructor(projects, workspace, registry, services = {}) { Object.assign(this, { projects, workspace, registry, services }); this.grants = new Map(); this.destinations = new Map(); this.hubFiles = new HubFiles(projects, registry); }
   issue(sessionId, projectId, cardId = null, repositoryId = null, agent = 'codex') {
     this.revoke(sessionId);
     if (!['codex', 'claude', 'opencode'].includes(agent)) throw new Error('Unsupported Bridge agent.');
     const token = secret(); this.grants.set(token, { sessionId, projectId, cardId, repositoryId, agent }); return token;
   }
-  revoke(sessionId) { for (const [token, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(token); }
-  close() { this.grants.clear(); }
+  revoke(sessionId) { for (const [token, grant] of this.grants) if (grant.sessionId === sessionId) { this.grants.delete(token); this.destinations.delete(token); } }
+  close() { this.grants.clear(); this.destinations.clear(); }
   async call(token, name, args = {}) {
     const grant = this.grants.get(token);
     if (!grant) throw Object.assign(new Error('Bridge access expired.'), { status: 401 });
@@ -50,6 +65,19 @@ export class WorkspaceBridge {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid Bridge arguments.');
     const definition = bridgeTools.find(tool => tool.name === name);
     if (!definition || Object.keys(args).some(key => !Object.hasOwn(definition.inputSchema.properties, key))) throw new Error('Unsupported Bridge operation.');
+    if (name === 'mrmak_hub_destination') {
+      const { plan, value } = await this.hubFiles.prepare(grant, args);
+      if (!plan) return value;
+      const destinations = this.destinations.get(token) || new Map();
+      if (destinations.size >= 100) destinations.delete(destinations.keys().next().value);
+      const destinationId = secret(); destinations.set(destinationId, plan); this.destinations.set(token, destinations);
+      return { ...value, destinationId };
+    }
+    if (name === 'mrmak_register_hub_file') {
+      const plan = this.destinations.get(token)?.get(args.destinationId);
+      if (!plan) throw new Error('Choose a destination resolved in this chat.');
+      return this.hubFiles.register(grant, plan);
+    }
     const cards = (await this.registry()).entities.filter(card => (card.projectId || null) === grant.projectId);
     const project = grant.projectId ? await this.projects.get(grant.projectId) : null;
     const repository = async () => {
@@ -65,7 +93,7 @@ export class WorkspaceBridge {
     }
     if (name === 'mrmak_list_repositories') return (project?.repositories || []).map(repository => ({ ...repository, cards: cards.filter(card => card.repositoryId === repository.id).map(card => ({ id: card.id, title: card.title })) }));
     if (name === 'mrmak_list_workspaces') return (await this.projects.list()).map(({ id, name: label, repositories }) => ({ id, name: label, linkedProjects: repositories.map(({ id: repositoryId, name: repositoryName, available }) => ({ id: repositoryId, name: repositoryName, available })) }));
-    if (name === 'mrmak_card_authoring_guide') { const guide = await this.projects.readHubSkill(grant.projectId, 'workspace-authoring', grant.agent); const workflow = await readFile(path.join(this.projects.repo, 'processes', 'workspace-authoring.md'), 'utf8').catch(() => ''); return { text: `${guide.text}\n${workflow}\nFor linked-project chats, use the scoped Bridge to create or update card pages and import supporting media into the Hub. Do not write Hub paths directly. The repository map is informational and does not authorize edits to secondary repositories.\n` }; }
+    if (name === 'mrmak_card_authoring_guide') { const guide = await this.projects.readHubSkill(grant.projectId, 'workspace-authoring', grant.agent); const workflow = await readFile(path.join(this.projects.repo, 'processes', 'workspace-authoring.md'), 'utf8').catch(() => ''); return { text: `${guide.text}\n${workflow}\nResolve Hub destinations, author files with native CLI tools, then register paths only. Never use Bridge document-writing fallbacks after a permission denial. Do not edit internal registries or unrelated linked projects.\n` }; }
     if (name === 'mrmak_list_hub_skills') return (await this.projects.hubSkills(grant.projectId, grant.agent)).filter(item => item.effective).map(({ id, name, description, projectOverride }) => ({ id, name, description, scope: projectOverride === true ? 'project' : 'hub-global' }));
     if (name === 'mrmak_read_hub_skill') return this.projects.readHubSkill(grant.projectId, args.id, grant.agent);
     if (name === 'mrmak_list_repository_files') return this.projects.listRepositoryFiles(grant.projectId, args.repositoryId, args.path || '');
@@ -83,7 +111,7 @@ export class WorkspaceBridge {
     if (name === 'mrmak_list_cards') return cards.map(({ id, title, description, status, repositoryId }) => ({ id, title, description, status, repositoryId, selected: id === grant.cardId }));
     if (name === 'mrmak_read_card' || name === 'mrmak_update_card') {
       if (!cards.some(card => card.id === args.id)) throw Object.assign(new Error('Card is not available to this workspace.'), { status: 403 });
-      if (name === 'mrmak_read_card') return this.workspace.read(args.id);
+      if (name === 'mrmak_read_card') return { ...await this.workspace.read(args.id), sourceNote: 'Summary only, not HTML source; may be truncated. Resolve mrmak_hub_destination for all pages and native source access.' };
       if (args.status === undefined && args.pinned === undefined) throw new Error('Choose a status or pin value to update.');
       // Recheck ownership inside the same serialized write as the mutation.
       return this.projects.editWorkspace(registry => {
@@ -103,7 +131,7 @@ export class WorkspaceBridge {
     if (name === 'mrmak_context') {
       if (args.action === 'list') return this.projects.contextFiles();
       if (args.action === 'read') return this.projects.readContext(args.name);
-      if (args.action === 'save' && args.confirmed === true) return this.projects.saveContext({ name: args.name, text: args.text, expectedRevision: args.expectedRevision });
+      if (args.action === 'save') throw new Error('Unsupported content write. Resolve a Context destination and use native CLI tools; no Bridge fallback.');
       throw new Error('Obtain explicit user approval before changing global Context.');
     }
     if (name === 'mrmak_list_inbox') return (await this.projects.resources('inbox', grant.projectId, 'relevant')).map(({ id, title, path: relative, projectId }) => ({ id, title, path: relative, projectId }));
@@ -141,6 +169,7 @@ export class WorkspaceBridge {
     }
     if (name === 'mrmak_manage_skill') {
       if (args.confirmed !== true) throw new Error('Obtain explicit user approval for this skill change before applying it.');
+      if (args.action === 'create') throw new Error('Unsupported content write. Resolve a skill destination and use native CLI tools; no Bridge fallback.');
       const agent = args.agent || grant.agent;
       if (args.action === 'scope') {
         if (!['global', 'workspace'].includes(args.scope)) throw new Error('Choose Global or Workspace explicitly.');

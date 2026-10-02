@@ -50,7 +50,7 @@ export class MakActions {
       if (chat.activity === 'working') throw new Error('This worker is still working. Inspect it or explicitly interrupt it before sending a new task.');
       return chat;
     };
-    if (name === 'hub_catalog') return bridgeTools.map(item => ({ name: item.name, description: item.description.slice(0, 110) }));
+    if (name === 'hub_catalog') return bridgeTools.filter(item => !['mrmak_hub_destination', 'mrmak_register_hub_file'].includes(item.name)).map(item => ({ name: item.name, description: item.description.slice(0, 110) }));
     if (name === 'hub_action_schema') { const definition = bridgeTools.find(item => item.name === args.name); if (!definition) throw new Error('Unknown Hub action.'); return definition; }
     if (name === 'hub_action') {
       if (!bridgeTools.some(item => item.name === args.name)) throw new Error('Unknown Hub action.');
@@ -63,6 +63,7 @@ export class MakActions {
       await this.scope(scope);
     };
     if (name.startsWith('mrmak_')) {
+      if (['mrmak_hub_destination', 'mrmak_register_hub_file'].includes(name)) throw new Error('Mak is read-only. Delegate content authoring to a visible worker chat with its native permissions; do not bypass a denied write.');
       if (['mrmak_manage_tool', 'mrmak_manage_skill'].includes(name) || name === 'mrmak_context' && args.action === 'save' || ['mrmak_create_resource', 'mrmak_update_resource', 'mrmak_assign_inbox'].includes(name) && args.scope === 'global') {
         await confirm('Apply Mak configuration or global change?');
         if (['mrmak_manage_tool', 'mrmak_manage_skill', 'mrmak_context'].includes(name)) args = { ...args, confirmed: true };

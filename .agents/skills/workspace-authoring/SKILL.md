@@ -20,16 +20,18 @@ Use local output paths, meaningful alt text and lazy loading. Keep motion
 studies playable with native video controls. Wide tables must scroll within
 the report. Never cover the document close button with the Files rail.
 
-Update `workspace/workspace.json` with a stable ID, category, folder, readable
+Outside Mr. Mik chats, update `workspace/workspace.json` with a stable ID, category, folder, readable
 title, creation date, last updated date and steps. `sample: true` is reserved for
 starter examples; ordinary work uses normal archiving behavior.
 
-For a chat launched in a linked repository, use the scoped Mr. Mak Workspace
-Bridge instead of writing into the Hub directly. Read `mrmak_chat_context` and
-the project cards first. Add or update HTML pages and copy supporting media
-into the selected card only when the
-user asks for that deliverable. The Bridge can also list other repositories of
-the same Mr. Mak project, but their presence does not authorize edits there.
+In Mr. Mik chats, read `mrmak_chat_context` and resolve the requested file with
+`mrmak_hub_destination`. Read and author its absolute path using native CLI
+tools, then call `mrmak_register_hub_file` with only the destination ID. Do not
+send whole HTML/Markdown documents to the Bridge or edit its internal registry.
+Respect CLI permissions: if access is rejected, stop without a Bridge-writing
+fallback. Use the returned shared-assets path for report styles. A linked
+project remains the working directory, not the destination of Hub reports.
+Outside Mr. Mik chats, maintain the registry according to the workflow above.
 
 Open every changed tab at wide and narrow sizes. Check media and links, Markdown
 rendering and image close/download controls. Preserve the dark surface during

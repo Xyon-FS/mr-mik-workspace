@@ -108,21 +108,22 @@ test('Reasoning defaults and per-conversation override persist, fork inherits, a
   } finally { service.coordinator.operationPromises.clear(); await service.close(); }
 });
 
-test('Mak freezes workspace across UI changes, writes through the Bridge, and persists scoped History', async () => {
+test('Mak freezes workspace across UI changes, updates metadata through the Bridge, and persists scoped History', async () => {
   const { repo, service, request, saveProject } = await makFixture();
   try {
     const a = await saveProject('Game A');
     const b = await saveProject('Game B');
+    const card = await service.projects.createCard({ projectId: a.id, title: 'Workspace A lesson' });
     let release;
     const gate = new Promise(resolve => { release = resolve; });
-    fakeMak(service.coordinator, async (scope, id) => { await gate; await service.coordinator.execute('mrmak_create_resource', { kind: 'knowledge', title: 'Lesson', text: 'Workspace A lesson.' }, id, undefined, scope); });
+    fakeMak(service.coordinator, async (scope, id) => { await gate; await service.coordinator.execute('mrmak_update_card', { id: card.id, pinned: true }, id, undefined, scope); });
     const working = request('/coordinator', { id: 'frozen-scope', text: 'Save a lesson', scope: { projectId: a.id } });
     while (!service.coordinator.active) await new Promise(resolve => setTimeout(resolve, 10));
     await request('/settings', { selectedProjectId: b.id }); release();
     const result = await working;
     assert.equal(result.status, 'completed'); assert.equal(result.scope.projectId, a.id);
-    assert.equal((await service.projects.resources('knowledge', a.id, 'relevant')).length, 1);
-    assert.equal((await service.projects.resources('knowledge', b.id, 'relevant')).length, 0);
+    assert.equal((await service.bridge.registry()).entities.find(item => item.id === card.id).pinned, true);
+    assert.equal((await service.bridge.registry()).entities.some(item => item.projectId === b.id), false);
     const history = JSON.parse(await readFile(path.join(repo, '.mrmak', 'mak-history.json'), 'utf8'));
     assert.equal(history.operations[0].scope.projectId, a.id);
     assert.equal((await request(`/coordinator?projectId=${b.id}`)).history.length, 0);

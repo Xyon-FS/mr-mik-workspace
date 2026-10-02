@@ -20,7 +20,7 @@ for (const agent of ['codex', 'claude']) test(`${agent}: explicit partial full t
   const oldCodex = process.env.CODEX_HOME, oldClaude = process.env.CLAUDE_CONFIG_DIR;
   try {
     process.env.CODEX_HOME = path.join(root, 'pc1-codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'pc1-claude');
-    const healthy = { id: randomUUID(), agent, nativeId: projectId, name: 'Healthy context', cwd: source.repo, hasConversation: true, open: false, updatedAt: '2026-10-02T00:00:00Z' };
+    const healthy = { id: randomUUID(), agent, ...(agent === 'codex' ? { codexPermissions: 'full-access' } : {}), nativeId: projectId, name: 'Healthy context', cwd: source.repo, hasConversation: true, open: false, updatedAt: '2026-10-02T00:00:00Z' };
     const missing = { ...healthy, id: randomUUID(), nativeId: id, name: 'Missing context' };
     for (const chat of [healthy, missing]) source.sessions.items.set(chat.id, source.sessions.make(chat));
     const file = agent === 'codex' ? path.join(process.env.CODEX_HOME, 'sessions', 'rollout-fixture-' + projectId + '.jsonl') : await claudeTranscript(source.repo, projectId);
@@ -40,6 +40,7 @@ for (const agent of ['codex', 'claude']) test(`${agent}: explicit partial full t
     await assert.rejects(target.archive.importFrom(archive.path, { ...options, reviewHash: 'stale' }), /archive changed/);
     const result = await target.archive.importFrom(archive.path, options); assert.equal(result.nativeImported, 1); assert.equal(result.nativeUnavailable, 1);
     assert.ok(target.sessions.get(missing.id).nativeUnavailable); assert.equal(target.sessions.get(healthy.id).nativeUnavailable, null);
+    if (agent === 'codex') assert.equal(target.sessions.get(healthy.id).codexPermissions, 'full-access');
     await assert.rejects(target.sessions.resume(missing.id), /native conversation could not be located/);
     target.sessions.get(missing.id).nativeUnavailable = null; target.sessions.get(missing.id).preview = 'Local healthy state';
     await target.archive.importFrom(archive.path, options); assert.equal(target.sessions.get(missing.id).preview, 'Local healthy state'); assert.equal(target.sessions.get(missing.id).nativeUnavailable, null);
@@ -98,7 +99,7 @@ test('Mak full export transfers native coordinator context and branches; light i
     await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id, cwd: source.repo } }) + '\n' + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fixture context' }] } }) + '\n');
     const conversation = { id: projectId, threadId: id, projectId: null, title: 'Fixture Mak', parentId: null, at: '2026-09-30T00:00:00Z', effort: 'low', model: 'fixture-model', updatedAt: '2026-09-30T00:01:00Z' };
     await writeFile(path.join(source.stateDir, 'mak-conversations.json'), JSON.stringify({ conversations: [conversation], selected: { global: projectId } }));
-    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultWorkerEffort: 'ultra', defaultClaudeWorkerEffort: 'max', coordinatorEffort: 'low' }));
+    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultWorkerEffort: 'ultra', defaultClaudeWorkerEffort: 'max', coordinatorEffort: 'low', defaultCodexPermissions: 'full-access' }));
     const light = await source.archive.exportTo(root, { chats: 'light' });
     const full = await source.archive.exportTo(root, { chats: 'full' });
     process.env.CODEX_HOME = path.join(root, 'pc2');
@@ -106,7 +107,7 @@ test('Mak full export transfers native coordinator context and branches; light i
     const plan = await target.archive.preview(full.path); assert.equal(plan.native.length, 1); assert.ok(plan.native[0].name.startsWith('Mak'));
     await target.archive.importFrom(full.path, { restoreSettings: true }); await target.archive.importFrom(full.path);
     const importedSettings = JSON.parse(await readFile(path.join(target.stateDir, 'settings.json'), 'utf8'));
-    assert.equal(importedSettings.defaultWorkerEffort, 'ultra'); assert.equal(importedSettings.defaultClaudeWorkerEffort, 'max'); assert.equal(importedSettings.coordinatorEffort, 'low');
+    assert.equal(importedSettings.defaultCodexPermissions, 'full-access'); assert.equal(importedSettings.defaultWorkerEffort, 'ultra'); assert.equal(importedSettings.defaultClaudeWorkerEffort, 'max'); assert.equal(importedSettings.coordinatorEffort, 'low');
     const records = JSON.parse(await readFile(path.join(target.stateDir, 'mak-conversations.json'), 'utf8'));
     assert.equal(records.conversations.length, 1); assert.equal(records.selected.global, projectId);
     assert.equal(records.conversations[0].effort, 'low'); assert.equal(records.conversations[0].model, 'fixture-model');

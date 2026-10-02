@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.10 — Native Hub authoring and safer chat permissions
+
+- Codex permission changes now automatically restart/resume the same chat in-place when idle with an empty prompt and no native dialogs. Busy requests/drafts wait; failed preflight never stops the CLI and failures do not loop. Fixed terminal filtering that incorrectly dropped native focus/blur notifications. Added an isolated live-tick UI test; confirmation of the reported Codex Working timer still requires a real active turn.
+
+- Isolated portable launch profiles from the installed app, including saved Hub selection, native window preferences and single-instance routing. Opening the portable or an explicit `--repo` Hub no longer replaces the installed app's remembered Hub. Direct portable executable launches discover their sibling MyHub (legacy Hub also supported). Native agent accounts/configuration remain unchanged and shared.
+
+- Added three Codex worker permission choices: native CLI configuration, full filesystem access with user approvals on request, and existing bypass. Defaults, per-chat changes, resume/fork and transfer preserve the choice. Open chats automatically resume with the new mode when safe; tool refresh waits for pending permission changes. Claude, OpenCode, Kimi and Mik coordinator permissions are unchanged. Temporary-folder management remains deferred.
+
+- Hub content authoring now resolves scoped file destinations, uses native CLI file tools, and registers metadata without sending HTML/Markdown through MCP. Legacy Bridge document writes are disabled, including Context saves and skill creation. Permission denials have no writing fallback. Codex adds existing content roots only for an explicit workspace-write sandbox without custom profiles; Claude uses additional directories; OpenCode retains native external-path approvals. Mik remains read-only and delegates document authoring to visible workers. Updated authoring instructions and regression coverage.
+
+- Removed the temporary Cursor diagnostics overlay, report helper, sampling timer and parser counters. OpenCode cursor contrast and safe scrollback clearing remain unchanged; their UI tests now inspect the rendered cursor directly. Help documents native Codex usage/status commands.
+
 ## 0.2.9 — Compact provider controls
 
 - Simplified installed-app first launch with Create a new Hub and Open an existing Hub. New Hubs use Documents/Mr. Mik/MyHub or a new MyHub in a chosen parent folder, include the portable starter examples/skills, and never overwrite existing folders. The selected path is remembered; missing saved Hubs prompt again. Portable startup remains direct. Updated first-use documentation; app version remains 0.2.9.

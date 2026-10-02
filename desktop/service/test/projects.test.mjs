@@ -32,6 +32,12 @@ async function fixture() {
   return { repo, external, other, projects, a, b, bridge, registry };
 }
 
+async function author(bridge, token, args, content) {
+  const destination = await bridge.call(token, 'mrmak_hub_destination', args);
+  await writeFile(destination.path, content);
+  return bridge.call(token, 'mrmak_register_hub_file', { destinationId: destination.destinationId });
+}
+
 test('registration separates portable metadata from local locations and never copies or deletes repositories', async () => {
   const f = await fixture();
   assert.equal((await f.projects.inspect(f.a.id)).branch, null);
@@ -138,8 +144,8 @@ test('one logical project links independent repositories and cards retain Hub-on
   assert.ok((await f.bridge.call(token, 'mrmak_list_repositories')).some(item => item.id === linked.id && item.cards[0].id === card.id));
   assert.equal((await f.bridge.call(token, 'mrmak_list_cards'))[0].selected, true);
   assert.equal((await f.bridge.call(token, 'mrmak_read_repository_file', { repositoryId: linked.id, path: 'model.txt' })).text, 'model source');
-  const page = await f.bridge.call(token, 'mrmak_add_card_page', { id: card.id, title: 'Models', html: '<!doctype html><html><body>Models</body></html>' });
-  await f.bridge.call(token, 'mrmak_update_card_page', { id: card.id, path: page.path, html: '<!doctype html><html><body>Updated models</body></html>' });
+  const page = await author(f.bridge, token, { kind: 'card', id: card.id, title: 'Models' }, '<!doctype html><html><body>Models</body></html>');
+  await author(f.bridge, token, { kind: 'card', id: card.id, path: page.path }, '<!doctype html><html><body>Updated models</body></html>');
   assert.match(await readFile(path.join(f.repo, 'workspace', card.folder, page.path), 'utf8'), /Updated models/);
   await assert.rejects(f.bridge.call(token, 'mrmak_update_card_page', { id: card.id, path: '../other.html', html: '<html>Bad</html>' }));
   const asset = await f.bridge.call(token, 'mrmak_import_card_asset', { id: card.id, repositoryId: linked.id, path: 'model.txt' });
@@ -292,13 +298,13 @@ test('Bridge isolates cards and resources, denies general operations and revokes
   await assert.rejects(f.bridge.call(other, 'mrmak_read_card', { id: card.id }), /not available/);
   await assert.rejects(f.bridge.call(token, 'read_file', { path: '.env' }), /Unsupported/);
   await assert.rejects(f.bridge.call(token, 'mrmak_read_card', { id: card.id, projectId: f.b.id }), /Unsupported/);
-  const note = await f.bridge.call(token, 'mrmak_add_card_note', { id: card.id, title: 'Result', text: '# Verified result' });
+  const note = await author(f.bridge, token, { kind: 'card', id: card.id, title: 'Result', format: 'markdown' }, '# Verified result');
   const artifact = await f.bridge.call(token, 'mrmak_link_artifact', { id: card.id, path: 'artifact.txt' });
   assert.equal(artifact.path, 'artifact.txt');
   assert.equal(await f.projects.artifactLocation(f.a.id, card.id, artifact.path), await realpath(path.join(f.external, 'artifact.txt')));
   await assert.rejects(f.bridge.call(other, 'mrmak_link_artifact', { id: card.id, path: 'artifact.txt' }), /not available|Choose a card/);
   await assert.rejects(f.bridge.call(token, 'mrmak_link_artifact', { id: card.id, path: '../hub/workspace/workspace.json' }), /leaves|private|relative/i);
-  assert.equal(note.step, 0);
+  assert.equal(note.registered, true);
   await f.bridge.call(token, 'mrmak_update_card', { id: card.id, status: 'done' });
   assert.equal((await f.registry()).entities.find(item => item.id === card.id).status, 'done');
   f.bridge.issue('chat', f.a.id);
@@ -311,23 +317,22 @@ test('Bridge uses the selected card and keeps global and workspace library write
   const f = await fixture();
   const card = await f.projects.createCard({ projectId: f.a.id, title: 'Gameplay' });
   const project = f.bridge.issue('project-chat', f.a.id, card.id);
-  const page = await f.bridge.call(project, 'mrmak_add_card_page', { title: 'Progress', html: '<html><body>Progress</body></html>' });
+  const page = await author(f.bridge, project, { kind: 'card', title: 'Progress' }, '<html><body>Progress</body></html>');
   assert.equal(page.id, card.id);
-  const lesson = await f.bridge.call(project, 'mrmak_create_resource', { kind: 'knowledge', title: 'Local lesson', text: '# Local lesson' });
+  const lesson = await author(f.bridge, project, { kind: 'knowledge', title: 'Local lesson' }, '# Local lesson');
   assert.equal(lesson.projectId, f.a.id);
   assert.match((await readFile(path.join(f.repo, lesson.path), 'utf8')), /Local lesson/);
   const readLesson = await f.bridge.call(project, 'mrmak_read_resource', { kind: 'knowledge', id: lesson.id });
-  await f.bridge.call(project, 'mrmak_update_resource', { kind: 'knowledge', id: lesson.id, text: '# Improved lesson', expectedRevision: readLesson.revision });
+  await author(f.bridge, project, { kind: 'knowledge', id: lesson.id }, '# Improved lesson');
   assert.match((await readFile(path.join(f.repo, lesson.path), 'utf8')), /Improved lesson/);
-  await assert.rejects(f.bridge.call(project, 'mrmak_update_resource', { kind: 'knowledge', id: lesson.id, text: '# Stale edit', expectedRevision: readLesson.revision }), /changed or was truncated/);
-  const shared = await f.bridge.call(project, 'mrmak_create_resource', { kind: 'process', title: 'Shared process', text: '# Shared process', scope: 'global' });
+  await assert.rejects(f.bridge.call(project, 'mrmak_update_resource', { kind: 'knowledge', id: lesson.id, text: '# Stale edit', expectedRevision: readLesson.revision }), /Unsupported/);
+  const shared = await author(f.bridge, project, { kind: 'process', title: 'Shared process', scope: 'global' }, '# Shared process');
   assert.equal(shared.projectId, null);
-  const readShared = await f.bridge.call(project, 'mrmak_read_resource', { kind: 'process', id: shared.id });
-  await assert.rejects(f.bridge.call(project, 'mrmak_update_resource', { kind: 'process', id: shared.id, text: '# Revision', expectedRevision: readShared.revision }), /Choose Global/);
-  await assert.rejects(f.bridge.call(project, 'mrmak_context', { action: 'save', name: 'goals.md', text: '# Goal', expectedRevision: null }), /approval/);
-  const saved = await f.bridge.call(project, 'mrmak_context', { action: 'save', name: 'goals.md', text: '# Goal', expectedRevision: null, confirmed: true });
+  await assert.rejects(f.bridge.call(project, 'mrmak_hub_destination', { kind: 'process', id: shared.id }), /Choose Global/);
+  await assert.rejects(f.bridge.call(project, 'mrmak_hub_destination', { kind: 'context', name: 'goals.md' }), /approval/);
+  const saved = await author(f.bridge, project, { kind: 'context', name: 'goals.md', confirmed: true }, '# Goal');
   assert.equal((await f.bridge.call(project, 'mrmak_context', { action: 'read', name: 'goals.md' })).revision, saved.revision);
-  await assert.rejects(f.bridge.call(project, 'mrmak_context', { action: 'save', name: 'goals.md', text: '# Changed', expectedRevision: null, confirmed: true }), /changed on disk/);
+  await assert.rejects(f.bridge.call(project, 'mrmak_context', { action: 'save', name: 'goals.md', text: '# Changed', expectedRevision: null, confirmed: true }), /Unsupported/);
   await writeFile(path.join(f.external, 'reference.txt'), 'source');
   const inbox = await f.bridge.call(project, 'mrmak_import_inbox_file', { repositoryId: 'primary', path: 'reference.txt' });
   assert.equal(inbox.projectId, f.a.id);
@@ -343,7 +348,7 @@ test('Bridge uses the selected card and keeps global and workspace library write
   const globalCard = await f.bridge.call(global, 'mrmak_create_card', { title: 'Shared notes' });
   assert.equal(globalCard.projectId, null);
   assert.equal((await f.bridge.call(global, 'mrmak_list_cards')).some(item => item.id === globalCard.id), true);
-  await assert.rejects(f.bridge.call(global, 'mrmak_add_card_note', { title: 'Missing selection', text: 'x' }), /Choose a card/);
+  await assert.rejects(f.bridge.call(global, 'mrmak_hub_destination', { kind: 'card', title: 'Missing selection' }), /Choose a card/);
 });
 
 test('Bridge discovers and changes skills and MCP settings through the same scoped services as the UI', async () => {
@@ -352,12 +357,12 @@ test('Bridge discovers and changes skills and MCP settings through the same scop
   const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui'), mcpOptions: { home, env: { ...process.env, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude') } } });
   try {
     const token = service.bridge.issue('settings-chat', f.a.id, null, 'primary');
-    await assert.rejects(service.bridge.call(token, 'mrmak_manage_skill', { action: 'create', target: 'hub', name: 'project-notes', description: 'Keep project notes', instructions: '# Notes', confirmed: false }), /approval/);
-    await service.bridge.call(token, 'mrmak_manage_skill', { action: 'create', target: 'hub', name: 'project-notes', description: 'Keep project notes', instructions: '# Notes', confirmed: true });
+    await assert.rejects(service.bridge.call(token, 'mrmak_hub_destination', { kind: 'skill', target: 'hub', name: 'project-notes', confirmed: false }), /approval/);
+    await author(service.bridge, token, { kind: 'skill', target: 'hub', name: 'project-notes', confirmed: true }, '---\nname: project-notes\ndescription: Keep project notes\n---\n# Notes');
     assert.equal((await service.bridge.call(token, 'mrmak_skill_settings')).hub.find(item => item.id === 'project-notes').effective, true);
     await service.bridge.call(token, 'mrmak_manage_skill', { action: 'scope', scope: 'workspace', id: 'project-notes', enabled: false, confirmed: true });
     assert.equal((await service.bridge.call(token, 'mrmak_skill_settings')).hub.find(item => item.id === 'project-notes').effective, false);
-    await service.bridge.call(token, 'mrmak_manage_skill', { action: 'create', target: 'linked', name: 'native-check', description: 'Native check', instructions: '# Check', confirmed: true });
+    await author(service.bridge, token, { kind: 'skill', target: 'linked', name: 'native-check', confirmed: true }, '---\nname: native-check\ndescription: Native check\n---\n# Check');
     assert.match(await readFile(path.join(f.external, '.agents/skills/native-check/SKILL.md'), 'utf8'), /Native check/);
     await assert.rejects(service.bridge.call(token, 'mrmak_manage_tool', { action: 'mcp-definition', agent: 'codex', scope: 'project', name: 'demo', transport: 'stdio', command: 'node', args: [], confirmed: false }), /approval/);
     await service.bridge.call(token, 'mrmak_manage_tool', { action: 'mcp-definition', agent: 'codex', scope: 'project', name: 'demo', transport: 'stdio', command: 'node', args: [], confirmed: true });
