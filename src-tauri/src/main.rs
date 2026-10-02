@@ -104,6 +104,26 @@ fn start_file_drag(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
     });
 }
 
+fn valid_hub(root: &std::path::Path) -> bool {
+    fs::read_to_string(root.join("workspace/workspace.json")).ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|value| value.get("entities").is_some_and(|items| items.is_array()))
+}
+
+fn create_hub(app: &tauri::AppHandle, root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let resource = app.path().resource_dir()?;
+    let resource = PathBuf::from(resource.to_string_lossy().trim_start_matches(r"\\?\"));
+    let mut runtime = resource.join("runtime");
+    if !runtime.join("node.exe").is_file() {
+        runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().ok_or("Source directory unavailable")?.join(".cache/desktop-runtime");
+    }
+    let result = hidden(&mut Command::new(runtime.join("node.exe")))
+        .arg(runtime.join("service/create-hub.mjs")).arg(runtime.join("hub-template")).arg(root).output()?;
+    if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).trim().to_string().into()); }
+    if !valid_hub(root) { return Err("The new Hub could not be initialized. No existing Hub was changed.".into()); }
+    Ok(())
+}
+
 fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let config = app.path().app_config_dir()?.join("repository.json");
     let args: Vec<String> = std::env::args().collect();
@@ -113,16 +133,47 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
     let mut selected = supplied.or(saved).or(current);
     loop {
         if let Some(ref root) = selected {
-            if root.join("workspace/workspace.json").is_file() {
+            if valid_hub(root) {
                 fs::create_dir_all(config.parent().unwrap())?;
                 fs::write(&config, serde_json::to_string(&root.to_string_lossy())?)?;
                 return Ok(root.to_owned());
             }
         }
-        selected = rfd::FileDialog::new().set_title("Choose your Mr. Mik Hub folder (an existing Mr. Mak Hub is supported)").pick_folder();
-        if selected.is_none() { return Err("No Workspace repository selected".into()); }
-        if !selected.as_ref().unwrap().join("workspace/workspace.json").is_file() {
-            rfd::MessageDialog::new().set_title("Choose the Workspace folder").set_description("Select the repository folder containing workspace/workspace.json.").show();
+        let description = if selected.is_some() {
+            "The selected Hub is missing or invalid. Create a new Hub, or open an existing one. Your previous files will not be replaced."
+        } else {
+            "Your Hub stores your cards, files and workspace settings separately from the app. Create one to get started, or open a Hub you already have. Importing a backup is available later in Settings."
+        };
+        selected = None;
+        let choice = rfd::MessageDialog::new().set_title("Welcome to Mr. Mik").set_description(description)
+            .set_buttons(rfd::MessageButtons::YesNoCancelCustom("Create a new Hub".into(), "Open an existing Hub".into(), "Cancel".into())).show();
+        match choice {
+            rfd::MessageDialogResult::Custom(label) if label == "Create a new Hub" => {
+                let default = app.path().document_dir()?.join("Mr. Mik/MyHub");
+                let location = rfd::MessageDialog::new().set_title("Create your Hub")
+                    .set_description(format!("Create MyHub at:\n{}\n\nOr choose a parent folder: a new MyHub folder will be created inside it. Existing folders are never overwritten.", default.display()))
+                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom("Use default location".into(), "Choose another location".into(), "Cancel".into())).show();
+                let destination = match location {
+                    rfd::MessageDialogResult::Custom(label) if label == "Use default location" => Some(default),
+                    rfd::MessageDialogResult::Custom(label) if label == "Choose another location" => rfd::FileDialog::new().set_title("Choose a parent folder for a NEW MyHub").pick_folder().map(|folder| folder.join("MyHub")),
+                    _ => None,
+                };
+                if let Some(root) = destination {
+                    match create_hub(app, &root) {
+                        Ok(()) => selected = Some(root),
+                        Err(error) => { rfd::MessageDialog::new().set_title("Hub not created").set_level(rfd::MessageLevel::Error).set_description(error.to_string()).show(); }
+                    }
+                }
+            },
+            rfd::MessageDialogResult::Custom(label) if label == "Open an existing Hub" => {
+                selected = rfd::FileDialog::new().set_title("Open your Hub folder (not a linked project)").pick_folder();
+                if let Some(ref root) = selected {
+                    if !valid_hub(root) {
+                        rfd::MessageDialog::new().set_title("This is not a Hub").set_description("Choose an existing Mr. Mik or Mr. Mak Hub containing workspace/workspace.json. To start with a new folder, choose Create a new Hub instead.").show();
+                    }
+                }
+            },
+            _ => return Err("Hub selection cancelled".into()),
         }
     }
 }

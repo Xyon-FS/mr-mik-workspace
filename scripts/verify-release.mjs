@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, lstat } from 'node:fs/promises';
+import { readFile, readdir, lstat, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -60,6 +61,20 @@ for (const name of ['package.json', 'index.mjs', 'tui.mjs']) {
 const sqlite = spawnSync(path.join(portable, 'App/runtime/node.exe'), ['--input-type=module', '-e', "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE smoke (id TEXT)'); db.close();"], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
 assert.equal(sqlite.status, 0, 'Bundled Node lacks the SQLite runtime required for OpenCode transfer');
 const node = path.join(portable, 'App/runtime/node.exe');
+assert.equal(await readFile(path.join(portable, 'App/runtime/service/create-hub.mjs'), 'utf8'), await readFile(path.join(root, 'desktop/service/create-hub.mjs'), 'utf8'));
+const onboarding = await mkdtemp(path.join(os.tmpdir(), 'mik-release-onboarding-'));
+try {
+  const destination = path.join(onboarding, 'MyHub');
+  const args = [path.join(portable, 'App/runtime/service/create-hub.mjs'), path.join(portable, 'App/runtime/hub-template'), destination];
+  const created = spawnSync(node, args, { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  assert.equal(created.status, 0, `Bundled Hub creation failed: ${created.stderr}`);
+  const contents = await readFile(path.join(destination, 'workspace/workspace.json'), 'utf8');
+  assert.equal(JSON.parse(contents).entities.length, 4);
+  assert.deepEqual(JSON.parse(await readFile(path.join(destination, 'projects/skill-defaults.json'), 'utf8')), JSON.parse(await readFile(path.join(portable, 'MyHub/projects/skill-defaults.json'), 'utf8')));
+  const repeated = spawnSync(node, args, { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  assert.equal(repeated.status, 1); assert.match(repeated.stderr, /already exists/);
+  assert.equal(await readFile(path.join(destination, 'workspace/workspace.json'), 'utf8'), contents);
+} finally { await rm(onboarding, { recursive: true, force: true }); }
 const code = `const pty=require('./service/node_modules/node-pty');const t=pty.spawn(process.execPath,['-e', 'console.log("packaged-runtime-ok")'],{cols:80,rows:24});let data='';t.onData(x=>data+=x);t.onExit(e=>{if(!data.includes('packaged-runtime-ok')||e.exitCode!==0)process.exit(1);console.log('Bundled Node + ConPTY passed');process.exit(0)});setTimeout(()=>{t.kill();process.exit(2)},10000)`;
 const result = spawnSync(node, ['-e', code], { cwd: path.join(portable, 'App/runtime'), encoding: 'utf8', windowsHide: true, timeout: 15000 });
 assert.equal(result.status, 0, 'Bundled terminal runtime failed its isolated smoke test');

@@ -4,9 +4,9 @@ Mr. Mik is an independently maintained derivative of Mr. Mak by witnesstodark. K
 
 ## Ready-to-use Windows packages
 
-The installer bundles the local Node service and production interface. Install for the current Windows user; WebView2 is installed by the bootstrapper when necessary. Then launch Mr. Mik and choose a Hub folder. Installing the app does not include or authenticate any agent CLI.
+The installer bundles the local Node service and production interface. Install for the current Windows user; WebView2 is installed by the bootstrapper when necessary. On first launch, choose **Create a new Hub** to prepare `Documents/Mr. Mik/MyHub` (or choose another parent folder), or **Open an existing Hub**. Your selection is remembered. Existing folders are never overwritten; if the saved Hub goes missing, the app asks again rather than recreating it silently. Installing the app does not include or authenticate any agent CLI.
 
-Alternatively extract the portable ZIP and double-click **Start Mr. Mik.cmd**. It opens the included `MyHub` with Mik's Midnight Workshop examples. `App/` contains the replaceable program; `MyHub/` contains your data. Installer first launch requires an existing Hub containing `workspace/workspace.json`; first-time users can select `MyHub` from an extracted portable package. Portable is not profile-isolated: native authentication/transcripts and Windows preferences remain in their normal profiles. WebView2 must already be installed.
+Alternatively extract the portable ZIP and double-click **Start Mr. Mik.cmd**. It opens the included `MyHub` with Mik's Midnight Workshop examples directly, without first-use setup. `App/` contains the replaceable program; `MyHub/` contains your data. Installer-created Hubs include the same starter content. Portable is not profile-isolated: native authentication/transcripts and Windows preferences remain in their normal profiles. WebView2 must already be installed.
 
 To reuse an existing Mr. Mak Hub, choose that folder explicitly. The legacy `.mrmak` state remains supported. Do not run Mr. Mak and Mr. Mik against the same Hub concurrently. Native CLI authentication/global tools are not copied or moved. Prefer a full private Hub archive into a separate Hub when testing migration.
 

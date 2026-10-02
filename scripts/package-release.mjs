@@ -5,9 +5,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { starterFiles } from './source-files.mjs';
-import { Projects } from '../desktop/service/projects.mjs';
-import { addExampleWorkspace } from '../desktop/service/example-workspace.mjs';
+import { buildStarterHub } from './starter-hub.mjs';
 import { portableLauncher } from './portable-layout.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -30,18 +28,7 @@ const portable = path.join(output, 'Mr-Mik-portable'); await mkdir(portable);
 const app = path.join(portable, 'App'); await mkdir(app);
 await copyFile(executable, path.join(app, 'mrmak-workspace.exe'));
 await cp(runtime, path.join(app, 'runtime'), { recursive: true });
-// Include maintained Hub skills/workflows without owner scopes or native settings.
-for (const folder of ['scripts/video-watch', 'scripts/shared']) await cp(path.join(root, folder), path.join(portable, 'Hub', folder), { recursive: true, filter: source => !['__pycache__', 'node_modules'].includes(path.basename(source)) });
-const skillNames = (await readdir(path.join(root, '.agents/skills'), { withFileTypes: true })).filter(item => item.isDirectory()).map(item => item.name);
-for (const agent of ['.agents', '.claude']) {
-  for (const name of skillNames) await cp(path.join(root, agent, 'skills', name), path.join(portable, 'Hub', agent, 'skills', name), { recursive: true, filter: source => !['__pycache__', 'node_modules'].includes(path.basename(source)) });
-}
-await mkdir(path.join(portable, 'Hub'), { recursive: true });
-for (const [name, value] of Object.entries(starterFiles)) { const to = path.join(portable, 'Hub', name); await mkdir(path.dirname(to), { recursive: true }); await writeFile(to, JSON.stringify(value, null, 2) + '\n'); }
-for (const folder of ['context', 'knowledge', 'processes', 'inbox', '.agents/skills', '.claude/skills']) await mkdir(path.join(portable, 'Hub', folder), { recursive: true });
-for (const name of ['AGENTS.md', 'CLAUDE.md', 'processes/workspace-authoring.md', 'knowledge/video-watch.md', 'knowledge/voice-dictation.md']) { const file = path.join(portable, 'Hub', name); await mkdir(path.dirname(file), { recursive: true }); await copyFile(path.join(root, name), file); }
-await cp(path.join(root, 'workspace/_shared'), path.join(portable, 'Hub/workspace/_shared'), { recursive: true });
-await addExampleWorkspace(new Projects(path.join(portable, 'Hub'), path.join(portable, 'Hub/.mrmak')));
+await buildStarterHub(root, path.join(portable, 'Hub'));
 await rename(path.join(portable, 'Hub'), path.join(portable, 'MyHub'));
 await writeFile(path.join(portable, 'Start Mr. Mik.cmd'), portableLauncher);
 await writeFile(path.join(portable, 'README.txt'), 'Mr. Mik portable for Windows x64. Run Start Mr. Mik.cmd. App contains the replaceable program; MyHub contains your data, including hidden folders. To update on the same PC, close the app and replace only App and the launcher: NEVER overwrite MyHub with the new example Hub. Older Hub folders remain supported. To use an external Hub, pass its folder as the first launcher argument. For another PC or a formatted system use full Hub export/import; native CLI auth/config and external projects are not included. Install/sign in to agents separately; native transcripts and app preferences remain in the Windows profile. WebView2 must be installed.\n');

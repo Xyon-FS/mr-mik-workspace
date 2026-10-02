@@ -1,5 +1,12 @@
 # Release verification — Mr. Mik
 
+## 2026-10-02 — Installed-app Hub setup (0.2.9 rebuild)
+
+- First launch now offers Create a new Hub / Open an existing Hub. New-Hub creation uses a separately bundled clean starter template shared with portable packaging. Existing Hub folders are not initialized or overwritten; a missing remembered path prompts again. Portable's explicit MyHub launcher remains unchanged.
+- Service regression: 289 tests passed. New tests create an isolated Hub with four starter cards and matching skill defaults, reject an existing populated or empty folder without changing its contents, and reject an invalid template before creating the destination. ESLint, TypeScript/frontend build and clean-template/skill-parity checks passed.
+- Release verification additionally runs the initializer with bundled Node in a disposable directory, checks starter content/defaults and verifies repeated creation is refused without changing the marker. Native dialog interaction still requires a first-launch manual check; tests do not modify the user's remembered Hub or interrupt an existing app.
+- Installer/portable are rebuilt at the unchanged 0.2.9 version. Previous release artifacts are retained separately as a backup; no GitHub assets or tags are changed by this task.
+
 ## 2026-10-02 — Offline CI History fixture correction
 
 - The OpenCode History unit test mocked terminal launch but still invoked the real version/storage boundary. This passed on an OpenCode-equipped workstation and failed on the clean GitHub runner. The fixture now mocks that boundary and asserts its exact session/native-ID arguments and single invocation; production checks are unchanged.

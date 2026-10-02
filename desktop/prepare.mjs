@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { gameSkillPack } from './service/skill-pack.mjs';
+import { buildStarterHub } from '../scripts/starter-hub.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = path.join(repo, '.cache', 'desktop-runtime');
@@ -15,6 +16,7 @@ if (actualRuntime) {
   await rm(actualRuntime, { recursive: true });
 }
 await mkdir(runtime, { recursive: true });
+await buildStarterHub(repo, path.join(runtime, 'hub-template'));
 const npm = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
 const run = (args, cwd) => { const result = spawnSync(process.execPath, [npm, ...args], { cwd, stdio: 'inherit', windowsHide: true }); if (result.status !== 0) throw new Error(`npm ${args.join(' ')} failed`); };
 run(['run', 'build'], repo);

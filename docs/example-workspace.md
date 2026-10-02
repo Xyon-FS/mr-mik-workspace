@@ -13,7 +13,7 @@ All metrics/tasks are explicitly illustrative. Checkboxes demonstrate HTML inter
 
 ## Add and customize
 
-New portable packages include the example by default. Existing Hubs use **Workspaces → Add example workspace**. The source starter remains free of personal state and has the same button. Update installation does not silently seed existing Hubs.
+New portable packages and newly created installed-app Hubs include the example by default. Existing Hubs use **Workspaces → Add example workspace**. The source starter remains free of personal state and has the same button. Update installation does not silently seed existing Hubs.
 
 Adding again while the example workspace exists selects it without replacing pages, card status, renamed workspace or custom shared styles. Delete the workspace and its cards to start fresh. If you choose Keep on removal, retained cards remain in Global Hub; re-adding creates new IDs/folders and does not reuse or overwrite those cards.
 

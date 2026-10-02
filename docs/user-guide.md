@@ -12,7 +12,7 @@ Settings now includes **Workspace snapshot · Git**, separate from **Transfer Hu
 
 Before opening a chat, distinguish the **Hub folder** you launched from the **workspaces inside it**. The Hub is the installed app's selected content folder and must contain `workspace/workspace.json`. A workspace is a logical endeavor you create in the app. Its linked projects are external working folders; they do not need to be Git repositories. The desktop app does not include Codex, Claude, OpenCode, their accounts or your project folders.
 
-1. Run **Start Mr. Mik.cmd** from the extracted portable folder to open its MyHub, or launch the installed app and select an existing Hub. The Hub contains `workspace/workspace.json`.
+1. Run **Start Mr. Mik.cmd** from the extracted portable folder to open its MyHub directly. In the installed app, choose **Create a new Hub** (default `Documents/Mr. Mik/MyHub`, or a new MyHub inside another parent folder) or **Open an existing Hub**. Creation includes starter examples and skills and refuses to overwrite existing folders. Opening reuses a Hub containing `workspace/workspace.json`; it is not an import. The chosen path is remembered; a missing saved Hub prompts again. Restore an archive later through **Settings → Transfer Hub → Import**.
 2. Install and sign in to at least one supported agent CLI separately. Codex, Claude Code and OpenCode V1/V2 have dedicated integrations; Kimi has limited support and PowerShell is a local shell, not an AI agent. Mr. Mik does not supply an account or copy an agent's login.
 3. In the right rail, open **Workspaces** and add a workspace. Give it a name; optionally pick its first linked project folder with **Browse…**, or leave it blank for a Hub-only planning workspace. The folder need not be a Git repository. Add further linked folders, such as Unity and Blender, under **Linked projects**.
 4. Use the selector at the top of the right rail to switch between **Mr. Mik Hub · Global** and a workspace. The selection changes the Hub view and defaults for new actions; it does not move files or redirect an already-running chat.
@@ -26,7 +26,7 @@ The right rail is your control center: Workspaces, Files, Knowledge, Processes, 
 
 ### Mik’s Midnight Workshop · optional example
 
-New portable packages include **Mik’s Midnight Workshop**, a fictional coffee-and-biscuits game workshop. In an existing Hub, choose **Workspaces → Add example workspace**. This is explicit: app updates do not add examples to your personal Hub automatically. Repeating the action selects the existing example instead of replacing edited pages.
+New portable packages and Hubs created during installed-app first use include **Mik’s Midnight Workshop**, a fictional coffee-and-biscuits game workshop. In an existing Hub, choose **Workspaces → Add example workspace**. This is explicit: app updates do not add examples to your personal Hub automatically. Repeating the action selects the existing example instead of replacing edited pages.
 
 The four cards are **Welcome to the workshop** (pinned, with Start here and Field guide tabs), **The midnight espresso engine** (feature report), **Caps, crumbs & characters** (art brief and clickable/downloadable local SVG), and **Operation: one more biscuit** (launch plan). Pages are offline, editable HTML with section navigation; no API, real project folder, MCP or skill activation is required. All tasks, metrics and plans are clearly illustrative rather than completed work.
 
