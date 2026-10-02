@@ -1,0 +1,2 @@
+// Launch never initializes or overwrites user data. Paths do not depend on cwd.
+export const portableLauncher = '@echo off\r\nsetlocal\r\nset "MRMIK_HUB=%~dp0MyHub"\r\nif not exist "%MRMIK_HUB%\\workspace\\workspace.json" if exist "%~dp0Hub\\workspace\\workspace.json" set "MRMIK_HUB=%~dp0Hub"\r\nif not "%~1"=="" set "MRMIK_HUB=%~f1"\r\nstart "" "%~dp0App\\mrmak-workspace.exe" --repo "%MRMIK_HUB%"\r\n';

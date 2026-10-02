@@ -14,12 +14,12 @@ interface TopbarProps {
 
 export default function Topbar({ entity, projectId, workspaceName, onHome, reportUrl }: TopbarProps) {
   const [openingChat, setOpeningChat] = useState(false)
-  const openChat = async (agent: 'codex' | 'claude' = 'codex') => {
+  const openChat = async (agent: 'codex' | 'claude' | 'opencode' = 'codex') => {
     if (openingChat) return
     setOpeningChat(true)
     try {
       const workspaceId = entity ? entity.projectId || null : projectId || null
-      if (workspaceId || agent === 'claude') await api('/chats/quick', { agent, projectId: workspaceId, cardId: entity?.id || null })
+      if (workspaceId || agent !== 'codex') await api('/chats/quick', { agent, projectId: workspaceId, cardId: entity?.id || null })
       else await api('/chats/compose', { projectId: null, cardId: null })
     } catch (error) { reportError(error) }
     finally { setOpeningChat(false) }
@@ -41,7 +41,7 @@ export default function Topbar({ entity, projectId, workspaceName, onHome, repor
       {(entity || isDesktop) && (
         <div className="topbar-right">
           {isDesktop && entity && <button className="topbar-card-pin" aria-label={`${entity.pinned ? 'Unpin' : 'Pin'} card ${entity.title}`} title={entity.pinned ? 'Unpin card' : 'Pin card'} onClick={() => void api('/cards/pin', { id: entity.id, pinned: !entity.pinned }).catch(reportError)}>{entity.pinned ? '📌 Pinned' : '📌 Pin'}</button>}
-          {isDesktop && (['codex', 'claude'] as const).map(agent => <button key={agent} className="topbar-new-chat" disabled={openingChat} aria-label={`New ${agent === 'codex' ? 'Codex' : 'Claude'} chat`} aria-busy={openingChat} title={`New ${agent === 'codex' ? 'Codex' : 'Claude'} chat`} onClick={() => void openChat(agent)}><AgentLogo agent={agent} size={18} /><Icon name="plus" size={12} /></button>)}
+          {isDesktop && (['codex', 'claude', 'opencode'] as const).map(agent => <button key={agent} className="topbar-new-chat" disabled={openingChat} aria-label={`New ${agent === 'opencode' ? 'OpenCode' : agent === 'codex' ? 'Codex' : 'Claude'} chat`} aria-busy={openingChat} title={`New ${agent === 'opencode' ? 'OpenCode' : agent === 'codex' ? 'Codex' : 'Claude'} chat`} onClick={() => void openChat(agent)}><AgentLogo agent={agent} size={18} /><Icon name="plus" size={12} /></button>)}
           {entity && reportUrl && (
             <a
               className="open-ext"

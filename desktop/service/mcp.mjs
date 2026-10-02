@@ -10,6 +10,9 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { commandPath } from './agents.mjs';
+import { openCodeLayers, mergeOpenCode } from './opencode-settings.mjs';
+import { openCodeServers, hasV2Config } from './opencode-config-view.mjs';
+import { openCodeVersion } from './opencode.mjs';
 
 const key = value => path.resolve(value).replaceAll('\\', '/').toLowerCase();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -60,6 +63,23 @@ export class McpInventory {
       cursorUser: path.join(this.home, '.cursor/mcp.json'), cursorProject: path.join(this.repo, '.cursor/mcp.json'),
     };
     const values = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, await read(file)])));
+    try {
+      const openLayers = await openCodeLayers(this.repo, this);
+      let openCodeFamily = openLayers.some(layer => hasV2Config(layer.value)) ? 2 : 1;
+      if (openCodeFamily === 1) { try { if (Number(openCodeVersion(this.env).split('.')[0]) >= 2) openCodeFamily = 2; } catch { /* File inventory remains usable without an installed CLI. */ } }
+      for (const layer of openLayers) {
+        const convert = server => {
+          if (!server || typeof server !== 'object' || Array.isArray(server)) throw new Error('Invalid OpenCode MCP definition.');
+          const result = { ...server };
+          if (Array.isArray(server.command)) { result.command = server.command[0]; result.args = server.command.slice(1); }
+          if (server.environment) result.env = server.environment;
+          if (server.type === 'remote') { result.type = 'http'; result.nativeOAuth = server.oauth !== false; }
+          const envRefs = value => typeof value === 'string' ? value.replace(/\{env:([A-Za-z_][A-Za-z_0-9]*)\}/g, '${$1}') : Array.isArray(value) ? value.map(envRefs) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, envRefs(entry)])) : value;
+          return envRefs(result);
+        };
+        add('opencode', layer.scope, layer.file, Object.fromEntries(Object.entries(openCodeServers(layer.value, openCodeFamily)).map(([name, server]) => [name, convert(server)])), layer.priority, { openCodeFamily });
+      }
+    } catch { problems.push({ path: 'OpenCode configuration', message: 'OpenCode JSON/JSONC configuration could not be read safely.' }); }
     const codex = merge(values.codexUser, values.codexProject);
     add('codex', 'global', paths.codexUser, values.codexUser.mcp_servers, 10);
     add('codex', 'project', paths.codexProject, values.codexProject.mcp_servers, 20);
@@ -121,7 +141,7 @@ export class McpInventory {
     for (const [id, layers] of grouped) {
       layers.sort((a, b) => a.priority - b.priority);
       const winner = layers.at(-1);
-      const config = winner.client === 'codex' ? layers.reduce((result, item) => merge(result, item.config), {}) : winner.config;
+      const config = winner.client === 'codex' ? layers.reduce((result, item) => merge(result, item.config), {}) : winner.client === 'opencode' && winner.openCodeFamily !== 2 ? layers.reduce((result, item) => mergeOpenCode(result, item.config), {}) : winner.config;
       const hostManaged = winner.managed || (winner.client === 'codex' && ['node_repl', 'cua_repl'].includes(winner.name));
       const env = { ...projectEnv, ...this.env, CLAUDE_PROJECT_DIR: this.repo, CLAUDE_PLUGIN_ROOT: winner.pluginRoot || '', CODEX_PLUGIN_ROOT: winner.pluginRoot || '' };
       const missing = new Set();
@@ -153,7 +173,7 @@ export class McpInventory {
         endpoint, executable: config.command ? path.basename(expanded.command) : null, plugin: winner.plugin || null,
         sources: [...layers].reverse().map(item => ({ scope: item.scope, path: item.file, effective: item === winner })),
         missingEnv: [...missing], credentialNames: Object.keys(headers), connection,
-        canCheck: !disabled && !malformedClaude && transport !== 'ws' && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper,
+        canCheck: !disabled && !malformedClaude && transport !== 'ws' && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper && !config.nativeOAuth && !(winner.client === 'opencode' && JSON.stringify(config).includes('{file:')),
       };
       servers.push(data);
       const childEnv = { ...getDefaultEnvironment(), ...object(expanded.env) };

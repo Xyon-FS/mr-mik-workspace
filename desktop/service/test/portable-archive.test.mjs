@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, stat, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Sessions } from '../sessions.mjs';
@@ -8,9 +8,84 @@ import { PortableArchive } from '../portable-archive.mjs';
 import { claudeTranscript, codexTranscript } from '../native-events.mjs';
 import { terminalCommand } from '../agents.mjs';
 import { codexCommandFixture } from './cli-fixture.mjs';
+import { randomUUID, createHash } from 'node:crypto';
+import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const projectId = '22222222-2222-4222-8222-222222222222';
+
+for (const agent of ['codex', 'claude']) test(`${agent}: explicit partial full transfer keeps healthy contexts, warns for missing History and protects local chats`, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-partial-transfer-'));
+  const source = await hub(root, 'source'), target = await hub(root, 'target');
+  const oldCodex = process.env.CODEX_HOME, oldClaude = process.env.CLAUDE_CONFIG_DIR;
+  try {
+    process.env.CODEX_HOME = path.join(root, 'pc1-codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'pc1-claude');
+    const healthy = { id: randomUUID(), agent, nativeId: projectId, name: 'Healthy context', cwd: source.repo, hasConversation: true, open: false, updatedAt: '2026-10-02T00:00:00Z' };
+    const missing = { ...healthy, id: randomUUID(), nativeId: id, name: 'Missing context' };
+    for (const chat of [healthy, missing]) source.sessions.items.set(chat.id, source.sessions.make(chat));
+    const file = agent === 'codex' ? path.join(process.env.CODEX_HOME, 'sessions', 'rollout-fixture-' + projectId + '.jsonl') : await claudeTranscript(source.repo, projectId);
+    await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id: projectId, cwd: source.repo } }) + '\n');
+    let review = await source.archive.reviewExport(root); assert.equal(review.issues.length, 1);
+    await assert.rejects(source.archive.exportTo(root, { attachmentToken: review.token }), /explicitly confirm/);
+    review = await source.archive.reviewExport(root);
+    await assert.rejects(source.archive.exportTo(root, { attachmentToken: review.token, skipNative: [`${agent}:${projectId}`] }), /Healthy chats/);
+    review = await source.archive.reviewExport(root);
+    const archive = await source.archive.exportTo(root, { attachmentToken: review.token, skipNative: review.issues.map(item => item.key) });
+    assert.equal(archive.chats, 1); assert.equal(archive.omitted, 1); assert.equal(source.sessions.get(missing.id).nativeUnavailable, undefined);
+    process.env.CODEX_HOME = path.join(root, 'pc2-codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'pc2-claude');
+    const plan = await target.archive.preview(archive.path), unavailable = plan.native.filter(item => item.status === 'unavailable');
+    assert.equal(plan.native.filter(item => item.status === 'new').length, 1); assert.equal(unavailable.length, 1);
+    await assert.rejects(target.archive.importFrom(archive.path), /explicitly confirm/); assert.equal(target.sessions.list().length, 0);
+    const options = { skipNative: unavailable.map(item => item.key), reviewHash: plan.reviewHash };
+    await assert.rejects(target.archive.importFrom(archive.path, { ...options, reviewHash: 'stale' }), /archive changed/);
+    const result = await target.archive.importFrom(archive.path, options); assert.equal(result.nativeImported, 1); assert.equal(result.nativeUnavailable, 1);
+    assert.ok(target.sessions.get(missing.id).nativeUnavailable); assert.equal(target.sessions.get(healthy.id).nativeUnavailable, null);
+    await assert.rejects(target.sessions.resume(missing.id), /native conversation could not be located/);
+    target.sessions.get(missing.id).nativeUnavailable = null; target.sessions.get(missing.id).preview = 'Local healthy state';
+    await target.archive.importFrom(archive.path, options); assert.equal(target.sessions.get(missing.id).preview, 'Local healthy state'); assert.equal(target.sessions.get(missing.id).nativeUnavailable, null);
+    // An old archive whose manifest declares a missing transcript can be safely
+    // isolated too; corruption of present bytes remains an archive-wide failure.
+    const entries = unzipSync(await readFile(archive.path)), manifest = JSON.parse(strFromU8(entries['manifest.json']));
+    const native = manifest.native[0]; delete entries[native.name];
+    const partialPath = path.join(root, 'missing-entry.mrmak.zip'); await writeFile(partialPath, zipSync(entries));
+    const partial = await target.archive.preview(partialPath); assert.equal(partial.native.filter(item => item.status === 'unavailable').length, 2);
+    const partialResult = await target.archive.importFrom(partialPath, { skipNative: partial.native.filter(item => item.status === 'unavailable').map(item => item.key), reviewHash: partial.reviewHash }); assert.equal(partialResult.nativeImported, 0);
+    entries[native.name] = strToU8('invalid JSONL\n'); const tamperedPath = path.join(root, 'tampered.mrmak.zip'); await writeFile(tamperedPath, zipSync(entries));
+    await assert.rejects(target.archive.preview(tamperedPath), /integrity/);
+    const declaration = manifest.files.find(item => item.name === native.name); declaration.size = entries[native.name].length; declaration.sha256 = createHash('sha256').update(entries[native.name]).digest('hex'); native.sha256 = declaration.sha256;
+    entries['manifest.json'] = strToU8(JSON.stringify(manifest)); const invalidPath = path.join(root, 'invalid-chat.mrmak.zip'); await writeFile(invalidPath, zipSync(entries));
+    assert.equal((await target.archive.preview(invalidPath)).native.filter(item => item.status === 'unavailable').length, 2);
+  } finally {
+    await source.sessions.close(); await target.sessions.close();
+    if (oldCodex === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldCodex;
+    if (oldClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oldClaude;
+  }
+});
+
+test('full export and review fail explicitly for missing Codex/Claude transcripts and native IDs; light remains usable', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-missing-native-'));
+  const source = await hub(root, 'source');
+  const previous = process.env.CODEX_HOME, previousClaude = process.env.CLAUDE_CONFIG_DIR;
+  try {
+    process.env.CODEX_HOME = path.join(root, 'codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'claude');
+    for (const [key, agent, nativeId] of [['missing-codex', 'codex', id], ['missing-claude', 'claude', projectId], ['missing-id', 'codex', null]]) source.sessions.items.set(key, source.sessions.make({ id: key, name: key, agent, nativeId, cwd: source.repo, open: false, hasConversation: true }));
+    const verify = error => /3 native chat/.test(error.message) && /missing-codex/.test(error.message) && /missing-claude/.test(error.message) && /native ID missing/i.test(error.message) && /light export/.test(error.message);
+    const missingReview = await source.archive.reviewExport(root); assert.equal(missingReview.issues.length, 3);
+    await assert.rejects(source.archive.exportTo(root), verify);
+    const light = await source.archive.exportTo(root, { chats: 'light' }); assert.ok((await stat(light.path)).isFile());
+    source.sessions.items.clear();
+    source.sessions.items.set('empty', source.sessions.make({ id: 'empty', agent: 'claude', nativeId: id, open: false, hasConversation: false, cwd: source.repo }));
+    assert.ok((await source.archive.exportTo(root)).path);
+    source.sessions.items.get('empty').lastInputAt = '2026-09-30T00:01:00Z';
+    await assert.rejects(source.archive.exportTo(root), /1 native chat/);
+    source.sessions.items.clear();
+    await writeFile(path.join(source.stateDir, 'mak-conversations.json'), JSON.stringify({ conversations: [{ id: projectId, threadId: id, projectId: null, title: 'Missing Mik context', parentId: null, at: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:01:00Z' }], selected: {} }));
+    await assert.rejects(source.archive.exportTo(root), /Missing Mik context/);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
+    if (previousClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaude;
+  }
+});
 
 test('Mak full export transfers native coordinator context and branches; light is History-only; reimport deduplicates', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-mak-native-'));
@@ -137,7 +212,7 @@ for (const agent of ['codex', 'claude']) test(`${agent}: two-computer import upd
     await writeFile(local, first);
     const duplicate = agent === 'codex' ? path.join(process.env[variable], 'sessions', 'duplicate', `rollout-${id}.jsonl`) : path.join(process.env[variable], 'projects', 'duplicate', `${id}.jsonl`);
     await mkdir(path.dirname(duplicate), { recursive: true }); await writeFile(duplicate, first);
-    await assert.rejects(target.archive.preview(newer.path), /Multiple native/);
+    const ambiguous = await target.archive.preview(newer.path); assert.equal(ambiguous.native[0].status, 'unavailable');
   } finally {
     await source.sessions.close(); await target.sessions.close();
     if (previous === undefined) delete process.env[variable]; else process.env[variable] = previous;
@@ -152,6 +227,31 @@ async function hub(root, name) {
   const sessions = await new Sessions(repo, stateDir).init();
   return { repo, stateDir, sessions, archive: new PortableArchive(repo, stateDir, sessions, null) };
 }
+
+test('split App/MyHub archives preserve Hub settings and never export or modify the sibling program', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-layout-transfer-'));
+  const source = await hub(root, 'PC1/MyHub'), target = await hub(root, 'PC2/MyHub');
+  try {
+    for (const pc of ['PC1', 'PC2']) {
+      await mkdir(path.join(root, pc, 'App'), { recursive: true });
+      await writeFile(path.join(root, pc, 'App/program.txt'), `${pc}-program`);
+    }
+    const scopes = { skills: { 'workspace-authoring': { global: true, projects: { [projectId]: false } } } };
+    await writeFile(path.join(source.repo, 'projects/skill-scopes.json'), JSON.stringify(scopes));
+    await writeFile(path.join(source.repo, 'knowledge/lesson.md'), 'User content');
+    const exported = await source.archive.exportTo(root, { chats: 'full' });
+    const preview = await target.archive.preview(exported.path);
+    assert.equal(preview.manifest.files.some(file => /program\.txt|(^|\/)App\//.test(file.name)), false);
+    await target.archive.importFrom(exported.path);
+    assert.deepEqual(JSON.parse(await readFile(path.join(target.repo, 'projects/skill-scopes.json'), 'utf8')), scopes);
+    assert.equal(await readFile(path.join(target.repo, 'knowledge/lesson.md'), 'utf8'), 'User content');
+    assert.equal(await readFile(path.join(root, 'PC1/App/program.txt'), 'utf8'), 'PC1-program');
+    assert.equal(await readFile(path.join(root, 'PC2/App/program.txt'), 'utf8'), 'PC2-program');
+  } finally {
+    await source.sessions.close(); await target.sessions.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('portable planning chats relocate inside the imported Hub without changing linked project folders', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-planning-export-'));

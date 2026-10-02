@@ -10,11 +10,13 @@ import { readJson, saveJson } from './util.mjs';
 import { claudeTranscript, codexTranscript, codexTranscriptForChat, tailNativeFile } from './native-events.mjs';
 import { englishTitle, restoredTitle } from './titles.mjs';
 import { defaultWorkerEffort, workerEfforts, claudeEfforts } from './effort.mjs';
+import { openCodeLaunchEnvironment, openCodeRuntimeConfig, openCodeVersion, openCodeStateFile, readOpenCodeState, watchOpenCode, validSessionId } from './opencode.mjs';
+import { lookupV2Session } from './opencode-v2-session.mjs';
 
 const { Terminal } = headless;
 const publicSession = session => {
-  const { id, name, agent, cwd, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError } = session;
-  return { id, name, agent, cwd, projectId: session.projectId || null, repositoryId: session.repositoryId ?? null, cardId: session.cardId || null, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, archived: !!session.archived, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError };
+  const { id, name, agent, cwd, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError, toolRefresh } = session;
+  return { id, name, agent, cwd, projectId: session.projectId || null, repositoryId: session.repositoryId ?? null, cardId: session.cardId || null, bypass, effort, status, createdAt, lastOutputAt, lastInputAt, exitCode, nativeId, attention, activity, unread, completionVersion, lastCompletedId, cols, rows, open, pinned, archived: !!session.archived, tabOrder, tabColor, updatedAt, preview, hasConversation, restoreError, nativeUnavailable: session.nativeUnavailable || null, toolRefresh: toolRefresh || null };
 };
 
 export class Sessions extends EventEmitter {
@@ -42,7 +44,7 @@ export class Sessions extends EventEmitter {
   }
 
   make(metadata) {
-    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, ...metadata, effort: ['codex', 'claude'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, pendingOutput: '', outputTimer: null };
+    return { activity: 'idle', unread: false, completionVersion: 0, tabOrder: this.items.size, tabColor: null, ...metadata, toolRefresh: null, effort: ['codex', 'claude'].includes(metadata.agent) ? metadata.effort || defaultWorkerEffort : undefined, terminal: null, serializer: null, process: null, sequence: 0, pendingOutput: '', outputTimer: null };
   }
 
   async hydrate(session) {
@@ -106,8 +108,9 @@ export class Sessions extends EventEmitter {
   }
 
   async importConversation({ agent, nativeId, name, cwd, projectId = null, pinned = false, bypass = false }) {
-    if (!['codex', 'claude', 'kimi'].includes(agent) || typeof nativeId !== 'string' || !nativeId.trim()) throw new Error('Choose an agent and its native conversation ID.');
+    if (!['codex', 'claude', 'kimi', 'opencode'].includes(agent) || typeof nativeId !== 'string' || !nativeId.trim()) throw new Error('Choose an agent and its native conversation ID.');
     nativeId = nativeId.trim();
+    if (agent === 'opencode' && !validSessionId(nativeId)) throw new Error('Invalid OpenCode conversation ID.');
     cwd = path.resolve(cwd || this.repo);
     if (!(await stat(cwd)).isDirectory()) throw new Error('Working folder must be a directory');
     const existing = [...this.items.values()].find(item => item.agent === agent && item.nativeId === nativeId);
@@ -119,11 +122,18 @@ export class Sessions extends EventEmitter {
   }
 
   async launch(session, resumeId, nativeWatch) {
+    const toolBaseline = await this.captureTools?.(session);
     const bridge = await this.prepareLaunch?.(session);
-    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId, resumePath: session.agent === 'claude' && resumeId ? nativeWatch?.resumePath || nativeWatch?.file : null, nativeId: session.nativeId, effort: session.effort, bridge, cwd: session.cwd, fork: !!nativeWatch?.fork });
-    const env = childEnvironment(session.projectId ? session.cwd : this.repo);
+    let env = childEnvironment(session.projectId ? session.cwd : this.repo);
     if (bridge) { env.MRMAK_BRIDGE_URL = bridge.url; env.MRMAK_BRIDGE_TOKEN = bridge.token; }
     if (session.agent === 'codex') env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = `mrmak_chat_${session.id}`;
+    if (session.agent === 'opencode') {
+      session.openCodeForkParent = nativeWatch?.fork ? resumeId : null;
+      const launch = await openCodeLaunchEnvironment(session, this.stateDir, env, bridge);
+      env = launch.env; session.openCodeLaunchId = launch.launchId; session.openCodeFamily = launch.family;
+      if (launch.family === 2 && launch.nativeId) session.nativeId = launch.nativeId;
+    }
+    const command = terminalCommand(session.agent, { bypass: session.bypass, resumeId: session.agent === 'opencode' && session.openCodeFamily === 2 ? session.nativeId : resumeId, resumePath: session.agent === 'claude' && resumeId ? nativeWatch?.resumePath || nativeWatch?.file : null, nativeId: session.nativeId, effort: session.effort, bridge, cwd: session.cwd, fork: !!nativeWatch?.fork && !(session.agent === 'opencode' && session.openCodeFamily === 2), env, openCodeFamily: session.openCodeFamily });
     const proc = pty.spawn(command.file, command.args, { name: 'xterm-256color', cwd: session.cwd, env, cols: session.cols, rows: session.rows, useConpty: true, useConptyDll: true });
     session.process = proc;
     session.deviceReplies?.dispose();
@@ -156,6 +166,9 @@ export class Sessions extends EventEmitter {
       proc._agent?._conoutSocketWorker?.dispose();
       session.stopNativeWatch?.();
       session.stopNativeWatch = null;
+      if (session.agent === 'opencode') session.finalOpenCodeState = readOpenCodeState(openCodeStateFile(this.stateDir, session.id), session.id).then(state => {
+        if (state?.launchId === session.openCodeLaunchId) { session.nativeId = state.nativeId; session.hasConversation ||= state.hasConversation; this.applyOpenCodePreview(session, state); this.changed(session); }
+      });
       session.status = 'exited';
       session.activity = 'idle';
       session.exitCode = exitCode;
@@ -166,13 +179,28 @@ export class Sessions extends EventEmitter {
         if (match) { session.nativeId = match[1]; this.changed(session); }
       }).catch(() => {});
     });
+    this.toolsLaunched?.(session, toolBaseline);
     this.changed(session);
     // Discovery is read-only, and only accepts an unambiguous native session.
     this.beginDiscovery(session);
+    if (session.agent === 'opencode') session.stopNativeWatch = watchOpenCode(openCodeStateFile(this.stateDir, session.id), session.id, session.openCodeLaunchId, state => {
+      session.nativeId = state.nativeId;
+      if (state.hasConversation) session.hasConversation = true;
+      if (state.completion && state.completion !== session.lastCompletedId) this.nativeEvent(session, { kind: 'turn-completed', id: state.completion, preview: state.preview });
+      this.applyOpenCodePreview(session, state);
+      if (state.activity === 'working') this.nativeEvent(session, { kind: 'turn-started' });
+      else if (state.activity === 'waiting') this.nativeEvent(session, { kind: 'attention' });
+      else if (session.activity === 'working' || session.activity === 'waiting') { this.nativeEvent(session, { kind: 'turn-interrupted' }); session.attention = !!session.unread; }
+      this.changed(session);
+    });
     if (nativeWatch?.file) this.watchNative(session, nativeWatch.file, nativeWatch.offset);
     else if (session.agent === 'claude' && session.nativeId) claudeTranscript(session.cwd, session.nativeId).then(file => {
       if (session.process === proc) this.watchNative(session, file);
     }).catch(() => {});
+  }
+
+  applyOpenCodePreview(session, state) {
+    if (state?.nativeId === session.nativeId && state.completion === session.lastCompletedId && typeof state.preview === 'string') session.preview = state.preview.slice(-350);
   }
 
   beginDiscovery(session) {
@@ -268,6 +296,7 @@ export class Sessions extends EventEmitter {
   input(id, data, { coordinator = false, submit = false } = {}) {
     const session = this.get(id);
     if (!session.process) throw new Error('This terminal is stopped. Resume it before sending a message.');
+    if (session.toolUpdating) throw new Error('MCP settings are being applied. Wait for the terminal to reconnect.');
     if (coordinator && session.agent === 'shell') throw new Error('Mr. Mik can send messages to agent chats; type shell commands directly in PowerShell.');
     if (typeof data !== 'string' || data.length > 64000) throw new Error('Message is too large');
     if (coordinator && Date.now() - Date.parse(session.lastInputAt || 0) < 2500) throw new Error('You are typing in this chat. Wait a moment before sending through Mr. Mik.');
@@ -332,9 +361,12 @@ export class Sessions extends EventEmitter {
   }
   async clearScreen(id) {
     const session = this.get(id); await this.hydrate(session);
-    session.terminal.clear(); this.dirty = true;
+    // Terminal.clear() moves the cursor's line to row zero and discards the
+    // rest of a fullscreen TUI. ED3 removes only scrollback, not the live screen.
+    this.flushOutput(session);
+    await new Promise(resolve => session.terminal.write('\x1b[3J', resolve)); this.dirty = true;
     await this.persist(); this.emit('screen-cleared', { id });
-    return { cleared: true, note: 'Visible scrollback cleared. The native agent conversation is unchanged.' };
+    return { cleared: true, note: 'Terminal scrollback cleared. The current screen and native conversation are unchanged.' };
   }
   attend(id, reason) {
     const session = this.get(id);
@@ -350,18 +382,38 @@ export class Sessions extends EventEmitter {
     session.unread = false; session.attention = false; this.changed(session);
   }
   async nativeBoundary(session, resumeId) {
+    if (session.agent === 'opencode' && resumeId) {
+      const env = childEnvironment(session.projectId ? session.cwd : this.repo);
+      if (Number(openCodeVersion(env).split('.')[0]) >= 2 && !(await lookupV2Session(resumeId, session.cwd, env))) throw new Error('That OpenCode conversation ID was not found. The saved screen is unchanged; no new chat was created.');
+    }
     const file = !resumeId ? null : session.agent === 'codex' ? await codexTranscript(resumeId) : session.agent === 'claude' ? await claudeTranscript(session.cwd, resumeId, { search: true }) : null;
     return file ? { file, offset: (await stat(file).catch(() => null))?.size || 0 } : null;
   }
-  stop(id) { const session = this.get(id); session.process?.kill(); return { stopped: !!session.process }; }
+  requestStop(session) {
+    const proc = session.process;
+    if (!proc) return;
+    if (session.agent !== 'opencode') { proc.kill(); return; }
+    // Allow OpenCode to commit its native state before terminating ConPTY.
+    proc.write('\x03');
+    const retry = setTimeout(() => { if (session.process === proc) proc.write('\x03'); }, 500); retry.unref();
+    const kill = setTimeout(() => { if (session.process === proc) { try { proc.kill(); } catch { /* Already stopped. */ } } }, 3500); kill.unref();
+  }
+  stop(id) { const session = this.get(id); this.requestStop(session); return { stopped: !!session.process }; }
   async resume(id, nativeId) {
     if (this.closed) throw new Error('Mr. Mik is shutting down');
     const session = this.get(id);
     if (session.stopping) await session.stopping;
+    if (session.finalOpenCodeState) await session.finalOpenCodeState;
     if (session.process) return publicSession(session);
+    if (session.nativeUnavailable && !nativeId) throw new Error('The native conversation could not be located in the transfer. Your saved screen is retained; recover its native context and enter its CLI ID in History to reconnect.');
     if (!session.open && this.active().length >= 80) throw new Error('Close a tab before opening another.');
     await this.hydrate(session);
     let resumeId = nativeId || session.nativeId;
+    if (session.agent === 'opencode' && !resumeId) {
+      const state = await readOpenCodeState(openCodeStateFile(this.stateDir, session.id), session.id);
+      if (state) { resumeId = state.nativeId; session.nativeId = resumeId; }
+    }
+    if (session.agent === 'opencode' && resumeId && !validSessionId(resumeId)) throw new Error('Invalid OpenCode conversation ID.');
     if (!resumeId && session.agent === 'codex' && session.hasConversation) {
       const recovered = await this.findNative(session, true);
       if (recovered) { resumeId = recovered.id; session.nativeId = resumeId; this.changed(session); await this.persist(); }
@@ -390,8 +442,33 @@ export class Sessions extends EventEmitter {
       this.changed(session);
       throw error;
     }
+    session.nativeUnavailable = null;
     await this.persist();
     return publicSession(session);
+  }
+  async restartTools(session, { process: expected, inputAt }) {
+    if (!session.nativeId || !session.hasConversation || session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle') throw new Error('Chat changed before the MCP refresh.');
+    const boundary = await this.nativeBoundary(session, session.nativeId);
+    if (session.agent !== 'opencode' && (!boundary || !(await stat(boundary.file).catch(() => null))?.isFile())) throw new Error('The native conversation cannot be located; the terminal was not stopped.');
+    // Preflight configuration and command construction before closing anything.
+    const bridge = await this.prepareLaunch?.(session, { preview: true });
+    const env = childEnvironment(session.projectId ? session.cwd : this.repo);
+    const openCodeFamily = session.agent === 'opencode' && Number(openCodeVersion(env).split('.')[0]) >= 2 ? 2 : 1;
+    terminalCommand(session.agent, { resumeId: session.nativeId, resumePath: boundary?.file, cwd: session.cwd, bypass: session.bypass, effort: session.effort, bridge, env, openCodeFamily });
+    if (session.agent === 'opencode') openCodeRuntimeConfig(env, bridge, openCodeFamily);
+    if (session.process !== expected || session.lastInputAt !== inputAt || session.activity !== 'idle') throw new Error('Chat changed before the MCP refresh.');
+    session.toolUpdating = true;
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { subscription.dispose(); reject(new Error('The native terminal did not stop. Inspect it before retrying.')); }, 8000);
+        const subscription = expected.onExit(() => { clearTimeout(timer); subscription.dispose(); resolve(); });
+        try { this.requestStop(session); } catch (error) { clearTimeout(timer); subscription.dispose(); reject(error); }
+      });
+      if (session.finalOpenCodeState) await session.finalOpenCodeState;
+      // A close-tab or application shutdown wins over an automatic refresh.
+      if (this.closed || !session.open || this.items.get(session.id) !== session) return;
+      await this.resume(session.id, session.nativeId);
+    } finally { session.toolUpdating = false; }
   }
   async remove(id) {
     const session = this.get(id);
@@ -401,11 +478,12 @@ export class Sessions extends EventEmitter {
       session.stopping = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => { subscription.dispose(); reject(new Error('The terminal is still closing. Try reopening it in a moment.')); }, 8000);
         const subscription = proc.onExit(() => { clearTimeout(timeout); subscription.dispose(); resolve(); });
-        try { proc.kill(); } catch (error) { clearTimeout(timeout); subscription.dispose(); reject(error); }
+        try { this.requestStop(session); } catch (error) { clearTimeout(timeout); subscription.dispose(); reject(error); }
       }).finally(() => { session.stopping = null; });
     }
     this.changed(session);
     if (session.stopping) await session.stopping;
+    if (session.finalOpenCodeState) await session.finalOpenCodeState;
     if (session.agent === 'codex' && !session.nativeId && session.hasConversation) {
       const recovered = await this.findNative(session);
       if (recovered) { session.nativeId = recovered.id; this.changed(session); }
@@ -429,6 +507,7 @@ export class Sessions extends EventEmitter {
     this.items.delete(id);
     await this.persist();
     await unlink(path.join(this.stateDir, `screen-${id}.json`)).catch(error => { if (error.code !== 'ENOENT') this.emit('service-error', error); });
+    if (session.agent === 'opencode') await unlink(openCodeStateFile(this.stateDir, id)).catch(error => { if (error.code !== 'ENOENT') this.emit('service-error', error); });
     session.terminal?.dispose();
     this.emit('removed', { id });
     return { removed: true, nativeConversationUntouched: true };
@@ -436,7 +515,7 @@ export class Sessions extends EventEmitter {
   async persist() {
     this.dirty = false;
     this.saveChain = this.saveChain.catch(() => {}).then(async () => {
-      await saveJson(path.join(this.stateDir, 'sessions.json'), this.list());
+      await saveJson(path.join(this.stateDir, 'sessions.json'), this.list().map(({ toolRefresh, ...saved }) => { void toolRefresh; return saved; }));
       for (const session of this.items.values()) {
         if (!session.terminal) continue;
         await new Promise(resolve => session.terminal.write('', resolve));
@@ -447,7 +526,19 @@ export class Sessions extends EventEmitter {
   }
   async close() {
     this.closed = true; clearInterval(this.timer);
-    for (const session of this.items.values()) { session.stopNativeWatch?.(); session.process?.kill(); this.flushOutput(session); }
+    await Promise.all([...this.items.values()].map(async session => {
+      if (session.process && session.agent === 'opencode') {
+        const proc = session.process;
+        await new Promise(resolve => {
+          const timer = setTimeout(() => { subscription.dispose(); resolve(); }, 4500);
+          const subscription = proc.onExit(() => { clearTimeout(timer); subscription.dispose(); resolve(); });
+          this.requestStop(session);
+        });
+        const state = await readOpenCodeState(openCodeStateFile(this.stateDir, session.id), session.id);
+        if (state?.launchId === session.openCodeLaunchId) { session.nativeId = state.nativeId; session.hasConversation ||= state.hasConversation; this.applyOpenCodePreview(session, state); }
+      } else session.process?.kill();
+      session.stopNativeWatch?.(); this.flushOutput(session);
+    }));
     await this.persist();
     for (const session of this.items.values()) session.terminal?.dispose();
   }

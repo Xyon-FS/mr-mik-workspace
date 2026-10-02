@@ -1,4 +1,4 @@
-import { mkdir, copyFile, cp, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
+import { mkdir, copyFile, cp, readFile, readdir, writeFile, lstat, rename } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
@@ -8,12 +8,16 @@ import { fileURLToPath } from 'node:url';
 import { starterFiles } from './source-files.mjs';
 import { Projects } from '../desktop/service/projects.mjs';
 import { addExampleWorkspace } from '../desktop/service/example-workspace.mjs';
+import { portableLauncher } from './portable-layout.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Release packages require Windows x64.');
 const require = createRequire(path.join(root, 'desktop/service/package.json'));
 const { Zip, ZipDeflate } = require('fflate');
-const output = path.join(root, 'release', version);
+const suffix = process.env.MRMIK_RELEASE_SUFFIX || '';
+if (suffix && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(suffix)) throw new Error('Invalid development release suffix.');
+const label = suffix ? `${version}-${suffix}` : version;
+const output = path.join(root, 'release', label);
 if (await lstat(output).catch(() => null)) throw new Error('Release folder already exists. Choose a new app version; no existing release is overwritten.');
 const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(root, 'src-tauri/target');
 const executable = path.join(target, 'release/mrmak-workspace.exe');
@@ -23,8 +27,9 @@ const installers = (await readdir(path.join(target, 'release/bundle/nsis'))).fil
 if (installers.length !== 1) throw new Error('Build exactly one matching NSIS installer before packaging.');
 await mkdir(output, { recursive: true });
 const portable = path.join(output, 'Mr-Mik-portable'); await mkdir(portable);
-await copyFile(executable, path.join(portable, 'mrmak-workspace.exe'));
-await cp(runtime, path.join(portable, 'runtime'), { recursive: true });
+const app = path.join(portable, 'App'); await mkdir(app);
+await copyFile(executable, path.join(app, 'mrmak-workspace.exe'));
+await cp(runtime, path.join(app, 'runtime'), { recursive: true });
 // Include maintained Hub skills/workflows without owner scopes or native settings.
 for (const folder of ['scripts/video-watch', 'scripts/shared']) await cp(path.join(root, folder), path.join(portable, 'Hub', folder), { recursive: true, filter: source => !['__pycache__', 'node_modules'].includes(path.basename(source)) });
 const skillNames = (await readdir(path.join(root, '.agents/skills'), { withFileTypes: true })).filter(item => item.isDirectory()).map(item => item.name);
@@ -37,10 +42,11 @@ for (const folder of ['context', 'knowledge', 'processes', 'inbox', '.agents/ski
 for (const name of ['AGENTS.md', 'CLAUDE.md', 'processes/workspace-authoring.md', 'knowledge/video-watch.md', 'knowledge/voice-dictation.md']) { const file = path.join(portable, 'Hub', name); await mkdir(path.dirname(file), { recursive: true }); await copyFile(path.join(root, name), file); }
 await cp(path.join(root, 'workspace/_shared'), path.join(portable, 'Hub/workspace/_shared'), { recursive: true });
 await addExampleWorkspace(new Projects(path.join(portable, 'Hub'), path.join(portable, 'Hub/.mrmak')));
-await writeFile(path.join(portable, 'Start Mr. Mik.cmd'), '@echo off\r\nstart "" "%~dp0mrmak-workspace.exe" --repo "%~dp0Hub"\r\n');
-await writeFile(path.join(portable, 'README.txt'), 'Mr. Mik portable for Windows x64. Run Start Mr. Mik.cmd. A clean Hub is included. Install/sign in to Codex or Claude separately; CLI accounts and native transcripts remain in their normal profiles. App preferences remain under the Windows user profile. WebView2 must be installed. This portable folder is not a source repository.\n');
+await rename(path.join(portable, 'Hub'), path.join(portable, 'MyHub'));
+await writeFile(path.join(portable, 'Start Mr. Mik.cmd'), portableLauncher);
+await writeFile(path.join(portable, 'README.txt'), 'Mr. Mik portable for Windows x64. Run Start Mr. Mik.cmd. App contains the replaceable program; MyHub contains your data, including hidden folders. To update on the same PC, close the app and replace only App and the launcher: NEVER overwrite MyHub with the new example Hub. Older Hub folders remain supported. To use an external Hub, pass its folder as the first launcher argument. For another PC or a formatted system use full Hub export/import; native CLI auth/config and external projects are not included. Install/sign in to agents separately; native transcripts and app preferences remain in the Windows profile. WebView2 must be installed.\n');
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) await copyFile(path.join(root, name), path.join(portable, name));
-const archive = path.join(output, `Mr-Mik_${version}_windows-x64_portable.zip`);
+const archive = path.join(output, `Mr-Mik_${label}_windows-x64_portable.zip`);
 const stream = createWriteStream(archive, { flags: 'wx' });
 let failure; stream.on('error', error => { failure = error });
 const zip = new Zip((error, chunk, final) => { if (error) { failure = error; stream.destroy(error); return } stream.write(chunk); if (final) stream.end(); });
@@ -57,7 +63,7 @@ const visit = async (folder, relative = '') => {
   }
 };
 try { await visit(portable); zip.end(); await once(stream, 'finish'); if (failure) throw failure; } catch (error) { zip.terminate(); stream.destroy(); throw error; }
-const installer = `Mr-Mik_${version}_windows-x64_setup.exe`;
+const installer = `Mr-Mik_${label}_windows-x64_setup.exe`;
 await copyFile(path.join(target, 'release/bundle/nsis', installers[0]), path.join(output, installer));
 const sums = [];
 for (const name of [installer, path.basename(archive)]) { const hash = createHash('sha256'); for await (const chunk of createReadStream(path.join(output, name))) hash.update(chunk); sums.push(`${hash.digest('hex')}  ${name}`); }

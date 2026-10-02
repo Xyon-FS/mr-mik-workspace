@@ -28,4 +28,36 @@ These switches control Mr. Mik Bridge discovery/reading. They do not rewrite nat
 
 ## Future upstream updates
 
+### 0.4.16 — OpenCode (integration in progress)
+
+The native event-observation approach has been manually adapted, not merged.
+Mr. Mik adds its own frozen workspace/card/linked-project scope and content
+Bridge orientation without creating native configuration in external folders.
+CLI 1.18.34 has passed an isolated localhost-model smoke test, including exact
+session identity, actual system-context orientation, Bridge tool discovery and
+completion events. A redundant native busy event after the final answer is
+handled explicitly. Unrelated OpenCode sessions are not imported by scanning.
+
+Mr. Mik-specific native skill and MCP adapters now add independent Hub skill
+switches, linked-folder skill permissions/creation, JSONC-preserving MCP controls
+and owned definitions. These were not blindly copied from upstream. Isolated
+UI tests and native CLI checks cover the project overrides; workspace snapshots
+retain OpenCode skill scopes without exporting native configuration or secrets.
+
+The chat-control stage adds native quick chat/fork, TUI-scoped Send/Stop and
+recognized Model/Variant picker mirroring. A Mr. Mik-only TUI plugin uses the
+official 1.18.34 plugin contract; no credential interception or extra listener.
+Unknown layouts fail closed. Native ConPTY tests use an isolated local mock,
+and browser tests cover the new controls and existing Codex/Claude flows.
+
+Mik now manages visible OpenCode workers in its frozen request scope, with real
+UI confirmations and native readiness/submit/abort controls. Its engine remains
+Codex; OpenCode access and model variants remain separately configured.
+
+Bounded same-folder families and explicitly reviewed local attachments now transfer
+through native JSON. This does **not** mark all OpenCode work complete. New CLI versions require real acceptance testing;
+unsupported family/media dependencies and real-provider acceptance remain
+separate stages; see [development status](opencode-integration.md). The
+published 0.2.7 packages are unchanged.
+
 Record upstream tag/commit, relevant files, accepted/rejected changes, compatibility impact and tests here. Adapt fixes one concern at a time. Recheck archive/snapshot compatibility and clean distribution after every data-model/configuration change. Rebuild installer/portable and checksums only after verification. Publishing remains a maintainer action.

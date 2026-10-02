@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { saveJson, within } from './util.mjs';
 import { stageCardRemoval } from './card-removal.mjs';
+import { defaultHubSkillScopes } from './hub-skill-defaults.mjs';
 
 const execute = promisify(execFile);
 const invalid = message => Object.assign(new Error(message), { status: 400 });
@@ -56,11 +57,11 @@ export class Projects {
     return realpath(repository.repositoryPath);
   }
   async createSkill({ target, agent, projectId, repositoryId, name, description, instructions }) {
-    if (!['hub', 'linked'].includes(target) || !['codex', 'claude'].includes(agent) || typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name) || typeof description !== 'string' || !description.trim() || description.length > 500 || /[\r\n]/.test(description) || typeof instructions !== 'string' || !instructions.trim() || instructions.length > 64 * 1024) throw invalid('Provide a skill name, one-line description and instructions.');
+    if (!['hub', 'linked'].includes(target) || !['codex', 'claude', 'opencode'].includes(agent) || typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name) || typeof description !== 'string' || !description.trim() || description.length > 500 || /[\r\n]/.test(description) || typeof instructions !== 'string' || !instructions.trim() || instructions.length > 64 * 1024) throw invalid('Provide a skill name, one-line description and instructions.');
     if (target === 'linked' && (!projectId || !repositoryId)) throw invalid('Choose a linked project before adding a native skill.');
     const base = target === 'hub' ? await realpath(this.repo) : await this.root(projectId, repositoryId);
     let folder = base;
-    for (const segment of [agent === 'codex' ? '.agents' : '.claude', 'skills', name]) {
+    for (const segment of [agent === 'claude' ? '.claude' : agent === 'opencode' && target === 'linked' ? '.opencode' : '.agents', 'skills', name]) {
       folder = path.join(folder, segment);
       const existing = await lstat(folder).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw invalid('Skill destination is not a regular folder.');
@@ -252,16 +253,24 @@ export class Projects {
   }
   async hubSkillScopes() {
     const defaults = await document(path.join(this.repo, 'projects/skill-defaults.json'), { skills: {} });
-    return document(this.skillScopesPath, defaults);
+    // Older public seeds predate OpenCode; add its core defaults without replacing any choice.
+    if (defaults.skills?.['workspace-authoring']?.global === true && !defaults.opencodeSkills) defaults.opencodeSkills = structuredClone(defaultHubSkillScopes.opencodeSkills);
+    const stored = await document(this.skillScopesPath, defaults);
+    // Fill missing public defaults only; explicit Off and project overrides survive.
+    for (const key of ['skills', 'claudeSkills', 'opencodeSkills']) {
+      if (stored[key] != null && (typeof stored[key] !== 'object' || Array.isArray(stored[key]))) throw invalid('Hub skill scopes are invalid.');
+      stored[key] = { ...(defaults[key] || {}), ...(stored[key] || {}) };
+    }
+    return stored;
   }
   async hubSkills(projectId = null, agent = 'codex') {
-    if (!['codex', 'claude'].includes(agent)) throw invalid('Choose Codex or Claude skills.');
+    if (!['codex', 'claude', 'opencode'].includes(agent)) throw invalid('Choose a supported agent for Hub skills.');
     if (projectId) await this.get(projectId);
     const scopes = await this.hubSkillScopes();
-    const scopeKey = agent === 'codex' ? 'skills' : 'claudeSkills';
+    const scopeKey = agent === 'codex' ? 'skills' : agent === 'claude' ? 'claudeSkills' : 'opencodeSkills';
     const settings = scopes[scopeKey] || {};
     if (typeof settings !== 'object' || Array.isArray(settings)) throw invalid('Hub skill scopes are invalid.');
-    const folder = await realpath(path.join(this.repo, agent === 'codex' ? '.agents' : '.claude', 'skills')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    const folder = await realpath(path.join(this.repo, agent === 'claude' ? '.claude' : '.agents', 'skills')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
     const skills = [];
     if (!folder) return skills;
     for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
@@ -280,12 +289,12 @@ export class Projects {
     return skills.sort((a, b) => a.name.localeCompare(b.name));
   }
   async setHubSkillScope({ id, projectId, scope, enabled, agent = 'codex' }) {
-    if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/i.test(id) || !['global', 'project'].includes(scope) || !['codex', 'claude'].includes(agent) || (scope === 'global' ? typeof enabled !== 'boolean' : !projectId || enabled !== null && typeof enabled !== 'boolean')) throw invalid('Choose a Hub skill, scope and enabled state.');
+    if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/i.test(id) || !['global', 'project'].includes(scope) || !['codex', 'claude', 'opencode'].includes(agent) || (scope === 'global' ? typeof enabled !== 'boolean' : !projectId || enabled !== null && typeof enabled !== 'boolean')) throw invalid('Choose a Hub skill, scope and enabled state.');
     if (scope === 'project') await this.get(projectId);
     return this.serialize(async () => {
       if (!(await this.hubSkills(null, agent)).some(item => item.id === id)) throw invalid('Hub skill was not found.');
       const registry = await this.hubSkillScopes();
-      const scopeKey = agent === 'codex' ? 'skills' : 'claudeSkills';
+      const scopeKey = agent === 'codex' ? 'skills' : agent === 'claude' ? 'claudeSkills' : 'opencodeSkills';
       registry[scopeKey] ||= {};
       if (typeof registry[scopeKey] !== 'object' || Array.isArray(registry[scopeKey])) throw invalid('Hub skill scopes are invalid.');
       const setting = registry[scopeKey][id] || { global: false, projects: {} };
@@ -299,11 +308,11 @@ export class Projects {
   async readHubSkill(projectId, id, agent = 'codex') {
     const skill = (await this.hubSkills(projectId, agent)).find(item => item.id === id && item.effective);
     if (!skill) throw invalid('Skill is not enabled for this workspace.');
-    const root = path.join(this.repo, agent === 'codex' ? '.agents' : '.claude', 'skills');
+    const root = path.join(this.repo, agent === 'claude' ? '.claude' : '.agents', 'skills');
     const folder = await realpath(path.join(root, id));
     const file = await realpath(path.join(folder, 'SKILL.md'));
     if (!within(await realpath(root), folder) || !within(folder, file)) throw invalid('Skill leaves the Hub.');
-    return { id, name: skill.name, text: await readFile(file, 'utf8'), availability: `Mr. Mik Workspace Bridge only; not a native ${agent === 'codex' ? 'Codex' : 'Claude'} skill in the linked project folder.` };
+    return { id, name: skill.name, text: await readFile(file, 'utf8'), availability: `Mr. Mik Workspace Bridge only; not a native ${agent} skill in the linked project folder.` };
   }
   async editWorkspace(action) {
     return this.serialize(async () => {

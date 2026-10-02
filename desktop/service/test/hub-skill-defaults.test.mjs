@@ -19,7 +19,7 @@ test('new Hub seed enables only core skills for both agents and supports Off/Inh
   await writeFile(path.join(repo, 'projects/skill-defaults.json'), JSON.stringify(defaultHubSkillScopes));
   const projects = new Projects(repo, path.join(repo, '.mrmak'));
   const workspace = await projects.save({ name: 'Planning' });
-  for (const agent of ['codex', 'claude']) {
+  for (const agent of ['codex', 'claude', 'opencode']) {
     const skills = await projects.hubSkills(workspace.id, agent);
     for (const skill of skills) assert.equal(skill.effective, coreHubSkills.includes(skill.id));
     for (const id of coreHubSkills) {
@@ -42,7 +42,8 @@ test('existing scopes including explicit Off take precedence over public new-Hub
   await writeFile(path.join(repo, 'projects/skill-defaults.json'), JSON.stringify(defaultHubSkillScopes));
   const original = JSON.stringify({ skills: { 'workspace-authoring': { global: false } }, claudeSkills: {} });
   await writeFile(projects.skillScopesPath, original);
-  for (const agent of ['codex', 'claude']) assert.ok((await projects.hubSkills(null, agent)).every(skill => !skill.effective));
+  assert.equal((await projects.hubSkills(null, 'codex')).find(skill => skill.id === 'workspace-authoring').effective, false);
+  for (const agent of ['codex', 'claude', 'opencode']) assert.equal((await projects.hubSkills(null, agent)).find(skill => skill.id === 'feature-handoff').effective, true);
   await installMissingGameSkills(repo);
   assert.equal(await readFile(projects.skillScopesPath, 'utf8'), original);
 });

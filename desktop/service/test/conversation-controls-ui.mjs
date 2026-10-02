@@ -38,7 +38,7 @@ try {
     const transcript = agent === 'codex' ? path.join(process.env.CODEX_HOME, 'sessions/2026/09/30', `rollout-fixture-${nativeId}.jsonl`) : await claudeTranscript(linked, nativeId);
     await mkdir(path.dirname(transcript), { recursive: true });
     await writeFile(transcript, JSON.stringify(agent === 'codex' ? { type: 'session_meta', payload: { id: nativeId, cwd: linked } } : { type: 'user', sessionId: nativeId, message: { content: 'Fixture' } }) + '\n');
-    const session = service.sessions.make({ id: randomUUID(), agent, name: `${agent} source`, cwd: linked, projectId: project.id, repositoryId: 'primary', cardId: card.id, nativeId, status: 'running', activity: 'idle', open: true, createdAt: new Date().toISOString() });
+    const session = service.sessions.make({ id: randomUUID(), agent, name: `${agent} source`, cwd: linked, projectId: project.id, repositoryId: 'primary', cardId: card.id, nativeId, status: 'running', activity: 'idle', open: true, cols: 90, rows: 32, createdAt: new Date().toISOString() });
     let level = 2, stage = 'idle';
     const effortScreen = () => agent === 'codex' ? `Select Reasoning Level for GPT-6.1-Sol\n${['Low', 'Medium', 'High'].map((label, i) => `${i === level ? '›' : ' '} ${i + 1}. ${label}`).join('\n')}\nenter default · s session · esc back` : `Effort\n${'─'.repeat([1, 10, 20][level])}▲${'─'.repeat(24 - [1, 10, 20][level])}\nlow     medium     high\ns for this session only · esc cancel`;
     nativeScreens.set(session.id, agent === 'codex' ? '› Ask Codex to do anything' : '❯');
@@ -55,7 +55,7 @@ try {
   }
   service.sessions.changed(sources[0]);
   browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
-  const page = await browser.newPage({ viewport: { width: 650, height: 750 } }); const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const page = await browser.newPage({ viewport: { width: 650, height: 750 } }); const errors = []; page.on('pageerror', error => errors.push(error.stack || error.message));
   await page.goto(service.urls.chats);
   for (const source of sources) {
     await page.getByRole('tab', { name: new RegExp(source.name) }).click();

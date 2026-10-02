@@ -2,7 +2,7 @@ export const workerEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh
 export const defaultWorkerEfforts = workerEfforts;
 export const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const defaultWorkerEffort = 'xhigh';
-export const workerDefault = (settings, agent) => agent === 'claude' ? settings.defaultClaudeWorkerEffort || 'high' : settings.defaultWorkerEffort;
+export const workerDefault = (settings, agent) => agent === 'claude' ? settings.defaultClaudeWorkerEffort || 'high' : agent === 'codex' ? settings.defaultWorkerEffort : undefined;
 
 export function explicitMax(text = '') {
   const value = String(text).toLowerCase();

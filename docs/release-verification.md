@@ -1,5 +1,93 @@
 # Release verification — Mr. Mik
 
+## 2026-10-02 — 0.2.9 compact provider controls
+
+- Final pre-push regression: all 287 service tests passed. Source/privacy-path checks and ignore rules exclude runtime state, native conversation files, credentials, build caches and release binaries. GitHub publication of release assets remains a separate maintainer action.
+- OpenCode connection now uses an icon-only 28 px plus action with tooltip, accessible name and keyboard focus. Provider rows are visually nested; the post-launch authentication notice is shortened without claiming authentication succeeded. README/Help reflect the icon.
+- Version labels aligned at 0.2.9, including npm/native metadata, health and snapshot manifests. Distributable naming uses plain incremented versions without preview suffixes; existing packages and user Hubs remain unchanged.
+- ESLint, TypeScript/frontend build, six targeted account/Help/version tests, clean-template checks and production Accounts UI passed. UI covers multiple providers, unknown/unavailable status, environment-only connections, keyboard focus and 220 px narrow layout; screenshot visually reviewed. Authentication was mocked, not executed.
+- Windows executable and installer rebuilt. `release/0.2.9` installer/portable checksums, clean MyHub defaults, bundled adapter parity and Node/SQLite/ConPTY verified. Nothing installed, published, committed or restarted; no user account or active agent session changed.
+
+## 2026-10-02 — 0.2.8 current-copy audit
+
+- Audited current Help, Accounts/transfer/project UI copy and OpenCode integration reference against implemented adapters. Removed stale unreleased/source-only claims; documented V1/V2 plugin distinctions, core Hub skill defaults, protected native refresh and explicit unavailable-conversation exclusions. Historical changelog/verification entries remain historical.
+- Corrected health/snapshot version projections to 0.2.8 and clarified restored workspace preference versus open-chat/window state. Added Help-content/version regressions and a production Help assertion for the current V2 transfer heading.
+- ESLint, TypeScript/frontend build, 17 targeted Help/native-refresh/snapshot tests, production Help/general UI and transfer UI passed. The transfer fixture was updated from the obsolete aggregate OpenAI account shape to the current provider-list contract; no authentication was executed.
+- Windows executable/installer rebuilt and separate `release/0.2.8-help-preview-1` packages verified for checksums, clean starter defaults, bundled service parity and Node/SQLite/ConPTY. These packages include the corrected Help; the prior `release/0.2.8` artifacts remain unchanged. No user Hub, account or running application changed; nothing published or committed.
+
+## 2026-10-02 — 0.2.8 first-use and Accounts release
+
+- Application/npm/native metadata aligned at 0.2.8. README and getting-started guidance revised for practical first use, agent setup, App/MyHub updates and current OpenCode support.
+- Accounts production UI passed with grouped providers, exact provider confirmation payloads, environment-only connections, no connected providers, unknown status and unavailable CLI. Buttons and labels fit a 220 px account list; screenshot visually reviewed. Four account unit tests passed without executing authentication.
+- ESLint, TypeScript/frontend production build, clean-template checks (20 maintained skills, 374 identical Codex/Claude files) and diff whitespace checks passed. The existing frontend bundle-size warning remains.
+- Windows executable and NSIS installer rebuilt; `release/0.2.8` installer/portable checksums, clean MyHub defaults, bundled source parity and Node/SQLite/ConPTY tests passed. Existing Hubs/releases preserved. Nothing installed, restarted, published or committed. The previous 285-test service regression remains the baseline; this UI/docs/version update used targeted account tests rather than rerunning the whole suite.
+
+## 2026-10-02 — Preview 16 packaging
+
+- Windows release executable and NSIS installer rebuilt successfully with the provider-account and explicit partial native-transfer changes.
+- Separate `0.2.7-opencode-preview-16` installer and portable ZIP generated. SHA-256 checks, source/bundled-service parity, clean MyHub inventory, default skill states and bundled Node/SQLite/ConPTY checks passed.
+- Existing packages and user Hubs preserved. Nothing was installed, published or restarted; no native agent/account was started. The earlier partial-transfer entry's unbuilt-package limitation is resolved by preview 16.
+
+## 2026-10-02 — Explicit partial native transfer
+
+- All 285 service tests passed. New isolated Codex/Claude and OpenCode V1/V2 cases verify confirmed exclusions, healthy context transfer, unavailable History warnings, no silent fresh-context launch, preserved local History, missing declared native entries, isolated invalid transcripts, fatal present-file checksum mismatches and stale review rejection.
+- Production transfer UI passed with unavailable import/export entries: import/export remain disabled until explicit exclusion consent; attachment consent is independent; exact skip identities, export token and import archive hash are submitted. No native account or provider calls were made.
+- ESLint, TypeScript/production frontend build and diff whitespace checks passed. The existing bundle-size warning remains.
+- In-app Help, worker/Mik History warnings and changelog updated. Installer/portable packages have not been rebuilt for these changes; preview 15 is still the prior distribution.
+
+## 2026-10-02 — Provider accounts and complete-export follow-up
+
+- 281 service tests passed. New fixtures cover multi-provider metadata projection, environment-only connections, native provider commands, safe confirmations, missing Codex/Claude native IDs/transcripts, coordinator context and explicit light-export fallback.
+- ESLint and TypeScript/production frontend build passed (the existing bundle-size warning remains).
+- Production account UI fixture passed: provider-specific rows/actions, no logout for environment-only V2 connections, correct confirmation payloads and generic Connect provider. Authentication was fully mocked; no login/logout command was executed.
+- Help and changelog updated. Analysis-only results are in `platform-follow-up-audit.md`; no external-change monitoring or additional native transfer traversal was implemented.
+- Installer and portable were **not** repackaged for this follow-up. Preview 15 below remains the earlier package; these edits currently exist in source and the rebuilt frontend.
+
+## 2026-10-02 — V2 final regression
+
+- All 279 service tests passed, including Codex/Claude archive regressions, V1/V2 format discrimination, scopes, the App/MyHub boundary, family conflicts, controlled deletion, rollback and Windows reader-lock handling.
+- ESLint, TypeScript/production frontend build and clean template checks passed: 20 maintained skills, 374 identical Codex/Claude skill files, no personal starter state/configuration.
+- Production browser checks passed for files/skills/tools, terminal links/copy/scroll, cards/demos, OpenCode chat controls, family deletion review and full-transfer previews. Browser PTYs and providers are simulated; the transfer preview screenshot was visually reviewed.
+- Native V1 two-profile tests passed for continuation replacement, conflict/stale guards, family relinking/deletion and explicitly approved file/tool attachments. These use isolated profiles, not the user's chats.
+- The native V2 stress fixture reproduced lost state publication under Windows reader locks; bounded coalesced retries preserve the newest state. A separate control-file reader lock was reproduced during TUI acceptance; publication now retries the same request ID, checking the launch before delivery. Deterministic regressions verify no duplicate request and cancellation on a changed chat. Repeated twelve-round form/reply runs pass without retaining form content or answers.
+- Native test providers/MCPs use localhost fixtures. Authenticated paid-provider and clean-PC/installer acceptance remain separate user checks. No personal account, CLI installation or live application session is changed by these tests.
+- Full V2 native server/ConPTY acceptance passed after the corrections: twelve consecutive form/reply cycles, native skill catalog, verified plugin identity/exclusion/re-enable, model/variant, protected drafts, provider-error recovery, submit/interrupt, same-ID resume without replay, distinct native fork, approved media, family continuation, injected rollback/partial-import cleanup and recursive deletion that retains independent forks. V1 interactive model/variant/fork and live MCP Off/On checks also passed without paid provider calls or server-tool invocation.
+- Windows NSIS build and separate `0.2.7-opencode-preview-15` packaging passed. Installer/portable SHA-256 verification, clean MyHub inventory/default skill states, bundled service/adapter byte parity, bundled Node SQLite and Node/ConPTY smoke checks passed. The in-app Help includes the updated V2 guide. Existing releases/Hubs are preserved; no installer was run, user application restarted or asset published. Build caches are outside the source in `Documents/Codex/mik-build-target` and are not distribution contents.
+
+## 2026-10-02 — MCP updates in open chats
+
+- All 217 service tests passed, including effective scope filtering, protected drafts/tasks, same-conversation resume, Bridge editor notification and exclusion of runtime refresh state from transfer archives.
+- ESLint, frontend build, Windows native build and the production OpenCode UI check passed.
+- Native OpenCode tests in an isolated profile verified live MCP Off/On, connection of a server disabled at launch, draft protection, model/variant selection, provider-error recovery, submit, abort and fork identity. Only localhost fixtures were used; no account or paid calls.
+- Preview 14 installer/portable checksums, bundled Node/ConPTY and clean starter Hub checks passed. Nothing was published and no active user app was restarted.
+- Authenticated Codex/Claude restart/resume acceptance remains a user check. Native skill synchronization is deferred; see [mcp-chat-updates.md](mcp-chat-updates.md).
+
+## OpenCode preview — contract-based compatibility
+
+- Removed the exact 1.18.34 transfer/deletion pin and launch's major-version
+  allowlist. Release numbers are diagnostic, not compatibility permission.
+- Schema validation checks every database field actually read, accepts extra
+  tables/columns and closes failed read-only handles. Existing JSON, ownership,
+  family, concurrency, backup and isolated-import checks remain in place.
+- Missing native TUI route/catalog/readiness/dispatch/abort contracts return
+  per-control errors without guessing input. An unavailable dispatch does not
+  disable an independently available native abort.
+- All **205 service tests** passed sequentially, including future-version parsing,
+  compatible extended schemas, missing tables/fields and missing TUI capabilities.
+  These are compatibility fixtures, not execution of an actual future CLI.
+- Native standalone/family import, continuation, conflict refusal, selective and
+  recursive deletion, and reviewed file/tool attachment round-trips passed in
+  isolated profiles on installed CLI **1.18.34**. No provider/account calls were
+  made. Future releases still need real acceptance; structural checks cannot
+  establish every upstream semantic change in advance.
+- ESLint, frontend/native Windows build and the production OpenCode UI check
+  passed. No active app/session was restarted or published assets overwritten.
+- User-reported authenticated Bridge-content and skill checks are distinct from
+  automated coverage. Real MCP, restart/resume and second-environment acceptance
+  remain separate checks.
+- Inspection-only cleanup candidates are recorded in
+  [code-cleanup-audit.md](code-cleanup-audit.md). No candidate was removed.
+
 ## Post-release CI portability correction
 
 - GitHub's clean Windows runner exposed three command-construction tests relying on an installed Codex CLI and one terminal attachment timeout. Local results alone had not covered that environment.
@@ -82,3 +170,9 @@ Verified on Windows x64 with Node 24.19.0; root minimum is Node 22.20.0. Changes
 - Fresh source-copy install (`npm ci`), frontend build and starter checks: passed independently of the development copy's dependencies/cache.
 
 The optional upstream game-skill pack remains a reviewed candidate set, not automatically installed/enabled. The moderate `fflate` advisory remains documented in SECURITY.md. Native live chat/provider acceptance depends on the destination machine's CLI version/account, and Windows preferences remain machine-local. Review exports before sharing.
+# MCP chat update verification — 2026-10-02
+
+- Scoped MCP fingerprints and guarded same-conversation resume have targeted regressions for overrides, drafts, native dialogs, missing IDs, failures, concurrent changes and Bridge/UI editor notifications.
+- Native OpenCode 1.18.34 was exercised in an isolated profile against localhost MCP/provider fixtures: empty-prompt detection, draft rejection and verified disconnect/reconnect without process restart. No real account, paid provider request or MCP tool invocation was used for these connection checks.
+- Runtime update status is excluded from saved session metadata and portable exports; restored sessions rebuild their launch baselines. Native skill reload remains a separate follow-up.
+- Authenticated Codex/Claude idle-prompt/resume checks remain user smoke tests; no running user chat was stopped by development verification.

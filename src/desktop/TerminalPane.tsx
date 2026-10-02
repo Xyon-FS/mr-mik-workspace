@@ -7,6 +7,7 @@ import { api, onServiceEvent, pickFiles, reportError, sendEvent, uploadImage } f
 import { Icon } from './Icons'
 import type { AgentId } from './types'
 import { decorateTerminal, focusTheme, originalTheme, type TerminalAppearance } from './terminalAppearance'
+import { cursorDiagnostics } from './cursorDiagnostics'
 
 export default function TerminalPane({ id, agent, fontSize, appearance, onAttachmentStatus }: { id: string; agent: AgentId; fontSize: number; appearance: TerminalAppearance; onAttachmentStatus: (id: string, text: string) => void }) {
   const host = useRef<HTMLDivElement>(null)
@@ -14,6 +15,9 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [cursorReport, setCursorReport] = useState('')
+  const cursorWire = useRef({ show: 0, hide: 0, shapeChanges: 0 })
   const statusTimer = useRef(0)
   const uploading = useRef(false)
   const choosing = useRef(false)
@@ -86,6 +90,9 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     })
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.loadAddon(new WebLinksAddon(openLink)); terminal.open(host.current)
     terminalRef.current = terminal; fitRef.current = fit
+    cursorWire.current = { show: 0, hide: 0, shapeChanges: 0 }
+    const cursorMode = (enabled: boolean) => (params: (number | number[])[]) => { if (params.includes(25)) cursorWire.current[enabled ? 'show' : 'hide']++; return false }
+    const cursorHandlers = [terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, cursorMode(true)), terminal.parser.registerCsiHandler({ prefix: '?', final: 'l' }, cursorMode(false)), terminal.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, () => { cursorWire.current.shapeChanges++; return false })]
     let sequence = -1
     let ready = false
     let queued: { sequence: number; data: string }[] = []
@@ -98,7 +105,9 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     const off = onServiceEvent(event => {
       if (event.type === 'connected') subscribe()
       if (event.type === 'disconnected') ready = false
-      if (event.type === 'screen-cleared' && event.id === id) subscribe()
+      // Apply the same scrollback-only erase as the service. Resubscribing here
+      // resets the frontend terminal and loses native cursor colors/modes.
+      if (event.type === 'screen-cleared' && event.id === id && ready) terminal.write('\x1b[3J')
       if (event.type === 'snapshot' && event.session?.id === id) {
         sequence = event.sequence ?? 0
         terminal.reset()
@@ -162,7 +171,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     const focusSelected = (event: Event) => { if ((event as CustomEvent<string>).detail === id) terminal.focus() }
     window.addEventListener('focus', focus)
     window.addEventListener('mrmak-focus-terminal', focusSelected)
-    return () => { off(); input.dispose(); observer.disconnect(); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); window.removeEventListener('mrmak-focus-terminal', focusSelected); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
+    return () => { off(); input.dispose(); cursorHandlers.forEach(handler => handler.dispose()); observer.disconnect(); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); window.removeEventListener('mrmak-focus-terminal', focusSelected); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
   }, [id, agent, onAttachmentStatus])
   useEffect(() => {
     const terminal = terminalRef.current
@@ -173,8 +182,22 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   useEffect(() => {
     if (terminalRef.current) { terminalRef.current.options.fontSize = fontSize; fitRef.current?.fit(); sendEvent({ type: 'resize', id, cols: terminalRef.current.cols, rows: terminalRef.current.rows }) }
   }, [fontSize, id])
-  return <div ref={area} className={`terminal-area ${appearance === 'focus' ? 'terminal-focus' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'none' }} onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); reportError('Drop original files or folders from Explorer into Mr. Mik Desktop. Paste clipboard images with Ctrl+V.') }}>
+  useEffect(() => {
+    if (!diagnosing) return
+    let lastFocused: ReturnType<typeof cursorDiagnostics> | null = null
+    const sample = () => {
+      const terminal = terminalRef.current
+      if (!terminal) return
+      const current = cursorDiagnostics(terminal)
+      if (current.documentFocused && current.inputFocused) lastFocused = current
+      setCursorReport(JSON.stringify({ agent, ...current, wire: { ...cursorWire.current }, lastFocused }, null, 2))
+    }
+    sample(); const timer = window.setInterval(sample, 400)
+    return () => clearInterval(timer)
+  }, [diagnosing, agent, id])
+  return <div ref={area} style={{ '--terminal-caret-color': (appearance === 'focus' ? focusTheme : originalTheme).cursor } as import('react').CSSProperties} className={`terminal-area ${agent === 'opencode' ? 'terminal-opencode' : ''} ${appearance === 'focus' ? 'terminal-focus' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'none' }} onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); reportError('Drop original files or folders from Explorer into Mr. Mik Desktop. Paste clipboard images with Ctrl+V.') }}>
     <div ref={host} className="terminal-host" aria-label="Interactive agent terminal" />
+    <div className="cursor-diagnostics"><button type="button" className="chat-model-button" onClick={() => { setDiagnosing(value => !value); terminalRef.current?.focus() }} aria-expanded={diagnosing}>Cursor diagnostics</button>{diagnosing && <div><small>Temporary · local only · no chat text or credentials. Click the input while this stays open. The last focused sample is retained until Close.</small><pre aria-label="Cursor diagnostic report">{cursorReport}</pre><button className="chat-model-button" onPointerDown={event => event.preventDefault()} onClick={() => void navigator.clipboard.writeText(cursorReport).catch(reportError)}>Copy report</button><button className="chat-model-button" onClick={() => { setDiagnosing(false); setCursorReport(''); terminalRef.current?.focus() }}>Close</button></div>}</div>
     {dragging && <div className="terminal-drop"><Icon name="attach" size={30} /><strong>Drop to insert paths</strong><span>Files, folders and images</span></div>}
   </div>
 }

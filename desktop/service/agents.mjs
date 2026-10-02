@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { parse as parseEnv } from 'dotenv';
 import { spawnSync } from 'node:child_process';
+import { resolveOpenCodeBinary } from './opencode-binary.mjs';
 
 const claudeCapabilities = new Map();
 export function claudePromptRefreshSupported(binary = claudeBinary()) {
@@ -16,6 +17,7 @@ export function claudePromptRefreshSupported(binary = claudeBinary()) {
 export const AGENTS = [
   { id: 'codex', label: 'Codex', color: '#88d8bf', command: 'codex', subscription: true },
   { id: 'claude', label: 'Claude Code', color: '#dba68c', command: 'claude', subscription: true },
+  { id: 'opencode', label: 'OpenCode', color: '#b9c9db', command: 'opencode', subscription: false },
   { id: 'kimi', label: 'Kimi', color: '#b3a3f7', command: 'kimi', subscription: true },
   { id: 'shell', label: 'PowerShell', color: '#89b7ed', command: 'powershell.exe', subscription: false },
 ];
@@ -68,6 +70,10 @@ export function claudeBinary(env = process.env) {
   throw new Error('Claude Code executable could not be located. Install the native CLI or its standard npm package.');
 }
 
+export function openCodeBinary(env = process.env) {
+  return resolveOpenCodeBinary(commandPath('opencode', env), { explicit: env.MRMIK_OPENCODE_BINARY });
+}
+
 export function codexBridgeArgs(script) {
   const tomlString = value => JSON.stringify(value);
   return ['-c', `mcp_servers.mrmak_workspace.command=${tomlString(process.execPath)}`,
@@ -85,9 +91,9 @@ export function claudeBridgeArgs(script) {
   return ['--mcp-config', JSON.stringify(config)];
 }
 
-export function terminalCommand(agent, { bypass = false, resumeId, resumePath, nativeId, effort, bridge, cwd, fork = false } = {}) {
+export function terminalCommand(agent, { bypass = false, resumeId, resumePath, nativeId, effort, bridge, cwd, fork = false, env = process.env, openCodeFamily = 1 } = {}) {
   if (!AGENTS.some(item => item.id === agent)) throw new Error('Unknown agent');
-  const binary = agent === 'codex' ? codexBinary() : agent === 'claude' ? claudeBinary() : { file: commandPath(AGENTS.find(item => item.id === agent).command), args: [] };
+  const binary = agent === 'codex' ? codexBinary() : agent === 'claude' ? claudeBinary() : agent === 'opencode' ? openCodeBinary(env) : { file: commandPath(AGENTS.find(item => item.id === agent).command), args: [] };
   if (!binary.file) throw new Error(`${agent} is not installed on this computer`);
   const args = [];
   if (agent === 'codex') {
@@ -116,12 +122,18 @@ export function terminalCommand(agent, { bypass = false, resumeId, resumePath, n
   } else if (agent === 'kimi') {
     if (resumeId) args.push('--session', resumeId);
     if (bypass) args.push('--yolo');
+  } else if (agent === 'opencode') {
+    if (openCodeFamily === 2) args.push('--standalone');
+    if (resumeId) args.push('--session', resumeId);
+    if (fork) args.push('--fork');
+    // OpenCode keeps explicit permission denials even in automatic mode.
+    if (bypass) args.push('--auto');
   } else {
     args.push('-NoLogo');
   }
   // Pass Codex TOML and Claude JSON directly: Windows PowerShell strips embedded
   // quotes, turning Claude's --mcp-config JSON into an invalid filename.
-  if (agent === 'codex' || agent === 'claude' || process.platform !== 'win32' || agent === 'shell') return { file: binary.file, args: [...binary.args, ...args] };
+  if (agent === 'codex' || agent === 'claude' || agent === 'opencode' && !/\.(cmd|bat|ps1)$/i.test(binary.file) || process.platform !== 'win32' || agent === 'shell') return { file: binary.file, args: [...binary.args, ...args] };
   // Keep the remaining shell-wrapper arguments literal. No -NoExit:
   // after the agent exits, stale coordinator input cannot become shell commands.
   const quote = value => "'" + value.replaceAll("'", "''") + "'";
@@ -139,6 +151,7 @@ export function childEnvironment(repo) {
   }
   // Drop host-agent identity from the parent so every terminal is an independent CLI.
   for (const key of Object.keys(env)) {
+    if (key.startsWith('MRMAK_OPENCODE_')) { delete env[key]; continue; }
     if (/^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CODEX_THREAD_ID|CODEX_TURN_ID|CODEX_SHELL|MRMAK_TOKEN|MRMAK_PARENT_PID|MRMAK_BRIDGE_URL|MRMAK_BRIDGE_TOKEN)$/.test(key)) delete env[key];
   }
   return env;

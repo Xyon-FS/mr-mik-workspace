@@ -15,7 +15,7 @@ export function chatOrientation({ workspaceName, cardName, workingProjectName })
     (workspaceName ? 'Knowledge and Processes default to this workspace; global scope requires an explicit request. ' : 'Knowledge and Processes are global in this chat. ') +
     'Inbox files remain in the shared Hub Inbox and can be associated with a workspace. Discover only relevant items on demand.\n' +
     `${hubSkillUseRule}\n` +
-    'Using a skill or MCP differs from changing its settings. Before a configuration change, inspect current state and confirm the agent, exact component, global/project scope and linked project. Configuration is not proof of a live connection and normally applies to new chats. Ask if the destination or target is ambiguous. Report the verified destination after writing.';
+    'Using a skill or MCP differs from changing its settings. Before a configuration change, inspect current state and confirm the agent, exact component, global/project scope and linked project. Configuration is not proof of a live connection: Mik applies MCP changes to safe chats or leaves a pending update. Never assume live tools changed from settings alone. Ask if the destination or target is ambiguous. Report the verified destination after writing.';
 }
 
 // Preserve user/project developer instructions when adding an invocation-only Codex rule.

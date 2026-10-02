@@ -3,6 +3,10 @@
     "workspace-authoring": { "global": true, "projects": {} },
     "feature-handoff": { "global": true, "projects": {} }
   },
+  "opencodeSkills": {
+    "workspace-authoring": { "global": true, "projects": {} },
+    "feature-handoff": { "global": true, "projects": {} }
+  },
   "claudeSkills": {
     "workspace-authoring": { "global": true, "projects": {} },
     "feature-handoff": { "global": true, "projects": {} }

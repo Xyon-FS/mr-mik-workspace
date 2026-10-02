@@ -9,7 +9,7 @@ export default function TerminalControl({ session }: { session: ChatSession }) {
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
   const working = session.activity === 'working'
-  if (!['codex', 'claude'].includes(session.agent)) return null
+  if (!['codex', 'claude', 'opencode'].includes(session.agent)) return null
   const control = async () => {
     if (locked.current) return
     locked.current = true; setBusy(true)

@@ -65,11 +65,11 @@ export class WorkspaceSnapshot {
     // Only project-effective skills are materialized. Global settings and other
     // workspaces' overrides are not exported or changed by importing a snapshot.
     const skills = {};
-    for (const agent of ['codex', 'claude']) {
+    for (const agent of ['codex', 'claude', 'opencode']) {
       const scopes = await this.projects.hubSkills(projectId, agent);
       skills[agent] = scopes.map(item => ({ id: item.id, enabled: item.effective }));
       for (const skill of scopes.filter(item => item.effective)) {
-        const prefix = agent === 'codex' ? '.agents' : '.claude';
+        const prefix = agent === 'claude' ? '.claude' : '.agents';
         const skillRoot = await target(this.repo, `${prefix}/skills/${skill.id}`);
         const visit = async (folder, relative = '') => {
           for (const entry of await readdir(folder, { withFileTypes: true })) {
@@ -83,7 +83,7 @@ export class WorkspaceSnapshot {
         await visit(skillRoot);
       }
     }
-    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion: '0.2.7', exportedAt: new Date().toISOString(), project: { id: project.id, name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
+    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion: '0.2.9', exportedAt: new Date().toISOString(), project: { id: project.id, name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
     for (const [name, entry] of entries) manifest.files.push({ name, sha256: await hash(entry.source), bytes: (await lstat(entry.source)).size });
     manifest.files.sort((a, b) => a.name.localeCompare(b.name));
     return { manifest, entries };
@@ -113,14 +113,20 @@ export class WorkspaceSnapshot {
       names.add(lower);
       if (item.name.startsWith('workspace/') && !item.name.startsWith('workspace/_shared/') && !manifest.cards.some(card => item.name.startsWith(`workspace/${card.folder}/`))) throw new Error('File belongs to an unrelated card.');
       if (/^(knowledge|processes|inbox)\//.test(item.name) && !manifest.resources.some(resource => !resource.repositoryProjectId && resource.path === item.name)) throw new Error('File belongs to an unrelated resource.');
-      if (item.name.startsWith('skills/') && !/^skills\/(codex|claude)\/[a-z0-9][a-z0-9-]{0,63}\//.test(item.name)) throw new Error('Invalid skill file.');
+      if (item.name.startsWith('skills/') && !/^skills\/(codex|claude|opencode)\/[a-z0-9][a-z0-9-]{0,63}\//.test(item.name)) throw new Error('Invalid skill file.');
       const actual = await target(root, item.name), info = await lstat(actual);
       if (!info.isFile() || info.size !== item.bytes || await hash(actual) !== item.sha256) throw new Error('Snapshot content has changed. Export again before importing.');
+    }
+    const destinations = new Map();
+    for (const item of manifest.files) {
+      const destination = this.destination(item.name).toLowerCase();
+      if (destinations.has(destination) && destinations.get(destination) !== item.sha256) throw new Error('Skill copies map to the same Hub file with different contents.');
+      destinations.set(destination, item.sha256);
     }
     return { root, manifest };
   }
 
-  destination(name) { return name.replace(/^skills\/(codex|claude)\//, (_, agent) => `${agent === 'codex' ? '.agents' : '.claude'}/skills/`); }
+  destination(name) { return name.replace(/^skills\/(codex|claude|opencode)\//, (_, agent) => `${agent === 'claude' ? '.claude' : '.agents'}/skills/`); }
 
   async preview(folder) {
     const { root, manifest } = await this.load(folder);
@@ -199,14 +205,19 @@ export class WorkspaceSnapshot {
       registry.entities = [...registry.entities.filter(item => item.projectId !== id), ...manifest.cards];
       registry.resources = [...(registry.resources || []).filter(item => item.projectId !== id), ...manifest.resources.filter(item => item.kind !== 'inbox')];
       inbox.resources = [...(inbox.resources || []).filter(item => item.projectId !== id), ...manifest.resources.filter(item => item.kind === 'inbox')];
-      for (const agent of ['codex', 'claude']) {
-        const key = agent === 'codex' ? 'skills' : 'claudeSkills'; scopes[key] ||= {};
+      for (const agent of ['codex', 'claude', 'opencode']) {
+        const key = agent === 'codex' ? 'skills' : agent === 'claude' ? 'claudeSkills' : 'opencodeSkills'; scopes[key] ||= {};
         for (const skill of manifest.skills?.[agent] || []) {
           if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.id) || typeof skill.enabled !== 'boolean') throw new Error('Invalid skill scope.');
           scopes[key][skill.id] ||= { global: false, projects: {} }; scopes[key][skill.id].projects ||= {}; scopes[key][skill.id].projects[id] = skill.enabled;
         }
       }
-      const changes = preview.files.filter(item => item.status !== 'identical').map(item => ({ relative: this.destination(item.name), source: path.join(preview.path, item.name), sha256: manifest.files.find(file => file.name === item.name).sha256 }));
+      // Codex and OpenCode share canonical Hub skill files. The manifest
+      // validation already rejects differing bytes for the same destination.
+      const changes = [...new Map(preview.files.filter(item => item.status !== 'identical').map(item => {
+        const relative = this.destination(item.name);
+        return [relative, { relative, source: path.join(preview.path, item.name), sha256: manifest.files.find(file => file.name === item.name).sha256 }];
+      })).values()];
       const stateRelative = path.relative(this.repo, this.stateDir).replaceAll('\\', '/');
       if (!within(path.resolve(this.repo), path.resolve(this.stateDir))) throw new Error('Hub state must be inside the Hub for workspace transfer.');
       await target(this.repo, stateRelative);

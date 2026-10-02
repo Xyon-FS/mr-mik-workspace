@@ -1,4 +1,4 @@
-export type AgentId = 'codex' | 'claude' | 'kimi' | 'shell'
+export type AgentId = 'codex' | 'claude' | 'opencode' | 'kimi' | 'shell'
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export interface ReasoningCapabilities { codex: { model: string; efforts: ReasoningEffort[]; defaultEffort: ReasoningEffort; models?: { model: string; label: string }[] }; codexWorker: { model: string; efforts: ReasoningEffort[]; defaultEffort: ReasoningEffort }; claude: { efforts: ReasoningEffort[]; note: string }; error?: string }
 export interface AgentInfo { id: AgentId; label: string; color: string; available: boolean; subscription: boolean }
@@ -8,6 +8,8 @@ export interface ChatSession {
   cardId?: string | null
   id: string; name: string; agent: AgentId; cwd: string; bypass: boolean
   effort?: ReasoningEffort
+  nativeUnavailable?: string | null
+  toolRefresh?: { status: 'pending' | 'applying' | 'applied' | 'failed'; reason: string; automatic: boolean } | null
   status: 'starting' | 'running' | 'stopped' | 'exited'; createdAt: string
   lastOutputAt: string | null; lastInputAt: string | null; nativeId: string | null
   attention: boolean; cols: number; rows: number; exitCode?: number | null

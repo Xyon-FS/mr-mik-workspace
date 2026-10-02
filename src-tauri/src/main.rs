@@ -182,6 +182,53 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
     Ok(())
 }
 
+fn restore_default_layout(app: &tauri::AppHandle, source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = app.get_webview_window(source).and_then(|window| window.current_monitor().ok().flatten())
+        .or(app.primary_monitor()?);
+    let Some(monitor) = monitor else { return Err("No monitor available for window layout".into()) };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let x = area.position.x as f64 / scale;
+    let y = area.position.y as f64 / scale;
+    let width = area.size.width as f64 / scale;
+    let height = area.size.height as f64 / scale;
+    // Same split as first launch, bounded by the existing window minimum sizes.
+    let chat_width = (width * 0.27).clamp(360.0, 560.0);
+    // Adjacent outer bounds: no artificial gutter between app windows.
+    for (label, left, outer_width) in [("chats", x + 2.0, chat_width), ("workspace", x + chat_width + 2.0, width - chat_width - 4.0)] {
+        let window = app.get_webview_window(label).ok_or("Both app windows must exist")?;
+        window.set_fullscreen(false)?; window.unmaximize()?; window.unminimize()?;
+        window.set_position(tauri::LogicalPosition::new(left, y + 2.0))?;
+        // set_size takes inner dimensions: subtract native frame to fit the work
+        // area without covering the taskbar or overlapping the neighbour.
+        let outer = window.outer_size()?; let inner = window.inner_size()?;
+        let frame_width = outer.width.saturating_sub(inner.width) as f64 / scale;
+        let frame_height = outer.height.saturating_sub(inner.height) as f64 / scale;
+        window.set_size(tauri::LogicalSize::new((outer_width - frame_width).max(if label == "chats" { 330.0 } else { 500.0 }), (height - 6.0 - frame_height).max(420.0)))?;
+        window.show()?;
+    }
+    // Windows outer bounds include invisible resize borders. Align the actual
+    // DWM-painted edges, not those invisible rectangles, to avoid a visible gap.
+    #[cfg(windows)]
+    if let (Some(chats), Some(workspace)) = (app.get_webview_window("chats"), app.get_webview_window("workspace")) {
+        use windows_sys::Win32::{Foundation::RECT, Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS}};
+        let mut chat_frame: RECT = unsafe { std::mem::zeroed() };
+        let mut workspace_frame: RECT = unsafe { std::mem::zeroed() };
+        if let (Ok(chat_hwnd), Ok(workspace_hwnd)) = (chats.hwnd(), workspace.hwnd()) {
+            let success = unsafe {
+                DwmGetWindowAttribute(chat_hwnd.0 as _, DWMWA_EXTENDED_FRAME_BOUNDS as _, &mut chat_frame as *mut _ as _, std::mem::size_of::<RECT>() as _) >= 0
+                    && DwmGetWindowAttribute(workspace_hwnd.0 as _, DWMWA_EXTENDED_FRAME_BOUNDS as _, &mut workspace_frame as *mut _ as _, std::mem::size_of::<RECT>() as _) >= 0
+            };
+            if success {
+                let position = workspace.outer_position()?;
+                workspace.set_position(tauri::PhysicalPosition::new(position.x + chat_frame.right - workspace_frame.left, position.y))?;
+            }
+        }
+    }
+    if let Some(window) = app.get_webview_window(source) { window.set_focus()?; }
+    Ok(())
+}
+
 fn main() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
@@ -244,6 +291,7 @@ fn main() {
                             let label = event["window"].as_str().unwrap_or("");
                             if let Some(window) = app_handle.get_webview_window(label) {
                                 match event["action"].as_str().unwrap_or("") {
+                                    "layout" => { if let Err(error) = restore_default_layout(&app_handle, label) { eprintln!("Window layout could not be restored: {error}"); } },
                                     "show" => reveal(&app_handle, label),
                                     "hide" => { let _ = window.hide(); },
                                     "minimize" => { let _ = window.minimize(); },

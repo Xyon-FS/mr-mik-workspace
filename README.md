@@ -1,124 +1,147 @@
 # Mr. Mik
 
-The little brother of **Mr. Mak**: a local project hub for Codex and Claude Code.
+Work with your AI agents. Keep the project, its files and what you learn in one place.
 
-Mr. Mik is an independently maintained fork of [Mr. Mak Workspace by witnesstodark](https://github.com/witnesstodark/mr-mak-workspace). The original creator's MIT license and copyright are preserved in [LICENSE](LICENSE). This is not an official upstream release or an OpenAI/Anthropic product.
+Mr. Mik is a local Windows app with two connected windows: **native AI chats on the left**, and **your project workspace on the right**. Work with Codex, Claude Code or OpenCode in your existing folders, then keep plans, explanations, references and results in cards you can return to.
 
-![Mr. Mik overview: Project X with Marketing, Unity and Blender cards and the workspace management panel](overview.png)
+It is the little brother of [Mr. Mak Workspace](https://github.com/witnesstodark/mr-mak-workspace), created by **witnesstodark**. This is an independently maintained, MIT-licensed derivative, not an official upstream release or an OpenAI/Anthropic product.
 
-## Current beta
+![Mr. Mik overview: Marketing, Unity and Blender cards alongside workspace management](overview.png)
 
-**Beta 0.2.7:** independently maintained and not yet validated on every clean Windows installation. Use private backups before importing data or trying removal actions. Cards now have Archive/Restore/Delete menus; unlinking a project or removing a workspace lets you keep (default), archive or recycle its cards. External folders and native chats are not deleted by these actions. Page navigation lives inside card content, while card commands stay in the external banner.
+## What would I use it for?
 
-New Hubs enable `workspace-authoring` and `feature-handoff` for both agents by default; workspace Off overrides remain available. Existing Hubs keep their settings. A compact routing instruction asks chats and Mik to consult these skills only for relevant card-content and handoff requests, without preloading full instructions.
+Suppose you are making a game. Your Unity project, Blender files and marketing material live in different folders. Your conversations explain the work, but useful details become hard to find as the chats grow.
 
-The optional upstream skills `fal-ai-generation`, `higgsfield-workflow`, `motion-reference-workflow` and `voice-dictation-setup` are retained for both agents, Off by default in Hub controls. Enable only what you need. Provider tools/accounts are not bundled or automatically activated; local dictation setup is independent of the disabled conversational voice feature. Native CLI skill discovery is separate from Hub/Bridge scope switches.
+Create a workspace called **Game X**, link those folders and add cards such as **Unity development**, **3D characters** and **Marketing**. A card is a collection, not just an HTML page: it can hold notes, images, videos, documents and a small HTML site your agent builds for you.
 
-### A small midnight workshop
+Open a chat from the Unity card to work on the actual project. Afterwards, ask the agent to put an explanation in that card or save a lesson in Knowledge. Your code stays in its original folder; the organizational content stays in Mr. Mik. The same approach works for research, writing, design or any project combining conversations and files. Git is optional.
 
-The portable includes **Mik’s Midnight Workshop**: four disposable example cards for a fictional espresso-delivery game, five offline HTML pages and an original local SVG reference. Existing Hubs can add it from **Workspaces → Add example workspace** without overwriting personal content or edited examples. No external folder, tool activation or account is needed to browse it. Workspaces may start as Hub-only planning areas and link actual projects later.
+Mr. Mik does **not** replace the agents, provide a model subscription or automatically install every tool. It runs your installed CLIs and gives their work a place to live.
+
+## Download and first launch
+
+**Windows x64** is the supported desktop platform. Get ready-to-use packages from [Releases](https://github.com/Xyon-FS/mr-mik-workspace/releases). You do not need to clone or build this repository to use them.
+
+### Portable — the simplest first start
+
+1. Download the `windows-x64_portable.zip` asset and extract it to a writable folder. Do not run it from inside the ZIP.
+2. Double-click **Start Mr. Mik.cmd**. The included **MyHub** opens with example content.
+3. Browse **Mik’s Midnight Workshop**: four example cards for a fictional espresso-delivery game, with offline pages and a local illustration. No agent login is needed to explore them.
+4. When ready, archive the examples and create your own workspace, or keep them for reference.
+
+The portable contains **App/** (program and bundled runtime) and **MyHub/** (content and hidden state folders). Windows WebView2 must be installed. Native agent logins/conversations still use their normal Windows profile locations: portable does not mean fully profile-isolated.
+
+### Installer
+
+Download the `windows-x64_setup.exe` asset, install it and launch **Mr. Mik**. It bundles the local runtime and can install WebView2 when needed; it does not install the agent CLIs.
+
+On first launch, select an **existing Hub folder containing `workspace/workspace.json`**. For a first-time setup, extract the portable ZIP and select its `MyHub`, or use a prepared Hub from this repository. An ordinary Unity/Blender/code folder is a *linked project*, not the Hub to select in this dialog.
+
+**Beta 0.2.9:** keep backups, especially before transfers and removal actions. Not every clean Windows installation or provider setup has been validated.
+
+## Connect your agent
+
+Install and configure at least one agent separately: [Codex CLI](https://developers.openai.com/codex/cli), [Claude Code](https://code.claude.com/docs/en/setup) or [OpenCode](https://opencode.ai/docs/).
+
+Mr. Mik uses the CLI's existing authentication. Subscription/API access depends on the agent and provider; normal access rules and usage limits apply. Accounts are not bundled and credentials are not stored in your Hub.
+
+Use **Settings → Accounts** to inspect local connection status and open native sign-in/sign-out. OpenCode lists connected providers under one heading; the **+** icon (Connect provider) opens provider setup. Finish authentication in the native terminal/browser, not a model conversation. Changes affect the shared CLI profile on this PC; close that agent's Mr. Mik chats before switching accounts. A green status does not guarantee subscription validity or access to every model.
+
+Browsing Hub content does not require a login. The text-based **Mik coordinator** specifically requires Codex; ordinary Claude/OpenCode chats do not.
+
+## Create your first project
+
+Four names describe the structure:
+
+- **Hub:** your overall collection of workspaces, shared content and settings.
+- **Workspace:** one logical project, such as Game X.
+- **Linked project:** an actual working folder, such as Unity or Blender. It does not need Git.
+- **Card:** a work area inside a workspace. It can be associated with a linked project but need not be; several cards can share one linked project.
+
+Start here:
+
+1. Open **Workspaces** in the right rail and add a workspace. Link your first project folder if you have one; planning-only workspaces can start without one.
+2. Add other folders under **Linked projects**. Registration records their paths; it does not copy or move them.
+3. Create a card, choose its type and optionally associate it with a linked project.
+4. Use the card's agent **+** shortcut for a chat already associated with the card and working folder. Use **+** in Chats when you want to configure a chat yourself.
+5. Ask the agent to work on the project, or create content in Mr. Mik.
+
+For example:
+
+> Implement the inventory feature in the linked Unity project. Then create an HTML explanation in the current Mr. Mik card, and save any reusable lessons in this workspace's Knowledge.
+
+The chat's **working folder** is where project work happens. The **Workspace Bridge** gives supported chats access to their associated Hub, card and workspace even when the terminal works in an external folder. Explicitly asking for “the current Mr. Mik card” makes the destination clear. A card without a linked project opens a planning chat in the Hub, not an unrelated folder.
+
+The Bridge supplies compact orientation and retrieves relevant content on demand; it does not preload every card, skill or file. Agents still need to choose appropriate tools and native permissions apply. Review important changes rather than assuming every request was routed correctly.
+
+## Working day to day
+
+**Keep useful results, not just conversations.** Put explanations and references inside cards. Use **Knowledge** for reusable lessons, **Processes** for repeatable workflows and **Inbox** for incoming material. Clipboard images saved through the app use the selected workspace association. Browse files, preview media or use file context menus for Explorer and Recycle Bin actions.
+
+**Return to chats.** History keeps Mr. Mik's managed conversations, with pinning, archive/restore and supported native resume. Removing an entry from Mr. Mik differs from deleting its native conversation; permanent deletion is separately confirmed. Native chats can also appear in the agent's own application because they use its normal storage. Empty chats are omitted from useful History.
+
+**Ask Mik to organize the work.** The small mascot opens a persistent text coordinator. It can inspect the selected workspace, manage cards/shared content and coordinate worker chats. Select the intended scope before sending. Mik uses Codex and retains native conversation references; its New conversation/Fork controls are separate from worker chats. Voice conversation is disabled.
+
+**Choose skills and tools deliberately.** In **Skills**, enable shared Hub skills globally or override them for a workspace. Native linked-project skill files are separate and follow each agent's discovery rules. New Hubs enable `workspace-authoring` and `feature-handoff` for Codex, Claude and OpenCode; other included workflows start Off. Existing explicit choices are preserved. A skill guides relevant requests; enabling it does not execute it automatically.
+
+In **Tools**, inspect/configure supported MCPs for the agent and linked project. Requested native configuration changes can write to that project's settings. **Configured is not the same as connected in this chat.** Supported changes refresh affected chats; busy chats, drafts or native dialogs may require a manual action or safe resume. Host-managed tools/plugin controls differ by platform. See [Help](docs/user-guide.md) for exact scopes and limits.
+
+## Keep your work when updating or changing PCs
+
+**Portable update on the same PC:** back up your Hub, close Mr. Mik and replace only **App** and **Start Mr. Mik.cmd**. Keep your existing **MyHub**, including hidden folders. Never overwrite it with the example MyHub from a new ZIP. The launcher also supports older `Hub/` folders and an external Hub path as its first argument.
+
+**Installer update:** install the newer version and retain your existing Hub. Content is separate from the program. Back up before updating; an app update is not a substitute for a backup.
+
+**Another PC or recovery after formatting:** use **Settings → Transfer Hub**:
+
+- **Full export** includes Hub files/configuration, managed History and supported native conversation contexts. Review unavailable contexts and external attachments explicitly; excluding an unavailable context does not discard healthy ones.
+- **Light export** keeps Hub content and Mr. Mik History/screens without native transcripts. It cannot restore the original model conversation by itself.
+
+Import previews show conflicts and folder relinking. Newer/divergent local contexts are protected; unavailable incoming copies do not overwrite healthy local chats. Native authentication, agent-global configuration and external project folders are **not included**: restore those folders and configure/sign in to agents separately on the destination PC. Full archives can contain private conversations/files; do not publish them in public Git repositories.
+
+For content-only Git sharing, use **Workspace snapshot · Git**. Snapshots preserve workspace content/associations, not native chats or authentication; Mr. Mik does not automatically commit or push. See [transfer documentation](docs/workspace-snapshots.md).
+
+## Agent support and limits
+
+**Codex, Claude Code and OpenCode V1/V2** have dedicated integrations for associated chats, the Bridge, skills/tools and native conversation handling. Their interfaces differ: model, reasoning/variant, fork, plugin and transfer capabilities are not identical. Later CLI releases are not blocked solely by version number; required native contracts are checked, and upstream changes may require adapter updates.
+
+OpenCode transfer supports standalone chats and bounded same-folder families with reviewed attachments, continuation/conflict protection and controlled deletion. Cross-folder families, unsupported dependencies and unsafe references remain guarded. See [OpenCode integration](docs/opencode-integration.md) for V1/V2 differences and limits. Provider setup determines which models you can actually use.
+
+**Kimi** has limited terminal/History support, not full Bridge, skill/tool control, native fork/deletion or conversation-transfer parity. Current CLI compatibility is not validated. **PowerShell** is an ordinary local shell for commands/builds, not an AI agent; saved screens do not restore running processes.
 
 ## Mr. Mak and Mr. Mik
 
-Mr. Mik keeps Mr. Mak's two-window approach: native agent chats beside a visual Workspace of cards and files. Cards, shared folders, chat History, native agent skills, MCP visibility and optional coordination already belong to the original foundation. This fork changes their organization and integration; it does not claim to have introduced those capabilities or to be the original application's official successor.
+Mr. Mak already supplies the foundation: native chats beside visual cards/files, shared folders, skills, MCP visibility, History and optional coordination. Mr. Mik does not claim to have invented those capabilities.
 
-The comparison below describes the original project's documented approach at [upstream v0.4.15](https://github.com/witnesstodark/mr-mak-workspace/tree/v0.4.15) and this fork's customized workflows. It is not an exhaustive feature inventory; upstream continues to evolve independently.
+This version organizes work as a **Hub with multiple logical workspaces**, each linking several external folders and containing multiple cards. It adds scoped Hub management through chats, a persistent text coordinator, App/MyHub portable updates and reviewed transfer/snapshot workflows. Voice is disabled. Neither app requires every card to be a Git repository.
 
-| Area | Mr. Mak's documented approach | Mr. Mik's approach |
-| --- | --- | --- |
-| Organization | A local Workspace opened from a cloned template repository, organizing projects, research and media through cards and shared folders, with included starter examples. | A Hub containing logical workspaces, each with multiple linked project folders and work-area cards. Unity, Blender and marketing can belong to one logical workspace. |
-| Files and project boundaries | The template repository holds Workspace content such as research, designs, reports and media. This does not mean each card is a Git repository or that external project code must live there. | Explicit associations connect cards and logical workspaces to external project folders. Organizational content stays in the Hub; cards may target a linked project or workspace planning, and Git is optional. |
-| Knowledge, Processes and Inbox | Shared folders for lessons, workflows and incoming files. | Global and workspace-scoped Knowledge/Processes, shared Inbox storage with workspace associations, and global Context. |
-| Skills and tools | Native agent skills and visibility into project/global MCP configuration. | Hub skill On/Off/Inherit controls plus separate native linked-project skill files; supported global/project MCP and plugin configuration actions. A saved configuration is not a live connection. |
-| Coordination | Optional voice assistance with a Codex coordinator and separately billed voice API. | A persistent text-based Mik coordinator and chat-scoped Workspace Bridge for Hub actions. The coordinator engine remains Codex; Claude worker chats are supported. Voice is disabled. |
-| Sharing and continuity | Template sharing with reusable skills, examples and privacy guidance. | Full/light private Hub archives, managed native chat transfer, relinking and conflict backups; separate content-only workspace snapshots suitable for user-controlled Git. |
+Upstream evolves independently. Changes are reviewed/adapted manually, not automatically merged. The [adaptation ledger](docs/upstream-adaptations.md) records what was brought across; [CHANGELOG](CHANGELOG.md) records this application's changes.
 
-Mr. Mik also adds accent themes, expanded Help, scoped card-chat shortcuts and managed History actions. Native Codex/Claude capabilities still determine which model, reasoning, fork and tool actions are available.
+## Documentation and source development
 
-Changes from upstream are reviewed and adapted manually, not merged blindly. See the [adaptation ledger](docs/upstream-adaptations.md), [changelog](CHANGELOG.md) and [user guide](docs/user-guide.md) for implementation details and limitations.
+In-app **Help** opens the detailed offline manual. See the [user guide](docs/user-guide.md), [getting started](docs/getting-started.md), [multi-project model](docs/multi-project.md) and [security notes](SECURITY.md).
 
-## What it organizes
-
-A **Hub** holds global Context, Knowledge, Processes, Inbox and skills. A **workspace** represents a logical project, such as a game, and contains **linked projects** (ordinary external folders: Unity, Blender, audio, etc.) and **cards** (work-area collections containing HTML pages, Markdown, images, videos and other files). Git is optional for linked projects.
-
-Hub files remain in the Hub. Registering an external folder does not copy it or create organizational files there. Explicit project tool/skill configuration is the exception: native Codex/Claude configuration can be changed when you request it.
-
-## Main features
-
-- Multiple linked folders per workspace; cards can target a linked project or workspace planning.
-- Native Codex and Claude terminal chats, quick card shortcuts, model/reasoning controls, stop, resume, fork where supported, and persistent History.
-- Archive/restore, remove only from the Hub, or separately confirmed permanent native-chat deletion.
-- Scoped Workspace Bridge: consult and manage cards, Knowledge, Processes, Inbox, Hub skills and supported project tools without loading all content into each model request.
-- Mik coordinator: persistent conversations, native Codex resume/fork, scoped workspace actions and worker-chat coordination. Its engine remains Codex; Claude workers are supported.
-- Global and workspace-specific Hub skills with per-workspace overrides; native linked-project skill files remain separate.
-- Six optional upstream game workflows (animation, audio, level design, UI, VFX, visual review), initially Off in Hub controls for both agents. Enable them in Skills → Hub globally or with a workspace override. Updates add only missing pack folders and preserve customizations.
-- MCP/plugin inventory and supported configuration controls. Configured does not mean connected in an existing chat; permissions, trust, native CLI/provider capabilities and restart requirements still apply.
-- File browsing, previews, Explorer and Recycle Bin actions, project-associated clipboard images, themed controls and compact navigation.
-- Full/light private Hub archive transfer, including managed Codex/Claude native conversations in full mode, continuation checks, conflicts, backups and external-folder relinking.
-- Plain-folder **workspace snapshots** for Git: content, stable IDs, associations and effective Hub skills; no chat/auth/native configuration export. Explicit updates/import previews and backups, no automatic Git operations.
-- Report error recovery, relative Markdown media links and bounded large Codex metadata parsing, manually adapted from upstream 0.4.14/0.4.15.
-
-Voice/API chat is disabled. Signing in to an agent and any provider charges remain the user's responsibility. A Bridge skill is discoverable context, not a guaranteed native `$`/slash-command entry.
-
-### Other terminal options
-
-**Kimi — limited terminal support:** the chat launcher includes Kimi, but it is not integrated to the same level as Codex and Claude. Existing code provides terminal launching, basic session-ID/resume handling, saved Mr. Mik History/screens and MCP inventory. Compatibility with the current Kimi Code CLI has not been validated. Kimi does not receive the Workspace Bridge or Hub skill scope controls, and Mr. Mik does not provide its model/reasoning pickers, fork controls, native conversation deletion or native conversation transfer in full archives. Exported Mr. Mik metadata/screens are not a backup of the native Kimi conversation. Full integration is deferred; do not assume feature parity.
-
-**PowerShell** is a local command terminal, not an AI chat. Use it for commands, builds, tests and diagnostics in the selected working folder. It requires no model account and receives no Workspace Bridge. The coordinator cannot submit shell commands to it. A saved terminal screen does not restore running processes or shell variables.
-
-## Install and run
-
-Windows x64 is the supported packaged platform. Release packages are produced by the maintainer; there is no automatic download/update or publication.
-
-1. Install/sign in to Codex CLI or Claude Code separately to use that agent. Browsing Hub content does not require an account.
-2. Use the **installer**, or extract the **portable ZIP** and run `Start Mr. Mik.cmd`.
-3. Choose your Hub folder (it contains `workspace/workspace.json`), or use the portable package's clean `Hub` folder.
-4. Add a workspace, link your external folder(s), and create cards or ask the agent to create them through the Bridge.
-
-The portable ZIP bundles Node and the local service, but native CLI auth/transcripts and Windows app preferences stay in the user's normal profile. WebView2 is required. Portable does not mean fully profile-isolated.
-
-See the [complete user guide](docs/user-guide.md), [multi-project model](docs/multi-project.md), [source setup](docs/getting-started.md), [transfer formats](docs/workspace-snapshots.md), and [upstream adaptation ledger](docs/upstream-adaptations.md).
-
-## Build from a clean clone
-
-Required: Node **22.20+**, npm, stable Rust, Visual Studio C++ build tools, Windows SDK and WebView2. No personal token/config file is distributed.
+To build on Windows x64, install Node **22.20+**, npm, stable Rust, Visual Studio C++ Build Tools, Windows SDK and WebView2, then run:
 
 ```powershell
 npm ci
 npm run lint
 npm test
 npm run test:template
-npm run build
 npm run desktop:build
 npm run release:package
 npm run release:verify
 ```
 
-`npm ci` also installs the local service dependencies. Desktop builds bundle the production UI/runtime. `release:package` writes an installer, portable ZIP and `SHA256SUMS.txt` into ignored `release/<version>/`; it refuses to overwrite a release folder. The manual GitHub workflow uploads build artifacts but does not publish a release.
+Desktop build prepares the production UI/runtime. Packaging writes ignored `release/<version>/` installer/portable assets and checksums without installing/publishing them; it refuses to overwrite existing releases. `npm run desktop:dev` runs the native development app; `npm run dev` is a report/browser preview, not a managed-terminal replacement.
 
-`npm run dev` previews reports; `npm run desktop:dev` runs the native application. Preview is not a substitute for testing native terminals. `Setup.ps1 -Mode Check` diagnoses prerequisites; Preview/Desktop perform the corresponding source setup.
+Keep personal Hub data separate from application source. Dependencies, caches, frontend output, Rust targets and release bundles are generated/ignored. `npm run source:clean -- C:\Path\To\NewSourceFolder` creates an allowlisted source copy with empty Hub metadata; review it for private content before sharing. Legacy `.mrmak` state names remain for compatibility.
 
-## Source versus user data
-
-Keep this repository as the application source. Generated `node_modules`, `.cache`, `dist`, Rust targets and release bundles are ignored and can be rebuilt. Personal Hub data belongs in a separate Hub folder. The application supports existing Hub folders with the legacy `.mrmak` state directory; that name is intentionally retained for compatibility.
-
-To create a publishable copy from a working development tree:
-
-```powershell
-npm run source:clean -- C:\Path\To\NewSourceFolder
-```
-
-The destination must not exist. This uses a source allowlist and generates an empty Hub, rather than relying only on `.gitignore`. It does not copy personal cards, Context, History, credentials or native project configs. Review documentation, source fixtures and maintained skills before publication: filename exclusions cannot detect secrets embedded in arbitrary text.
-
-## Migrating from Mr. Mak
-
-Mr. Mik uses the separate application identifier `com.mrmik.workspace`, install name and window identities. Back up an existing Workspace before opening it with Mr. Mik; use a separate copy when evaluating migration. Mr. Mik's full archives can be imported into a separate clean Hub. No global Codex/Claude home or authentication is relocated. Legacy storage formats used by this fork are retained, but compatibility with every upstream version or future schema is not guaranteed. Do not run both apps against the same Hub simultaneously. Windows window-placement/shortcut preferences are separate and are not silently migrated.
-
-Upstream changes are reviewed and ported manually, not pulled or merged into this customized fork. See [CHANGELOG](CHANGELOG.md) and [security notes](SECURITY.md).
+Evaluate migration from Mr. Mak on a backed-up separate Hub copy. Do not run both apps against the same Hub simultaneously. Mr. Mik has a separate application identifier/install name; compatibility with every upstream data version is not guaranteed.
 
 ## Acknowledgements
 
-A heartfelt thank you to [**witnesstodark**](https://github.com/witnesstodark), creator of [**Mr. Mak Workspace**](https://github.com/witnesstodark/mr-mak-workspace), for building and sharing the original application, workflows and examples. Mr. Mik builds on that foundation and explores a different approach to organizing multi-project work. Full credit for the original project belongs to its creator; its MIT license and copyright notice are preserved.
+A heartfelt thank you to [**witnesstodark**](https://github.com/witnesstodark) for creating and sharing [**Mr. Mak Workspace**](https://github.com/witnesstodark/mr-mak-workspace). Mr. Mik exists because of that foundation. The original MIT license/copyright are preserved in [LICENSE](LICENSE); bundled third-party materials retain their notices in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md).
 
 ---
 

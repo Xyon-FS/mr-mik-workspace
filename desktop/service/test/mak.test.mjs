@@ -50,6 +50,29 @@ export function fakeMak(coordinator, action) {
   return { threads, prompts };
 }
 
+test('Mik opens an OpenCode worker only after real confirmation, with exact linked card scope and no injected reasoning', async () => {
+  const { service, request, saveProject } = await makFixture();
+  try {
+    const project = await saveProject('OpenCode work');
+    const card = await service.projects.createCard({ projectId: project.id, repositoryId: 'primary', title: 'Development' });
+    const created = [];
+    service.sessions.create = async options => { created.push(options); const chat = service.sessions.make({ ...options, id: randomUUID(), open: false, status: 'stopped' }); service.sessions.items.set(chat.id, chat); return chat; };
+    fakeMak(service.coordinator, (scope, id) => service.coordinator.execute('open_chat', { agent: 'opencode', name: 'Feature work' }, id, undefined, scope));
+    const result = request('/coordinator', { id: 'oc-worker', text: 'Open an OpenCode worker', scope: { projectId: project.id, cardId: card.id } });
+    const deadline = Date.now() + 3000;
+    while (!service.coordinator.confirmations.size && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(created.length, 0); assert.equal(service.coordinator.confirmations.size, 1);
+    const confirmation = [...service.coordinator.confirmations.values()][0].confirmation;
+    assert.equal(confirmation.scope.cardId, card.id);
+    await request('/coordinator/confirm', { id: confirmation.id, approved: true });
+    const completed = await result; assert.equal(completed.status, 'completed', completed.result);
+    assert.equal(created[0].agent, 'opencode'); assert.equal(created[0].cwd, project.repositoryPath);
+    assert.equal(created[0].cardId, card.id); assert.equal(created[0].projectId, project.id);
+    assert.equal(created[0].repositoryId, 'primary'); assert.equal(created[0].effort, undefined);
+    assert.equal(created[0].bypass, false);
+  } finally { await service.close(); }
+});
+
 test('Reasoning defaults and per-conversation override persist, fork inherits, and busy/unsupported changes are rejected', async () => {
   const { service, request } = await makFixture();
   try {

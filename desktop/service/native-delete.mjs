@@ -7,17 +7,29 @@ import os from 'node:os';
 import { claudeTranscript, codexTranscript } from './native-events.mjs';
 import { codexBinary } from './agents.mjs';
 import { within } from './util.mjs';
+import { OpenCodeTransfer, openCodeHash, openCodeMembers } from './opencode-transfer.mjs';
+import { validSessionId } from './opencode.mjs';
 
 const execute = promisify(execFile);
 const uuid = /^[a-f0-9-]{36}$/i;
 export class NativeDeletion {
-  constructor(sessions, stateDir) { this.sessions = sessions; this.stateDir = stateDir; this.plans = new Map(); }
+  constructor(sessions, stateDir) { this.sessions = sessions; this.stateDir = stateDir; this.plans = new Map(); this.openCode = new OpenCodeTransfer(sessions.repo); }
   async plan(id) {
     const session = this.sessions.get(id);
     if (session.open || session.process) throw new Error('Close the chat tab before permanently deleting it.');
-    if (!['codex', 'claude'].includes(session.agent) || !uuid.test(session.nativeId || '')) throw new Error('This chat has no known Codex or Claude native session to delete.');
+    if (!['codex', 'claude', 'opencode'].includes(session.agent) || !(session.agent === 'opencode' ? validSessionId(session.nativeId) : uuid.test(session.nativeId || ''))) throw new Error('This chat has no known supported native session to delete.');
     const duplicates = this.sessions.list().filter(item => item.id !== id && item.agent === session.agent && item.nativeId === session.nativeId);
     if (duplicates.length) throw new Error('Another Mr. Mik chat references this native conversation. Remove that association first.');
+    if (session.agent === 'opencode') {
+      const data = await this.openCode.read(session.nativeId);
+      if (!data) throw new Error('Native OpenCode conversation is missing. Only the Mr. Mik record can be removed.');
+      const nativeSessions = openCodeMembers(data).map(member => ({ id: member.info.id, title: member.info.title }));
+      const ids = new Set(nativeSessions.map(member => member.id));
+      if (this.sessions.list().some(item => item.id !== id && item.agent === 'opencode' && ids.has(item.nativeId))) throw new Error('Another Mr. Mik chat references this OpenCode family. Close it and remove that association first.');
+      const plan = { token: randomUUID(), chatId: id, agent: 'opencode', nativeId: session.nativeId, chatName: session.name, bytes: Buffer.byteLength(JSON.stringify(data)), files: [], hash: openCodeHash(data), expires: Date.now() + 5 * 60000 };
+      this.plans.set(plan.token, plan);
+      return { token: plan.token, agent: plan.agent, chatName: plan.chatName, nativeId: plan.nativeId, bytes: plan.bytes, files: [], nativeSessions, warning: `This main OpenCode conversation and all ${nativeSessions.length - 1} child sessions listed below will be deleted recursively. Independent forks are not child sessions. Close other OpenCode instances first. Unrelated sessions, external files, authentication and configuration remain. This cannot be undone.` };
+    }
     const transcript = session.agent === 'codex' ? await codexTranscript(session.nativeId) : await claudeTranscript(session.cwd, session.nativeId, { search: true });
     const info = transcript && await stat(transcript).catch(() => null);
     if (!info?.isFile()) throw new Error('The native transcript is not present. Only the Mr. Mik record can be removed.');
@@ -44,6 +56,15 @@ export class NativeDeletion {
     this.plans.delete(token);
     const session = this.sessions.get(id);
     if (session.open || session.process || session.nativeId !== plan.nativeId) throw new Error('Chat state changed; review the deletion again.');
+    if (session.agent !== plan.agent) throw new Error('Chat agent changed; review deletion again.');
+    if (plan.agent === 'opencode') {
+      const current = await this.plan(id);
+      const latest = this.plans.get(current.token); this.plans.delete(current.token);
+      // The fresh plan checked all managed family references and its exact data.
+      if (!latest || latest.hash !== plan.hash) throw new Error('Native OpenCode conversation changed; review deletion again.');
+      await this.openCode.remove(plan.nativeId, plan.hash); await this.sessions.forget(id);
+      return { deleted: true, agent: 'opencode' };
+    }
     const current = await this.plan(id);
     if (JSON.stringify(current.files) !== JSON.stringify(plan.files)) throw new Error('Native session files changed; review the deletion again.');
     this.plans.delete(current.token);

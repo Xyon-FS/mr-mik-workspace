@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, reportError, useDesktop } from './client'
 
-export default function SkillCreate({ agent, initialTarget, preferredLinkedId, onCreated, onClose }: { agent: 'codex' | 'claude'; initialTarget: 'hub' | 'linked'; preferredLinkedId: string; onCreated: (skill: { path: string; repositoryId: string | null }) => void; onClose: () => void }) {
+export default function SkillCreate({ agent, initialTarget, preferredLinkedId, onCreated, onClose }: { agent: 'codex' | 'claude' | 'opencode'; initialTarget: 'hub' | 'linked'; preferredLinkedId: string; onCreated: (skill: { path: string; repositoryId: string | null }) => void; onClose: () => void }) {
   const { settings, projects } = useDesktop()
   const workspace = projects.find(item => item.id === settings.selectedProjectId)
   const linked = workspace?.repositories.filter(item => item.available) || []
@@ -19,7 +19,7 @@ export default function SkillCreate({ agent, initialTarget, preferredLinkedId, o
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); reportError(cause) }
     finally { setBusy(false) }
   }
-  return <section className="skill-create" aria-label="Add skill"><header><strong>Add {agent === 'codex' ? 'Codex' : 'Claude'} skill</strong><button type="button" onClick={onClose} aria-label="Close Add skill">×</button></header>
+  return <section className="skill-create" aria-label="Add skill"><header><strong>Add {agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : 'OpenCode'} skill</strong><button type="button" onClick={onClose} aria-label="Close Add skill">×</button></header>
     <div className="skill-create-target" role="group" aria-label="Skill destination"><button type="button" className={target === 'hub' ? 'selected' : ''} onClick={() => setTarget('hub')}>Hub skill</button><button type="button" className={target === 'linked' ? 'selected' : ''} disabled={!linked.length} onClick={() => setTarget('linked')}>Linked project skill</button></div>
     <p>{target === 'hub' ? 'Saved in Mr. Mik. Available through the Workspace Bridge in new chats.' : 'Creates a native skill in the selected external project folder. This writes to that folder.'}</p>
     {target === 'hub' ? <label>Enable for<select value={scope} onChange={event => setScope(event.target.value as 'global' | 'project')}><option value="global">All workspaces</option>{workspace && <option value="project">{workspace.name} only</option>}</select></label> : <label>Linked project<select aria-label="Skill linked project" required value={linkedId} onChange={event => setLinkedId(event.target.value)}><option value="">Choose a linked project…</option>{linked.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}

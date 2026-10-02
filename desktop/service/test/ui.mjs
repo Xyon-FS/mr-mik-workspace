@@ -55,6 +55,9 @@ try {
   await page.getByRole('button', { name: 'Open Workspace help' }).click();
   const guide = page.getByRole('dialog', { name: 'Mr. Mik guide' });
   await guide.getByRole('heading', { name: 'Mr. Mik Workspace · Manual and reference' }).waitFor();
+  await guide.getByRole('button', { name: /OpenCode V1\/V2/ }).click();
+  await guide.getByText('V2 conversation transfer:', { exact: true }).waitFor();
+  assert.equal((await guide.locator('.help-site-content').textContent()).includes('unreleased'), false);
   await guide.getByRole('button', { name: /Settings and transferring a Hub/ }).click();
   await guide.getByText('Export · full', { exact: false }).first().waitFor();
   await guide.getByRole('textbox', { name: 'Search the guide' }).fill('MCP');

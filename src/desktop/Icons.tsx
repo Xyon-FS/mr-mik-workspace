@@ -3,6 +3,7 @@ import type { AgentId } from './types'
 import MakLogo from '../components/MakLogo'
 
 export function AgentLogo({ agent, size = 18 }: { agent: AgentId; size?: number }) {
+  if (agent === 'opencode') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="agent-logo"><rect x="4" y="2" width="16" height="20" rx="2" /><path d="m10 8-4 4 4 4m4-8 4 4-4 4" /></svg>
   if (agent === 'claude') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="agent-logo">{Array.from({ length: 12 }, (_, index) => <path key={index} d={`M12 ${index % 2 ? 3 : 1.8}V9`} transform={`rotate(${index * 30} 12 12)`} />)}</svg>
   if (agent === 'codex') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" aria-hidden="true" className="agent-logo">{Array.from({ length: 6 }, (_, index) => <path key={index} d="M12 3.5c-3.7-2-7.7 1-6.5 5L12 12l5.5-3.2V5.9L12 3.5Z" transform={`rotate(${index * 60} 12 12)`} />)}</svg>
   if (agent === 'kimi') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true" className="agent-logo"><rect x="2" y="2" width="20" height="20" rx="6" fill="currentColor" fillOpacity=".12" strokeWidth="1" /><path d="M8 6v12M16 6l-7 6 7 6" /></svg>
@@ -14,6 +15,7 @@ export function Nose({ size = 30, tone = 'pink' }: { size?: number; tone?: 'pink
 }
 export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
   const paths: Record<string, string> = {
+    layout: 'M3 3h5M3 3v5M3 3l6 6M21 3h-5M21 3v5M21 3l-6 6M3 21h5M3 21v-5M3 21l6-6M21 21h-5M21 21v-5M21 21l-6-6',
     archive: 'M3 3h18v5H3ZM5 8v13h14V8M9 12h6',
     trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
     fork: 'M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM18 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM6 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM6 7v10M18 7v3a3 3 0 0 1-3 3H6',

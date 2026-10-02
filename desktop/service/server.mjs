@@ -10,8 +10,13 @@ import { parse as parseToml } from 'smol-toml';
 import { Sessions } from './sessions.mjs';
 import { CodexModelPicker } from './model-picker.mjs';
 import { ClaudeModelPicker, ClaudeEffortPicker } from './claude-model-picker.mjs';
+import { OpenCodePicker } from './opencode-picker.mjs';
+import { Accounts } from './accounts.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { MakActions } from './mak-actions.mjs';
+import { workerControls } from './worker-controls.mjs';
+import { ToolRefresh, mcpSnapshot, emptyNativePrompt } from './tool-refresh.mjs';
+import { nativeRefreshSnapshot } from './native-refresh-snapshot.mjs';
 import { codexTranscript, claudeTranscript } from './native-events.mjs';
 import { Files, serveFile } from './files.mjs';
 import { importFile, dragFiles, moveFile, recyclePath, MAX_FILE_BYTES } from './file-transfers.mjs';
@@ -38,6 +43,7 @@ import { effectiveCodex } from './codex-effective.mjs';
 import { CodexMcpEditor } from './codex-mcp-editor.mjs';
 import { ClaudeMcpEditor } from './claude-mcp-editor.mjs';
 import { ClaudeSettings } from './claude-settings.mjs';
+import { OpenCodeSettings } from './opencode-settings.mjs';
 import { installedIde, openIde } from './ide.mjs';
 import { body, equalSecret, json, publicError, readJson, realFile, saveJson, secret, within } from './util.mjs';
 
@@ -52,6 +58,9 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const mcp = new McpInventory(repo, mcpOptions);
   const sessions = await new Sessions(repo, stateDir).init();
   const modelPicker = new CodexModelPicker(sessions);
+  const openCodePicker = new OpenCodePicker(sessions);
+  const accounts = new Accounts({ blocked: agent => sessions.list().some(item => item.agent === agent && (item.open || item.status === 'running')) || agent === 'codex' && coordinator.operationPromises.size > 0 });
+  const workers = workerControls(sessions, openCodePicker);
   const claudeModelPicker = new ClaudeModelPicker(sessions);
   const claudeEffortPicker = new ClaudeEffortPicker(sessions);
   const environment = parseEnv(await readFile(path.join(repo, '.env'), 'utf8').catch(() => ''));
@@ -91,6 +100,41 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const codexMcpEditor = new CodexMcpEditor(projects, mcpOptions);
   const claudeMcpEditor = new ClaudeMcpEditor(projects, stateDir, mcpOptions);
   const claudeSettings = new ClaudeSettings(projects, mcpOptions);
+  const openCodeSettings = new OpenCodeSettings(projects, stateDir, mcpOptions);
+  openCodeSettings.inspectSkills = async root => {
+    const chat = [...sessions.items.values()].find(item => item.agent === 'opencode' && item.openCodeFamily === 2 && item.open && item.process && path.resolve(item.cwd).toLowerCase() === path.resolve(root).toLowerCase());
+    if (!chat || openCodePicker.busy.has(chat.id) || openCodePicker.openMenus.has(chat.id) || openCodePicker.requests?.has(chat.id)) return null;
+    try { return (await openCodePicker.command(chat.id, 'skills')).skills; } catch { return null; }
+  };
+  openCodeSettings.inspectPlugins = async root => {
+    const chat = [...sessions.items.values()].find(item => item.agent === 'opencode' && item.openCodeFamily === 2 && item.open && item.process && path.resolve(item.cwd).toLowerCase() === path.resolve(root).toLowerCase());
+    if (!chat || openCodePicker.busy.has(chat.id) || openCodePicker.openMenus.has(chat.id) || openCodePicker.requests?.has(chat.id)) return;
+    try { const result = await openCodePicker.command(chat.id, 'plugins'); openCodeSettings.observePlugins(root, result.plugins); } catch { /* Unknown contracts leave declarations read-only; never guess IDs. */ }
+  };
+  const toolRefresh = new ToolRefresh(sessions, {
+    snapshot: async session => ({
+      ...mcpSnapshot(await new McpInventory(session.cwd, mcpOptions).scan(), session.agent),
+      ...await nativeRefreshSnapshot(session, repo, stateDir, mcpOptions),
+    }),
+    ready: async session => {
+      if ([modelPicker, claudeModelPicker, claudeEffortPicker, openCodePicker].some(picker => picker.busy.has(session.id) || picker.openMenus.has(session.id)) || openCodePicker.requests?.has(session.id)) return false;
+      if (Date.now() - Date.parse(session.lastInputAt || 0) < 1500) return false;
+      if (session.agent === 'opencode') { try { const ready = await openCodePicker.command(session.id, 'mcp-ready'); session.liveMcpAvailable = ready.mcpRefreshAvailable === true; return true; } catch { return false; } }
+      await new Promise(resolve => session.terminal.write('', resolve));
+      return emptyNativePrompt(session);
+    },
+    live: (session, changes) => openCodePicker.command(session.id, 'mcp-refresh', { changes }),
+    restart: (session, guard) => sessions.restartTools(session, guard),
+  });
+  sessions.captureTools = session => toolRefresh.capture(session);
+  sessions.toolsLaunched = (session, baseline) => toolRefresh.launched(session, baseline);
+  toolRefresh.wrap(codexScopes, 'set', (_projectId, change) => ['mcp', 'plugin', 'skill'].includes(change.kind));
+  toolRefresh.wrap(codexMcpEditor, 'change', () => true);
+  toolRefresh.wrap(claudeMcpEditor, 'change', () => true);
+  toolRefresh.wrap(claudeSettings, 'set', (_projectId, change) => ['plugin', 'skill'].includes(change.kind));
+  toolRefresh.wrap(openCodeSettings, 'change', change => ['mcp', 'skill', 'plugin'].includes(change.kind || 'mcp'));
+  toolRefresh.wrap(projects, 'createSkill', change => change.target === 'linked');
+  toolRefresh.wrap(files, 'saveMarkdown', () => true);
   const projectMcps = new Map();
   const projectMcp = async (id, repositoryId) => {
     if (!id) return mcp;
@@ -101,7 +145,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     if (previous?.repo === root) return previous;
     previous?.close(); const next = new McpInventory(root, mcpOptions); projectMcps.set(key, next); return next;
   };
-  const bridge = new WorkspaceBridge(projects, workspace, registry, { codexScopes, codexMcpEditor, claudeMcpEditor, claudeSettings, mcpInventory: async (id, repositoryId) => (await projectMcp(id, repositoryId)).list() });
+  const bridge = new WorkspaceBridge(projects, workspace, registry, { codexScopes, codexMcpEditor, claudeMcpEditor, claudeSettings, openCodeSettings, mcpInventory: async (id, repositoryId) => (await projectMcp(id, repositoryId)).list() });
   const legacyProjectChatFolder = id => path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'MrMak', 'project-chats', id);
   const projectChatFolder = id => path.join(repo, 'workspace', 'planning', id);
   let cardMutation = false;
@@ -131,7 +175,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     if (!repositoryId) await mkdir(cwd, { recursive: true });
     return { ...options, repositoryId, cardId: card?.id || null, cwd };
   };
-  sessions.prepareLaunch = async session => {
+  sessions.prepareLaunch = async (session, { preview = false } = {}) => {
     if (cardMutation) throw new Error('Wait for the card or workspace change before opening or resuming a chat.');
     const launch = async (project, card, linked) => {
       const folderName = linked?.repositoryPath && path.basename(linked.repositoryPath);
@@ -141,10 +185,11 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       // Hub skills are consulted through the scoped Bridge. When Claude starts
       // under this Hub, suppress native discovery so Hub Off cannot be bypassed.
       const settings = session.agent === 'claude' && !linked ? { skillOverrides: Object.fromEntries((await projects.hubSkills(project?.id || null, 'claude')).map(skill => [skill.name, 'off'])) } : null;
-      return { script: fileURLToPath(new URL('./bridge-mcp.mjs', import.meta.url)), url: `${origin}/bridge`, token: bridge.issue(session.id, project?.id || null, card?.id || null, linked?.id || null, session.agent), orientation, instructions, settings };
+      const hubSkills = session.agent === 'opencode' && !linked ? await projects.hubSkills(project?.id || null, 'opencode') : [];
+      return { script: fileURLToPath(new URL('./bridge-mcp.mjs', import.meta.url)), url: `${origin}/bridge`, token: preview ? '' : bridge.issue(session.id, project?.id || null, card?.id || null, linked?.id || null, session.agent), orientation, instructions, settings, hubSkillNames: hubSkills.map(skill => skill.name), hubSkillIds: hubSkills.map(skill => skill.id) };
     };
     if (!session.projectId) {
-      if (!['codex', 'claude'].includes(session.agent)) return null;
+      if (!['codex', 'claude', 'opencode'].includes(session.agent)) return null;
       if ((await realpath(session.cwd)).toLowerCase() !== repo.toLowerCase()) return null;
       const card = session.cardId ? (await registry()).entities.find(item => item.id === session.cardId && !item.projectId) : null;
       return launch(null, card, null);
@@ -154,7 +199,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
     const actual = (await realpath(session.cwd)).toLowerCase();
     const legacy = session.repositoryId === null ? await realpath(legacyProjectChatFolder(session.projectId)).catch(() => null) : null;
     if (root.toLowerCase() !== actual && legacy?.toLowerCase() !== actual) throw new Error('Project location changed. Open a new chat; the existing conversation keeps its original folder.');
-    if (!['codex', 'claude'].includes(session.agent)) return null;
+    if (!['codex', 'claude', 'opencode'].includes(session.agent)) return null;
     const project = await projects.get(session.projectId);
     const card = session.cardId ? (await registry()).entities.find(item => item.id === session.cardId && item.projectId === project.id) : null;
     const linked = project.repositories.find(item => item.id === session.repositoryId);
@@ -186,7 +231,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       const components = [...global.rows.filter(item => ['mcp', 'plugin'].includes(item.kind)), ...Object.keys(hub.mcp_servers || {}).map(id => ({ kind: 'mcp', id })), ...Object.keys(hub.plugins || {}).map(id => ({ kind: 'plugin', id }))];
       return { 'features.apps': false, web_search: 'disabled', mcp_servers: Object.fromEntries(components.filter(item => item.kind === 'mcp').map(item => [item.id, { enabled: false }])), plugins: Object.fromEntries(components.filter(item => item.kind === 'plugin').map(item => [item.id, { enabled: false }])) };
     },
-    repo, stateDir, orientation: async () => 'Mr. Mik has a Global Hub and logical workspaces. Each workspace contains linked projects and cards. Cards, Knowledge, Processes and Inbox belong to the Hub, never the linked folders. Context is global; technical project rules stay in linked AGENTS.md. Use hub_catalog and hub_action_schema to discover Hub operations, then hub_action to invoke the scoped Bridge. Use visible Codex/Claude worker chats for actual project execution. Discover relevant skills and procedures, then read only what is needed. A request scope is immutable: UI navigation must not change its targets. Global/configuration changes and worker messages require a real UI confirmation, not a model-generated confirmed flag. Do not retry rejected actions. Configuration is not proof of a live MCP connection. Voice is disabled. Never install tools, approve agent permissions or delete native conversations through the coordinator.', settings: () => settings,
+    repo, stateDir, orientation: async () => 'Mr. Mik has a Global Hub and logical workspaces. Each workspace contains linked projects and cards. Cards, Knowledge, Processes and Inbox belong to the Hub, never the linked folders. Context is global; technical project rules stay in linked AGENTS.md. Use hub_catalog and hub_action_schema to discover Hub operations, then hub_action to invoke the scoped Bridge. Use visible Codex/Claude/OpenCode worker chats for actual project execution. OpenCode keeps its own provider access and native model variants; omit worker effort for it. Discover relevant skills and procedures, then read only what is needed. A request scope is immutable: UI navigation must not change its targets. Global/configuration changes and worker messages require a real UI confirmation, not a model-generated confirmed flag. Do not retry rejected actions. Configuration is not proof of a live MCP connection. Voice is disabled. Never install tools, approve agent permissions or delete native conversations through the coordinator.', settings: () => settings,
     context: scope => scope ? makActions.context(scope) : ({ repo, activeProjectId: settings.selectedProjectId || null, localDate: localDay(), selectedId, workspaceRoute, chats: sessions.active(), recentNotices: notices.slice(-5), recentRequests: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-6).map(({ text, result, status }) => ({ text, result, status })) }),
     execute: async (name, args, operationId, requestText, scope) => {
       if (scope) return makActions.execute(name, args, operationId, scope);
@@ -198,13 +243,13 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         case 'close_chat': return closeChat(args.id);
         case 'pin_chat': return sessions.pin(args.id, args.pinned);
         case 'list_projects': return projects.list();
-        case 'open_chat': { const session = await sessions.create(await sessionOptions({ ...args, name: taskTitle(args.name), effort: args.effort ? taskEffort(latestRequest, args.effort) : workerDefault(settings, args.agent), bypass: args.bypass ?? settings.defaultBypass })); focus(session.id); return session; }
+        case 'open_chat': { if (args.agent === 'opencode' && args.effort != null) throw new Error('OpenCode uses native model variants. Omit effort.'); const session = await sessions.create(await sessionOptions({ ...args, name: taskTitle(args.name), effort: args.effort ? taskEffort(latestRequest, args.effort) : workerDefault(settings, args.agent), bypass: args.bypass ?? settings.defaultBypass })); focus(session.id); return session; }
         case 'read_chat': return sessions.read(args.id);
-        case 'send_to_chat': return sessions.input(args.id, args.text, { coordinator: true, submit: true });
+        case 'send_to_chat': return workers.send(args.id, args.text);
         case 'attach_files': return attach(args.id, args.paths, true);
         case 'focus_chat': return focus(args.id);
         case 'rename_chat': return sessions.rename(args.id, args.name);
-        case 'interrupt_chat': sessions.input(args.id, '\x03'); return { delivered: 'Ctrl+C', sessionId: args.id };
+        case 'interrupt_chat': return workers.interrupt(args.id);
         case 'list_workspace': return workspace.list(args);
         case 'read_workspace': return workspace.read(args.entityId, args.step);
         case 'workspace_activity': return workspace.activity(args.date);
@@ -229,7 +274,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
       }
     },
   }).init();
-  const makActions = new MakActions({ repo, projects, sessions, workspace, registry, bridge, files, library, history, attach, closeChat, focus, show, coordinator: () => coordinator, settings: () => settings,
+  const makActions = new MakActions({ repo, projects, sessions, workspace, registry, bridge, files, library, history, attach, closeChat, focus, show, workerControls: workers, workerAgents: () => inventory().filter(item => item.id !== 'shell').map(({ id, available }) => ({ id, available })), coordinator: () => coordinator, settings: () => settings,
     createChat: async (options, request) => sessions.create(await sessionOptions({ ...options, name: taskTitle(options.name), effort: options.effort ? taskEffort(request, options.effort) : workerDefault(settings, options.agent), bypass: settings.defaultBypass })),
     navigate: async ({ projectId, cardId, section, step }) => {
       settings.selectedProjectId = projectId;
@@ -290,7 +335,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         const data = await body(request, 3 * 1024 * 1024);
         return json(response, 200, await bridge.call(String(request.headers.authorization || '').replace(/^Bearer /, ''), data.name, data.args));
       }
-      if (url.pathname === '/health') return json(response, 200, { service: 'mrmik', version: '0.2.7' });
+      if (url.pathname === '/health') return json(response, 200, { service: 'mrmik', version: '0.2.9' });
       if (url.pathname.startsWith('/api/')) {
         authorize(request);
         const method = request.method;
@@ -321,7 +366,8 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 200, { repo, projects: await projects.list(), contentBase: `${files.origin}/view/${files.repoGrant}`, agents: inventory(), sessions: sessions.list(), settings, selectedId, notices, coordinator: coordinator.state, voice: { configured: false, owner: voiceOwner }, voiceHistory, operations: [...coordinator.operations.values(), ...quick.operations.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-30) });
         }
         if (method === 'GET' && url.pathname === '/api/projects') return json(response, 200, await projects.list());
-        if (method === 'POST' && url.pathname === '/api/workspace/export') { if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before exporting.'); await coordinator.saves; return json(response, 201, await projects.serialize(() => portable.exportTo(data.folder, { chats: data.chats }))); }
+        if (method === 'POST' && url.pathname === '/api/workspace/export/preview') { if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before exporting.'); await coordinator.saves; return json(response, 200, await projects.serialize(() => portable.reviewExport(data.folder))); }
+        if (method === 'POST' && url.pathname === '/api/workspace/export') { if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before exporting.'); await coordinator.saves; return json(response, 201, await projects.serialize(() => portable.exportTo(data.folder, { chats: data.chats, attachmentToken: data.attachmentToken, approveAttachments: data.approveAttachments === true, skipNative: data.skipNative }))); }
         if (method === 'POST' && url.pathname === '/api/workspace/import/preview') return json(response, 200, await portable.preview(data.path));
         if (method === 'POST' && url.pathname === '/api/workspace/snapshot/export') return json(response, 201, await projects.serialize(() => snapshots.exportTo(data.folder, data.projectId)));
         if (method === 'POST' && url.pathname === '/api/workspace/snapshot/preview') return json(response, 200, await snapshots.preview(data.folder));
@@ -335,7 +381,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         if (method === 'POST' && url.pathname === '/api/workspace/import') {
           if (coordinator.operationPromises.size) throw new Error('Wait for Mak or stop its request before importing.');
           await coordinator.saves; await coordinator.disconnect();
-          const imported = await projects.serialize(() => portable.importFrom(data.path, { relinks: data.relinks, replaceNative: data.replaceNative, replaceHub: data.replaceHub, restoreSettings: data.restoreSettings === true }));
+          const imported = await projects.serialize(() => portable.importFrom(data.path, { relinks: data.relinks, replaceNative: data.replaceNative, replaceHub: data.replaceHub, restoreSettings: data.restoreSettings === true, skipNative: data.skipNative, reviewHash: data.reviewHash }));
           if (imported.restoredSettings) {
             const restored = { ...imported.restoredSettings };
             if (restored.defaultAgent && !inventory().some(agent => agent.id === restored.defaultAgent && agent.available)) delete restored.defaultAgent;
@@ -346,6 +392,10 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 200, imported);
         }
         if (method === 'GET' && url.pathname === '/api/hub/skills') return json(response, 200, await projects.hubSkills(url.searchParams.get('projectId') || null, url.searchParams.get('agent') || 'codex'));
+        if (method === 'GET' && url.pathname === '/api/opencode/scopes') return json(response, 200, await openCodeSettings.list(url.searchParams.get('projectId') || null, url.searchParams.get('repositoryId') || null));
+        if (method === 'POST' && url.pathname === '/api/opencode/scopes') return json(response, 200, await openCodeSettings.change({ ...data, action: 'toggle' }));
+        if (method === 'GET' && url.pathname === '/api/opencode/mcp-managed') return json(response, 200, await openCodeSettings.managed(url.searchParams.get('projectId') || null, url.searchParams.get('repositoryId') || null, url.searchParams.get('scope') || 'project'));
+        if (method === 'POST' && url.pathname === '/api/opencode/mcp-managed') return json(response, 200, await openCodeSettings.change({ ...data, kind: 'mcp' }));
         if (method === 'POST' && url.pathname === '/api/hub/skills/scope') return json(response, 200, await projects.setHubSkillScope(data));
         if (method === 'POST' && url.pathname === '/api/skills/create') return json(response, 201, await projects.createSkill(data));
         if (method === 'POST' && url.pathname === '/api/chats/quick') {
@@ -357,7 +407,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           let name = 'Workspace planning';
           if (card) { try { name = englishTitle(card.title, 'Card chat'); } catch { name = 'Card chat'; } }
           const agent = data.agent || 'codex';
-          if (!['codex', 'claude'].includes(agent)) throw new Error('Choose Codex or Claude for a quick chat.');
+          if (!['codex', 'claude', 'opencode'].includes(agent)) throw new Error('Choose Codex, Claude or OpenCode for a quick chat.');
           const session = await sessions.create(await sessionOptions({ agent, name, projectId: project?.id || null, cardId: card?.id || null, repositoryId: linked?.id || 'hub', cwd: project ? undefined : repo, effort: workerDefault(settings, agent), bypass: settings.defaultBypass }));
           focus(session.id);
           return json(response, 201, session);
@@ -446,6 +496,9 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 200, await projects.serialize(() => workspace.update(data.id, { pinned: data.pinned })));
         }
         if (method === 'GET' && url.pathname === '/api/native/settings') return json(response, 200, nativeSettings.value);
+        if (method === 'GET' && url.pathname === '/api/accounts') return json(response, 200, await accounts.inventory());
+        if (method === 'POST' && url.pathname === '/api/accounts/plan') return json(response, 200, accounts.plan(data.agent, data.action, data.provider));
+        if (method === 'POST' && url.pathname === '/api/accounts/confirm') return json(response, 200, await accounts.confirm(data.token));
         if (method === 'GET' && url.pathname === '/api/mcp') return json(response, 200, await (await projectMcp(url.searchParams.get('projectId'), url.searchParams.get('repositoryId'))).list());
         if (method === 'POST' && url.pathname === '/api/mcp/check') return json(response, 200, await (await projectMcp(data.projectId, data.repositoryId)).check(data.id));
         if (method === 'POST' && url.pathname === '/api/native/settings') return json(response, 200, await nativeSettings.set(data.winKey));
@@ -495,12 +548,14 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         const modelRoute = /^\/api\/sessions\/([\w-]+)\/model-picker$/.exec(url.pathname);
         const effortRoute = /^\/api\/sessions\/([\w-]+)\/reasoning-picker$/.exec(url.pathname);
         if (method === 'POST' && effortRoute) {
-          const picker = sessions.get(effortRoute[1]).agent === 'claude' ? claudeEffortPicker : modelPicker;
+          const agent = sessions.get(effortRoute[1]).agent;
+          const picker = agent === 'opencode' ? openCodePicker : agent === 'claude' ? claudeEffortPicker : modelPicker;
           return json(response, 200, data.action === 'open' ? await picker.openEffort(effortRoute[1]) : data.action === 'choose' ? await picker.chooseEffort(effortRoute[1], data.effort) : await picker.cancelEffort(effortRoute[1]));
         }
         if (method === 'POST' && modelRoute) {
           if (!['open', 'choose', 'cancel'].includes(data.action)) throw new Error('Unknown model picker action.');
-          const picker = sessions.get(modelRoute[1]).agent === 'claude' ? claudeModelPicker : modelPicker;
+          const agent = sessions.get(modelRoute[1]).agent;
+          const picker = agent === 'opencode' ? openCodePicker : agent === 'claude' ? claudeModelPicker : modelPicker;
           return json(response, 200, data.action === 'open' ? await picker.open(modelRoute[1]) : data.action === 'choose' ? await picker.choose(modelRoute[1], data.model) : await picker.cancel(modelRoute[1]));
         }
         const sessionRoute = /^\/api\/sessions\/([\w-]+)(?:\/(\w+))?$/.exec(url.pathname);
@@ -508,22 +563,25 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           const [, id, action] = sessionRoute;
           if (method === 'GET' && action === 'screen') return json(response, 200, await sessions.read(id));
           if (method === 'POST' && action === 'focus') return json(response, 200, focus(id));
+          if (method === 'POST' && action === 'toolsrefresh') return json(response, 200, await toolRefresh.apply(id));
           if (method === 'POST' && action === 'fork') {
             const source = sessions.get(id);
-            if (!['codex', 'claude'].includes(source.agent) || !source.nativeId || source.activity === 'working') throw new Error('Fork requires an idle Codex/Claude chat with a captured native conversation ID.');
-            const transcript = source.agent === 'codex' ? await codexTranscript(source.nativeId) : await claudeTranscript(source.cwd, source.nativeId, { search: true });
+            if (!['codex', 'claude', 'opencode'].includes(source.agent) || !source.nativeId || source.activity !== 'idle') throw new Error('Fork requires an idle agent chat with a captured native conversation ID.');
+            const transcript = source.agent === 'opencode' ? source.nativeId : source.agent === 'codex' ? await codexTranscript(source.nativeId) : await claudeTranscript(source.cwd, source.nativeId, { search: true });
             if (!transcript) throw new Error('The native conversation cannot be located. Reconnect it before forking.');
             const fork = await sessions.create(await sessionOptions({ agent: source.agent, name: `Fork · ${source.name}`, projectId: source.projectId, repositoryId: source.repositoryId || 'hub', cardId: source.cardId, cwd: source.cwd, bypass: source.bypass, effort: source.effort, resumeId: source.nativeId, fork: true, forkPath: transcript }));
             focus(fork.id); return json(response, 201, fork);
           }
           if (method === 'POST' && action === 'control') {
             const session = sessions.get(id);
-            if (!session.process || !['codex', 'claude'].includes(session.agent)) throw new Error('Control requires a running Codex/Claude terminal.');
+            if (!session.process || !['codex', 'claude', 'opencode'].includes(session.agent)) throw new Error('Control requires a running agent terminal.');
             if (data.action === 'interrupt') {
               if (session.activity !== 'working') throw new Error('This chat is not reporting an active turn.');
+              if (session.agent === 'opencode') { await openCodePicker.command(id, 'interrupt'); return json(response, 200, { interrupted: true }); }
               return json(response, 200, sessions.input(id, '\x1b'));
             }
             if (data.action !== 'submit' || session.activity === 'working' || session.attention) throw new Error('The terminal is not ready to submit. Handle native prompts directly.');
+            if (session.agent === 'opencode') { await openCodePicker.command(id, 'submit'); return json(response, 200, { submitted: true }); }
             return json(response, 200, sessions.input(id, '\r'));
           }
           if (method === 'POST' && action === 'stop') return json(response, 200, sessions.stop(id));
@@ -548,7 +606,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           if (method === 'DELETE' && action === 'forget') return json(response, 200, await sessions.forget(id));
         }
         if (method === 'POST' && url.pathname === '/api/window') {
-          if (!['chats', 'workspace'].includes(data.window) || !['show', 'hide', 'minimize', 'pin'].includes(data.action)) throw new Error('Unknown window action');
+          if (!['chats', 'workspace'].includes(data.window) || !['show', 'hide', 'minimize', 'pin', 'layout'].includes(data.action)) throw new Error('Unknown window action');
           native({ type: 'window', action: data.action, window: data.window, value: !!data.value }); return json(response, 200, { requested: true });
         }
         if (method === 'POST' && url.pathname === '/api/reveal') {
@@ -557,7 +615,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         }
         if (method === 'GET' && url.pathname === '/api/coordinator') {
           const projectId = url.searchParams.get('projectId') || null;
-          const conversations = coordinator.conversations.conversations.filter(item => item.projectId === projectId).map(({ id, title, at, parentId, threadId }) => ({ id, title, at, parentId, canFork: !!threadId }));
+          const conversations = coordinator.conversations.conversations.filter(item => item.projectId === projectId).map(({ id, title, at, parentId, threadId, nativeUnavailable }) => ({ id, title, at, parentId, nativeUnavailable: nativeUnavailable || null, canFork: !!threadId && !nativeUnavailable }));
           if (coordinator.history(projectId, 'legacy').length) conversations.unshift({ id: 'legacy', title: 'Previous Mak History · view only', at: '', canFork: false });
           const selected = coordinator.conversations.selected[projectId || 'global'] || (conversations.some(item => item.id === 'legacy') ? 'legacy' : null);
           const current = selected && selected !== 'legacy' ? coordinator.conversation(projectId, selected) : null;
@@ -644,11 +702,11 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   try { watcher = watch(path.join(repo, 'workspace', 'workspace.json'), () => broadcast('workspace-changed', {})); watcher.on('error', () => {}); } catch { /* Registry may be created after first setup. */ }
   const restoreTimer = restoreSessions ? setTimeout(() => sessions.restore().catch(error => sessions.emit('service-error', error)), 100) : null;
   return {
-    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, files, projects, bridge,
+    origin, contentOrigin: files.origin, token, sessions, coordinator, quick, workspace, files, projects, bridge, toolRefresh,
     urls: { workspace: `${origin}/?desktop=1&surface=workspace&token=${token}`, chats: `${origin}/?desktop=1&surface=chats&token=${token}` },
       nativeMessage: event => { nativeSettings.receive(event); cardRecycler.receive(event); },
       async close() {
-        if (closing) return; closing = true; bridge.close(); cardRecycler.close(); for (const inventory of projectMcps.values()) inventory.close(); await projects.writes.catch(() => {}); mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
+        if (closing) return; closing = true; toolRefresh.close(); bridge.close(); cardRecycler.close(); for (const inventory of projectMcps.values()) inventory.close(); await projects.writes.catch(() => {}); mcp.close(); nativeSettings.close(); await files.writes.catch(() => {});
       watcher?.close(); clearTimeout(restoreTimer); coordinator.close(); clearTimeout(settingsTimer); await saveSettings(); await transcriptSave; await coordinator.queue; await coordinator.saves; await quick.saves; await workspace.writes;
       for (const ws of wss.clients) ws.terminate();
       wss.close(); await sessions.close();

@@ -28,17 +28,17 @@ export const bridgeTools = [
   { name: 'mrmak_list_inbox', description: 'List Inbox file names and assignments relevant to this workspace; files remain in the shared physical Inbox.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'mrmak_assign_inbox', description: 'Assign an Inbox item to this workspace or remove its assignment (global). Does not move or delete the file.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, scope: { type: 'string', enum: ['workspace', 'global'] } }, required: ['id', 'scope'], additionalProperties: false } },
   { name: 'mrmak_import_inbox_file', description: 'Copy an explicitly requested non-private file from this workspace’s linked project into the shared Hub Inbox, optionally assigned to this workspace.', inputSchema: { type: 'object', properties: { repositoryId: { type: 'string' }, path: { type: 'string' }, scope: { type: 'string', enum: ['workspace', 'global'] } }, required: ['repositoryId', 'path'], additionalProperties: false } },
-  { name: 'mrmak_skill_settings', description: 'List Hub skill availability and native skill names for this agent and selected linked project. Does not load skill instructions.', inputSchema: { type: 'object', properties: { agent: { type: 'string', enum: ['codex', 'claude'] }, repositoryId: { type: 'string' } }, additionalProperties: false } },
-  { name: 'mrmak_manage_skill', description: 'Create an explicitly requested Hub or linked-project skill, change a Hub skill global/workspace switch, or change a native Codex/Claude skill switch. Linked writes require explicit user approval.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['create', 'scope', 'native-toggle'] }, agent: { type: 'string', enum: ['codex', 'claude'] }, target: { type: 'string', enum: ['hub', 'linked'] }, scope: { type: 'string', enum: ['global', 'workspace'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, instructions: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
-  { name: 'mrmak_tool_settings', description: 'List global or selected linked-project Codex plugin/MCP switches and declared MCP servers. Configuration is not proof of a live connection.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['global', 'project'] }, repositoryId: { type: 'string' } }, additionalProperties: false } },
-  { name: 'mrmak_manage_tool', description: 'Change an explicitly requested Codex MCP/plugin switch, add an MCP definition, or change a Claude MCP/plugin global/project switch. Never installs software or credentials; settings affect new chats.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['codex-switch', 'mcp-definition', 'claude-override'] }, agent: { type: 'string', enum: ['codex', 'claude'] }, kind: { type: 'string', enum: ['mcp', 'plugin'] }, scope: { type: 'string', enum: ['global', 'project'] }, name: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, transport: { type: 'string', enum: ['http', 'stdio'] }, url: { type: 'string' }, command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
+  { name: 'mrmak_skill_settings', description: 'List Hub skill availability and native skill names for this agent and selected linked project. Does not load skill instructions.', inputSchema: { type: 'object', properties: { agent: { type: 'string', enum: ['codex', 'claude', 'opencode'] }, repositoryId: { type: 'string' } }, additionalProperties: false } },
+  { name: 'mrmak_manage_skill', description: 'Create an explicitly requested Hub or linked-project skill, change a Hub skill global/workspace switch, or change a native Codex/Claude/OpenCode skill switch. Linked writes require explicit user approval.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['create', 'scope', 'native-toggle'] }, agent: { type: 'string', enum: ['codex', 'claude', 'opencode'] }, target: { type: 'string', enum: ['hub', 'linked'] }, scope: { type: 'string', enum: ['global', 'workspace'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, instructions: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
+  { name: 'mrmak_tool_settings', description: 'List global or selected linked-project Codex/Claude/OpenCode settings and declared MCP servers. Configuration is not proof of a live connection.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['global', 'project'] }, repositoryId: { type: 'string' } }, additionalProperties: false } },
+  { name: 'mrmak_manage_tool', description: 'Change an explicitly requested Codex or Claude MCP/plugin switch, add an MCP definition, or change an OpenCode MCP or verified V2 server-plugin exclusion. Native V2 plugin IDs must be verified in the selected open chat; On removes an exact exclusion, never bypasses inherited/wildcard policy or installs a package. Never installs credentials; affected chats update when safe or show a pending configuration update.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['codex-switch', 'mcp-definition', 'claude-override', 'opencode-switch'] }, agent: { type: 'string', enum: ['codex', 'claude', 'opencode'] }, kind: { type: 'string', enum: ['mcp', 'plugin'] }, scope: { type: 'string', enum: ['global', 'project'] }, name: { type: 'string' }, repositoryId: { type: 'string' }, enabled: { type: ['boolean', 'null'] }, transport: { type: 'string', enum: ['http', 'stdio'] }, url: { type: 'string' }, command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, confirmed: { type: 'boolean' } }, required: ['action', 'confirmed'], additionalProperties: false } },
 ];
 
 export class WorkspaceBridge {
   constructor(projects, workspace, registry, services = {}) { Object.assign(this, { projects, workspace, registry, services }); this.grants = new Map(); }
   issue(sessionId, projectId, cardId = null, repositoryId = null, agent = 'codex') {
     this.revoke(sessionId);
-    if (!['codex', 'claude'].includes(agent)) throw new Error('Unsupported Bridge agent.');
+    if (!['codex', 'claude', 'opencode'].includes(agent)) throw new Error('Unsupported Bridge agent.');
     const token = secret(); this.grants.set(token, { sessionId, projectId, cardId, repositoryId, agent }); return token;
   }
   revoke(sessionId) { for (const [token, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(token); }
@@ -127,7 +127,7 @@ export class WorkspaceBridge {
       const nativeRepositoryId = project ? args.repositoryId || grant.repositoryId || (project.repositories.length === 1 ? project.repositories[0].id : null) : null;
       if (nativeRepositoryId) {
         const root = await this.projects.root(project.id, await repository());
-        const folder = path.join(root, agent === 'codex' ? '.agents' : '.claude', 'skills');
+        const folder = path.join(root, agent === 'codex' ? '.agents' : agent === 'claude' ? '.claude' : '.opencode', 'skills');
         for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
           if (!entry.isDirectory()) continue;
           const file = path.join(folder, entry.name, 'SKILL.md');
@@ -136,7 +136,8 @@ export class WorkspaceBridge {
       }
       const codexNative = agent === 'codex' && this.services.codexScopes && (!project || nativeRepositoryId) ? (await this.services.codexScopes.list(project?.id || null, nativeRepositoryId)).rows.filter(row => row.kind === 'skill').map(({ id, name: label, source, projectOverride, projectEditable }) => ({ id, name: label, source, projectOverride, projectEditable })) : [];
       const claudeNative = agent === 'claude' && this.services.claudeSettings && (!project || nativeRepositoryId) ? (await this.services.claudeSettings.list(project?.id || null, nativeRepositoryId)).rows.filter(row => row.kind === 'skill') : [];
-      return { agent, hub, native, codexNative, claudeNative, note: nativeRepositoryId || !project ? 'Hub switches and native skill files are separate. Native availability is determined when the agent starts.' : 'Choose a linked project to inspect native skills; Hub skill switches are shown above.' };
+      const openCodeNative = agent === 'opencode' && this.services.openCodeSettings && (!project || nativeRepositoryId) ? (await this.services.openCodeSettings.list(project?.id || null, nativeRepositoryId)).rows.filter(row => row.kind === 'skill') : [];
+      return { agent, hub, native, codexNative, claudeNative, openCodeNative, note: nativeRepositoryId || !project ? 'Hub switches and native skill files are separate. Native availability is determined when the agent starts.' : 'Choose a linked project to inspect native skills; Hub skill switches are shown above.' };
     }
     if (name === 'mrmak_manage_skill') {
       if (args.confirmed !== true) throw new Error('Obtain explicit user approval for this skill change before applying it.');
@@ -157,6 +158,11 @@ export class WorkspaceBridge {
         return created;
       }
       if (args.action === 'native-toggle') {
+        if (agent === 'opencode') {
+          if (!this.services.openCodeSettings) throw new Error('OpenCode settings are unavailable.');
+          const scope = args.scope === 'global' ? 'global' : 'project';
+          return this.services.openCodeSettings.change({ projectId: scope === 'project' ? grant.projectId : null, repositoryId: scope === 'project' ? await repository() : null, kind: 'skill', id: args.id, enabled: args.enabled, scope });
+        }
         if (agent === 'claude') {
           if (!this.services.claudeSettings) throw new Error('Claude settings are unavailable.');
           const scope = args.scope === 'global' ? 'global' : 'project';
@@ -176,13 +182,18 @@ export class WorkspaceBridge {
       const mcp = await this.services.mcpInventory(selectedProject, repositoryId);
       const claude = this.services.claudeSettings ? await this.services.claudeSettings.list(selectedProject, repositoryId) : null;
       if (claude) mcp.claude = claude.rows.filter(row => row.kind === 'plugin');
-      return { claude: mcp.claude || [], scope: selectedProject ? 'project' : 'global', repositoryId, codexTrust: codex.trust, codex: codex.rows.filter(row => row.kind !== 'skill').map(({ kind, id, name: label, source, installed, globalEnabled, globalOverride, projectOverride, globalEditable, projectEditable, managedBy, note }) => ({ kind, id, name: label, source, installed, globalEnabled, globalOverride, projectOverride, globalEditable, projectEditable, managedBy, note })), servers: mcp.servers.filter(item => ['codex', 'claude'].includes(item.client)).map(({ id, name: label, client, scope, enabled, readiness, plugin, connection }) => ({ id, name: label, client, scope, enabled, readiness, plugin, connection: connection?.status || null })), note: 'Declared configuration is not a live-chat connection. Changes apply to new chats.' };
+      mcp.openCode = this.services.openCodeSettings ? (await this.services.openCodeSettings.list(selectedProject, repositoryId)).rows.filter(row => row.kind !== 'skill') : [];
+      return { openCode: mcp.openCode || [], claude: mcp.claude || [], scope: selectedProject ? 'project' : 'global', repositoryId, codexTrust: codex.trust, codex: codex.rows.filter(row => row.kind !== 'skill').map(({ kind, id, name: label, source, installed, globalEnabled, globalOverride, projectOverride, globalEditable, projectEditable, managedBy, note }) => ({ kind, id, name: label, source, installed, globalEnabled, globalOverride, projectOverride, globalEditable, projectEditable, managedBy, note })), servers: mcp.servers.filter(item => ['codex', 'claude', 'opencode'].includes(item.client)).map(({ id, name: label, client, scope, enabled, readiness, plugin, connection }) => ({ id, name: label, client, scope, enabled, readiness, plugin, connection: connection?.status || null })), note: 'Declared configuration is not a live-chat connection. Mik applies MCP changes to safe chats or leaves a pending update.' };
     }
     if (name === 'mrmak_manage_tool') {
       if (args.confirmed !== true) throw new Error('Obtain explicit user approval for the exact tool and scope before applying this change.');
       const scope = args.scope;
       if (!['global', 'project'].includes(scope)) throw new Error('Choose Global or Project explicitly.');
       const repositoryId = scope === 'project' ? await repository() : null;
+      if (args.action === 'opencode-switch' || args.action === 'mcp-definition' && (args.agent || grant.agent) === 'opencode') {
+        if (!this.services.openCodeSettings || !['mcp', 'plugin'].includes(args.kind || 'mcp') || args.action === 'mcp-definition' && args.kind === 'plugin') throw new Error('Choose a configurable OpenCode MCP or verified V2 plugin.');
+        return this.services.openCodeSettings.change({ projectId: scope === 'project' || args.kind === 'plugin' ? grant.projectId : null, repositoryId: args.kind === 'plugin' && grant.projectId ? await repository() : repositoryId, kind: args.kind || 'mcp', scope, action: args.action === 'mcp-definition' ? 'save' : 'toggle', name: args.name, enabled: args.enabled, transport: args.transport, url: args.url, command: args.command, args: args.args });
+      }
       if (args.action === 'codex-switch') {
         if (!this.services.codexScopes || !['mcp', 'plugin'].includes(args.kind)) throw new Error('Choose a configurable Codex MCP or plugin.');
         return this.services.codexScopes.set(scope === 'global' ? null : grant.projectId, { kind: args.kind, id: args.name, enabled: args.enabled, scope, repositoryId });

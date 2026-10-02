@@ -14,6 +14,30 @@ const create = () => {
   return { terminal, snapshot };
 };
 
+test('clear scrollback preserves the complete active screen, cursor and native fullscreen modes without PTY input', async () => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'mrmak-clear-'));
+  const sessions = await new Sessions(repo, path.join(repo, 'state')).init();
+  try {
+    for (const alternate of [false, true]) {
+      const session = sessions.make({ id: `clear-${alternate}`, agent: 'opencode', name: 'Clear fixture', open: true, cols: 80, rows: 24 });
+      sessions.items.set(session.id, session); await sessions.hydrate(session);
+      await write(session.terminal, Array.from({ length: 70 }, (_, index) => `Old history ${index}\r\n`).join(''));
+      await write(session.terminal, (alternate ? '\x1b[?1049h' : '') + '\x1b[H\x1b[2JHeader remains\x1b[10;4HInput draft remains\x1b[24;1HFooter remains\x1b[10;23H\x1b[?1003;1006h\x1b[?2004h\x1b[?25l');
+      const visible = () => Array.from({ length: 24 }, (_, row) => session.terminal.buffer.active.getLine(session.terminal.buffer.active.baseY + row)?.translateToString(false));
+      const before = visible(), buffer = session.terminal.buffer.active;
+      const cursor = { x: buffer.cursorX, y: buffer.cursorY }, modes = { ...session.terminal.modes };
+      let inputs = 0; session.process = { write() { inputs++ }, kill() {} };
+      await sessions.clearScreen(session.id);
+      assert.deepEqual(visible(), before); assert.deepEqual({ x: buffer.cursorX, y: buffer.cursorY }, cursor);
+      assert.deepEqual(session.terminal.modes, modes); assert.equal(buffer.type, alternate ? 'alternate' : 'normal');
+      assert.equal(buffer.baseY, 0); assert.equal(inputs, 0);
+      await write(session.terminal, 'X');
+      assert.equal(session.terminal.buffer.active.getLine(buffer.baseY + cursor.y).getCell(cursor.x).getChars(), 'X');
+      session.process = null;
+    }
+  } finally { for (const session of sessions.items.values()) session.process = null; await sessions.close(); }
+});
+
 test('fullscreen snapshot preserves SGR encoding, tracking and alternate screen across repeated restores', async () => {
   let current = create();
   try {

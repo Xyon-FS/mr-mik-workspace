@@ -3,7 +3,7 @@ import { api, reportError, useDesktop } from './client'
 
 type HubSkill = { id: string; name: string; description: string; global: boolean; projectOverride: boolean | null; effective: boolean; projectCount: number }
 
-export default function HubSkills({ agent }: { agent: 'codex' | 'claude' }) {
+export default function HubSkills({ agent }: { agent: 'codex' | 'claude' | 'opencode' }) {
   const { settings, projects } = useDesktop()
   const projectId = settings.selectedProjectId || ''
   const project = projects.find(item => item.id === projectId)
@@ -32,13 +32,13 @@ export default function HubSkills({ agent }: { agent: 'codex' | 'claude' }) {
   return <section className="hub-skills" aria-label="Skill management">
     <>
       <h3>Mr. Mik Hub skills <small>{project ? `${project.name} · Workspace Bridge` : 'Global · Workspace Bridge'}</small></h3>
-      <p>Discoverable in new {agent === 'codex' ? 'Codex' : 'Claude'} workspace chats. Full instructions are read on request; linked-project skills remain native.</p>
+      <p>Discoverable in new {agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : 'OpenCode'} workspace chats. Full instructions are read on request; linked-project skills remain native.</p>
       <input className="skill-search" aria-label="Find Hub skill" placeholder="Find a skill…" value={query} onChange={event => setQuery(event.target.value)} />
       <div className="hub-skill-list">{activeScope === 'global' ? <><h4>Global Hub skills</h4>{shown.map(renderSkill)}</> : <>
         {shown.some(skill => skill.global) && <><h4>Shared from Global Hub</h4>{shown.filter(skill => skill.global).map(renderSkill)}</>}
         {shown.some(skill => !skill.global) && <><h4>Other Hub skills</h4>{shown.filter(skill => !skill.global).map(renderSkill)}</>}
       </>}</div>
-      {!skills.length && <p>No local Hub skills found in {agent === 'codex' ? '.agents' : '.claude'}/skills.</p>}
+      {!skills.length && <p>No local Hub skills found in {agent === 'claude' ? '.claude' : '.agents'}/skills.</p>}
       {!!skills.length && !shown.length && <p>No matching skills.</p>}
       {activeScope === 'global' && <p>On enables a skill in every workspace. Off keeps any workspace-specific selections.</p>}
       {activeScope === 'project' && <p>Inherit follows the Hub default. On or Off overrides it only in this workspace.</p>}

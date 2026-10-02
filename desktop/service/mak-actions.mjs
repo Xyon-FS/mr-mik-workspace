@@ -29,7 +29,7 @@ export class MakActions {
   async context(scope) {
     const project = scope.projectId ? await this.projects.get(scope.projectId) : null;
     const cards = (await this.registry()).entities.filter(item => (item.projectId || null) === scope.projectId);
-    return { workspace: project?.name || 'Global Hub', scope, linkedProjects: project?.repositories.map(({ id, name, available }) => ({ id, name, available })) || [], card: cards.find(item => item.id === scope.cardId)?.title || null, cardCount: cards.length, chats: this.sessions.active().filter(item => (item.projectId || null) === scope.projectId).map(({ id, name, agent, activity }) => ({ id, name, agent, activity })) };
+    return { workspace: project?.name || 'Global Hub', scope, workerAgents: this.workerAgents?.() || [], linkedProjects: project?.repositories.map(({ id, name, available }) => ({ id, name, available })) || [], card: cards.find(item => item.id === scope.cardId)?.title || null, cardCount: cards.length, chats: this.sessions.active().filter(item => (item.projectId || null) === scope.projectId).map(({ id, name, agent, activity }) => ({ id, name, agent, activity })) };
   }
   async bridgeCall(scope, name, args, operationId) {
     const sessionId = `mak-${operationId}`;
@@ -75,6 +75,8 @@ export class MakActions {
       case 'list_chats': return this.sessions.active().filter(item => (item.projectId || null) === scope.projectId);
       case 'search_history': return this.history(args.query || '').filter(item => (item.projectId || null) === scope.projectId).slice(0, 50);
       case 'open_chat': {
+        if (!['codex', 'claude', 'opencode', 'kimi'].includes(args.agent)) throw new Error('Choose a supported worker agent.');
+        if (args.agent === 'opencode' && args.effort != null) throw new Error('OpenCode uses native model variants, not Codex reasoning levels. Omit effort and use its native controls.');
         if (args.projectId != null && args.projectId !== scope.projectId || args.cwd != null || args.bypass != null) throw new Error('Use this workspace’s linked-project IDs and the configured permissions, not arbitrary folders or bypass overrides.');
         const target = await this.scope({ ...scope, repositoryId: Object.hasOwn(args, 'repositoryId') ? args.repositoryId : scope.repositoryId, cardId: Object.hasOwn(args, 'cardId') ? args.cardId : scope.cardId });
         await confirm('Open a new worker chat?');
@@ -83,11 +85,11 @@ export class MakActions {
       }
       case 'read_chat': { const chat = this.chat(scope, args.id), screen = await this.sessions.read(args.id); coordinator.active?.observedChats.set(args.id, { process: chat.process, lastInputAt: chat.lastInputAt }); return screen; }
       case 'focus_chat': this.chat(scope, args.id); return this.focus(args.id);
-      case 'send_to_chat': observed(args.id); await confirm('Send this task to the worker chat?'); observed(args.id); return this.sessions.input(args.id, args.text, { coordinator: true, submit: true });
-      case 'attach_files': observed(args.id); await confirm('Attach paths to the worker chat?'); observed(args.id); return this.attach(args.id, args.paths, true);
+      case 'send_to_chat': observed(args.id); await confirm('Send this task to the worker chat?'); observed(args.id); return this.workerControls.send(args.id, args.text);
+      case 'attach_files': observed(args.id); await confirm('Attach paths to the worker chat?'); observed(args.id); await this.workerControls.prepare(args.id); observed(args.id); return this.attach(args.id, args.paths, true);
       case 'reopen_chat': this.chat(scope, args.id); await confirm('Resume this worker chat?'); { const chat = await this.sessions.resume(args.id); this.focus(chat.id); return chat; }
       case 'close_chat': this.chat(scope, args.id); await confirm('Close this worker chat?'); return this.closeChat(args.id);
-      case 'interrupt_chat': this.chat(scope, args.id); await confirm('Interrupt this worker chat?'); this.sessions.input(args.id, '\x03'); return { delivered: 'Ctrl+C' };
+      case 'interrupt_chat': this.chat(scope, args.id); await confirm('Interrupt this worker chat?'); this.chat(scope, args.id); return this.workerControls.interrupt(args.id);
       case 'pin_chat': this.chat(scope, args.id); return this.sessions.pin(args.id, args.pinned);
       case 'rename_chat': this.chat(scope, args.id); return this.sessions.rename(args.id, args.name);
       case 'list_workspace': return (await this.workspace.list(args)).filter(item => cards.some(card => card.id === item.id));
