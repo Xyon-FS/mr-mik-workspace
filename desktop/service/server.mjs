@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { appVersion } from './app-version.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
@@ -342,7 +343,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
         const data = await body(request, 3 * 1024 * 1024);
         return json(response, 200, await bridge.call(String(request.headers.authorization || '').replace(/^Bearer /, ''), data.name, data.args));
       }
-      if (url.pathname === '/health') return json(response, 200, { service: 'mrmik', version: '0.2.9' });
+      if (url.pathname === '/health') return json(response, 200, { service: 'mrmik', version: appVersion });
       if (url.pathname.startsWith('/api/')) {
         authorize(request);
         const method = request.method;

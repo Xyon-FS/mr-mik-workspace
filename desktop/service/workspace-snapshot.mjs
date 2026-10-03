@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { appVersion } from './app-version.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, lstat, realpath, readFile, readdir, copyFile, writeFile, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -83,7 +84,7 @@ export class WorkspaceSnapshot {
         await visit(skillRoot);
       }
     }
-    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion: '0.2.9', exportedAt: new Date().toISOString(), project: { id: project.id, name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
+    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion, exportedAt: new Date().toISOString(), project: { id: project.id, name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
     for (const [name, entry] of entries) manifest.files.push({ name, sha256: await hash(entry.source), bytes: (await lstat(entry.source)).size });
     manifest.files.sort((a, b) => a.name.localeCompare(b.name));
     return { manifest, entries };

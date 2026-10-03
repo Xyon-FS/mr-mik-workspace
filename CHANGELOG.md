@@ -2,6 +2,8 @@
 
 ## 0.2.10 — Native Hub authoring and safer chat permissions
 
+- Fixed stale version metadata in service health and workspace snapshots. Both now use the root package version, also carried into packaged runtimes; regression tests cover source and standalone runtime layouts.
+
 - Codex permission changes now automatically restart/resume the same chat in-place when idle with an empty prompt and no native dialogs. Busy requests/drafts wait; failed preflight never stops the CLI and failures do not loop. Fixed terminal filtering that incorrectly dropped native focus/blur notifications. Added an isolated live-tick UI test; confirmation of the reported Codex Working timer still requires a real active turn.
 
 - Isolated portable launch profiles from the installed app, including saved Hub selection, native window preferences and single-instance routing. Opening the portable or an explicit `--repo` Hub no longer replaces the installed app's remembered Hub. Direct portable executable launches discover their sibling MyHub (legacy Hub also supported). Native agent accounts/configuration remain unchanged and shared.

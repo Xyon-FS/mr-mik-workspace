@@ -16,6 +16,7 @@ const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), '
 const suffix = process.env.MRMIK_RELEASE_SUFFIX || '';
 if (suffix && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(suffix)) throw new Error('Invalid development release suffix.');
 const release = path.join(root, 'release', suffix ? `${version}-${suffix}` : version), portable = path.join(release, 'Mr-Mik-portable');
+assert.equal(JSON.parse(await readFile(path.join(portable, 'App/runtime/service/app-version.json'), 'utf8')).version, version, 'Bundled app version is stale');
 assert.equal(await readFile(path.join(portable, 'Start Mr. Mik.cmd'), 'utf8'), portableLauncher);
 await lstat(path.join(portable, 'App/mrmak-workspace.exe'));
 for (const line of (await readFile(path.join(release, 'SHA256SUMS.txt'), 'utf8')).trim().split('\n')) {
