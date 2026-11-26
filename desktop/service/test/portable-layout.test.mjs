@@ -22,7 +22,8 @@ test('native launch profile policies distinguish installer, portable and explici
     const binary = path.join(root, process.platform === 'win32' ? 'policy.exe' : 'policy');
     const source = new URL('../../../src-tauri/src/launch_profile.rs', import.meta.url);
     const { fileURLToPath } = await import('node:url');
-    const compile = spawnSync('rustc', ['--edition=2021', '--test', fileURLToPath(source), '-o', binary], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    const compile = spawnSync('rustc', ['--edition=2021', '--test', fileURLToPath(source), '-o', binary], { encoding: 'utf8', windowsHide: true, timeout: 90000 });
+    assert.ifError(compile.error);
     assert.equal(compile.status, 0, compile.stderr);
     const result = spawnSync(binary, [], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -34,7 +35,8 @@ test('native Hub selection reuses direct, modern and legacy locations without re
   const binary = path.join(root, process.platform === 'win32' ? 'selection.exe' : 'selection');
   const { fileURLToPath } = await import('node:url');
   const source = fileURLToPath(new URL('../../../src-tauri/src/hub_selection.rs', import.meta.url));
-  const compile = spawnSync('rustc', ['--edition=2021', '--test', source, '-o', binary], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  const compile = spawnSync('rustc', ['--edition=2021', '--test', source, '-o', binary], { encoding: 'utf8', windowsHide: true, timeout: 90000 });
+  assert.ifError(compile.error);
   assert.equal(compile.status, 0, compile.stderr);
   const result = spawnSync(binary, [], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   assert.equal(result.status, 0, result.stdout + result.stderr);

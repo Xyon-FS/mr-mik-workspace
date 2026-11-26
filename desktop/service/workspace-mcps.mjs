@@ -1,7 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, lstat, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, lstat, realpath, writeFile, unlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { McpInventory } from './mcp.mjs';
 import { mcpSnapshot } from './tool-refresh.mjs';
@@ -28,7 +28,8 @@ export async function resolveWorkspaceMcps(projects, session, options = {}, { ow
   const project = await projects.get(session.projectId);
   const main = project.repositories[0];
   if (session.repositoryId && session.repositoryId !== main?.id) return result;
-  if (session.repositoryId && key(await projects.root(project.id, main.id)) !== key(session.cwd)) throw new Error('Main project location changed. Reopen this conversation.');
+  const cwd = await realpath(session.cwd);
+  if (session.repositoryId && key(await projects.root(project.id, main.id)) !== key(cwd)) throw new Error('Main project location changed. Reopen this conversation.');
   const ownRows = [...own.raw.values()].filter(entry => entry.data.client === session.agent);
   const blocked = new Set(ownRows.filter(entry => !entry.data.enabled && entry.data.sources.some(source => ['local', 'project', 'managed'].includes(source.scope))).map(entry => entry.data.name));
   if (session.agent === 'claude') {
@@ -48,7 +49,7 @@ export async function resolveWorkspaceMcps(projects, session, options = {}, { ow
   for (const repository of project.repositories) {
     if (repository.id === session.repositoryId || !repository.available) continue;
     const root = await projects.root(project.id, repository.id);
-    if (key(root) === key(session.cwd)) continue;
+    if (key(root) === key(cwd)) continue;
     const inventory = new McpInventory(root, options);
     let scan; try { scan = await inventory.scan(scanOptions); } finally { inventory.close(); }
     if (scan.public.problems.length) throw new Error('A linked project MCP configuration is unreadable. Check Tools for that folder.');

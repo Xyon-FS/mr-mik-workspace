@@ -28,6 +28,12 @@ test('file inspection is read-only, version-bound and limited to authorized file
   r.items.get('changes').changes[0].path = path.join(root, 'deleted.ts'); assert.equal((await inspectFile(r, request('changes'))).status, 'missing');
 
   const outside = await mkdtemp(path.join(os.tmpdir(), 'mik-inspector-outside-'));
+  const alias = path.join(outside, 'project-alias');
+  await symlink(root, alias, 'junction');
+  r.session.cwd = alias;
+  r.items.get('changes').changes[0].path = path.join(alias, 'file.ts');
+  assert.equal((await inspectFile(r, request('changes'))).status, 'large');
+
   const attached = path.join(outside, 'safe.txt'); await writeFile(attached, 'Synthetic');
   put({ id: 'outside', type: 'fileChange', changes: [{ path: attached, kind: 'update', diff: '' }] });
   await assert.rejects(inspectFile(r, request('outside')), /outside/);

@@ -97,6 +97,7 @@ async function inspect(file) {
 
 export async function reviewConversationMedia(repo, stateDir, transcripts) {
   await transferTarget(repo, path.join(stateDir, 'conversation-media.json'));
+  const hubRoot = await realpath(repo);
   const prior = await readMediaIndex(stateDir), files = new Map(), refs = [], omissions = [];
   const priorRefs = new Map(prior.refs.map(ref => [mediaKey(ref), ref]));
   const seen = new Set(); let total = 0;
@@ -117,8 +118,8 @@ export async function reviewConversationMedia(repo, stateDir, transcripts) {
             const previous = priorRefs.get(key);
             const file = previous ? await transferTarget(repo, path.join(repo, ...previous.target.split('/'))) : source;
             const entry = await inspect(file);
-            const relative = path.relative(repo, entry.path).replaceAll('\\', '/');
-            const hub = within(repo, entry.path) && /^(context|knowledge|processes|inbox|workspace|projects)\//.test(relative);
+            const relative = path.relative(hubRoot, entry.path).replaceAll('\\', '/');
+            const hub = within(hubRoot, entry.path) && /^(context|knowledge|processes|inbox|workspace|projects)\//.test(relative);
             if (!hub && entry.bytes > maxFile) throw new Error('exceeds the 128 MB external-file limit');
             if (!files.has(entry.path)) { if (!hub && total + entry.bytes > maxTotal) throw new Error('exceeds the 1 GB external-media limit'); files.set(entry.path, { ...entry, hub, relative }); if (!hub) total += entry.bytes; }
             refs.push({ ...ref, file: entry.path });

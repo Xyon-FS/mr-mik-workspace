@@ -28,7 +28,15 @@ test('multiple folder, document and image paths reach a real terminal once witho
   const service = await createService({ repo, uiDir: path.join(repo, 'ui') });
   try {
     const shell = await service.sessions.create({ agent: 'shell', name: 'Path drop check', cwd: repo });
-    await sleep(500);
+    service.sessions.resize(shell.id, 500, 24);
+    const promptDeadline = Date.now() + 5000;
+    let prompt;
+    do {
+      prompt = (await service.sessions.read(shell.id)).cursor.line.trimEnd();
+      if (prompt.startsWith('PS ') && prompt.endsWith('>')) break;
+      await sleep(50);
+    } while (Date.now() < promptDeadline);
+    assert.match(prompt, /^PS .*?>$/);
     const terminal = service.sessions.get(shell.id).process;
     const nativeWrite = terminal.write.bind(terminal), writes = [];
     terminal.write = text => { writes.push(text); nativeWrite(text); };
@@ -68,12 +76,13 @@ test('multiple folder, document and image paths reach a real terminal once witho
     assert.deepEqual(writes.slice(1), ["'" + saved.path.replaceAll("'", "''") + "' "]);
     const deadline = Date.now() + 5000;
     let screen;
+    const filename = path.basename(saved.path);
     do {
-      screen = (await service.sessions.read(shell.id, 150)).screen;
-      if (screen.includes('Screenshot sample')) break;
+      screen = (await service.sessions.read(shell.id, 150)).screen.replaceAll('\n', '');
+      if (screen.includes(filename)) break;
       await sleep(50);
     } while (Date.now() < deadline);
-    assert.match(screen, /Screenshot sample/);
+    assert.ok(screen.includes(filename), `Expected ${filename} in terminal output: ${screen}`);
     assert.equal(service.sessions.get(shell.id).status, 'running');
     assert.equal(service.sessions.get(shell.id).hasConversation, false);
   } finally { await service.close(); }

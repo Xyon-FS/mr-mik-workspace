@@ -46,7 +46,7 @@ export function removeCodexServer(text, name) {
 async function regular(file, root) {
   if ((await lstat(path.dirname(file))).isSymbolicLink()) throw bad('Recovery does not follow linked configuration folders.');
   const info = await lstat(file);
-  if (!info.isFile() || info.isSymbolicLink() || !within(root, await realpath(file)) || info.size > 1024 * 1024) throw bad('Recovery requires a regular configuration file inside its expected location.');
+  if (!info.isFile() || info.isSymbolicLink() || !within(await realpath(root), await realpath(file)) || info.size > 1024 * 1024) throw bad('Recovery requires a regular configuration file inside its expected location.');
   return readFile(file, 'utf8');
 }
 

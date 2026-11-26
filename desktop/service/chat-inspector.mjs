@@ -132,7 +132,7 @@ export async function inspectFile(runtime, request) {
   const resolved = path.resolve(runtime.session.cwd, entry.path);
   if (denied.test(resolved)) throw new Error('Sensitive configuration files cannot be opened in this inspector.');
   const root = await realpath(runtime.session.cwd);
-  if (!within(root, resolved) && !runtime.previewPaths.has(resolved)) throw new Error('This file is outside the chat project. Attach it explicitly before inspecting it.');
+  if (!within(runtime.session.cwd, resolved) && !within(root, resolved) && !runtime.previewPaths.has(resolved)) throw new Error('This file is outside the chat project. Attach it explicitly before inspecting it.');
   let actual;
   try { actual = await realpath(resolved); } catch (error) { if (error.code === 'ENOENT') return { status: 'missing', message: 'This file is missing or was deleted. Its recorded diff remains available.' }; throw error; }
   if (denied.test(actual) || !within(root, actual) && !runtime.previewPaths.has(actual)) throw new Error('This link leaves the chat project. Attach its destination explicitly before inspecting it.');

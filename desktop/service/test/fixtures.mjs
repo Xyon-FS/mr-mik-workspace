@@ -19,8 +19,9 @@ export async function mkdtemp(prefix, options) {
   const folder = await nativeMkdtemp(prefix, options);
   const resolved = await realpath(folder);
   const info = await lstat(folder);
-  directories.set(path.resolve(folder.toString()), { resolved, ino: info.ino });
-  return folder;
+  // On Windows TEMP may use an 8.3 alias while the service uses real paths.
+  directories.set(resolved, { resolved, ino: info.ino });
+  return resolved;
 }
 
 function validate(folder, expected, info, resolved) {
