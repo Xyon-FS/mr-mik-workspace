@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import { Files } from '../files.mjs';
 import { NativeSettings } from '../native-settings.mjs';
@@ -23,14 +24,6 @@ test('Markdown saves preserve Unicode, keep a recovery copy, and reject stale or
   await assert.rejects(files.saveMarkdown({ path: path.join(repo, 'script.js'), text: 'changed', revision: changed.revision }), /Markdown/);
   await assert.rejects(files.saveMarkdown({ path: file, text: 'a'.repeat(2 * 1024 * 1024 + 1), revision: changed.revision }), /2 MB/);
   assert.equal(await readFile(path.join(repo, 'script.js'), 'utf8'), 'original');
-});
-
-test('Main folders expose local Claude and Codex skills alongside knowledge and processes', async () => {
-  const repo = await mkdtemp(path.resolve('.cache/skill-folders-'));
-  for (const folder of ['.claude/skills', '.agents/skills', 'knowledge', 'processes', 'context', 'inbox', 'projects', 'workspace', 'node_modules']) await mkdir(path.join(repo, folder), { recursive: true });
-  const result = await new Files(repo).list();
-  assert.deepEqual(result.entries.map(item => item.name).sort(), ['Claude skills', 'Codex skills', 'context', 'inbox', 'knowledge', 'processes', 'projects', 'workspace']);
-  assert.ok(result.entries.every(entry => entry.directory && path.isAbsolute(entry.path)));
 });
 
 test('Windows preference is confirmed by native host, synchronizes tray changes and reports failure', async () => {

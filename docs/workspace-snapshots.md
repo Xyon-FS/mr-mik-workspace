@@ -2,15 +2,15 @@
 
 ## Choose the right format
 
-**Workspace snapshot**: an ordinary folder suited to user-controlled Git, representing exactly one logical workspace. It includes card files, shared report styles, workspace Knowledge/Processes, associated Inbox files and project-effective Codex/Claude Hub skills. It records linked folder names/IDs but never their machine paths or contents. Global Context, global Knowledge/Processes, chats, coordinator conversations, native auth/configuration, tool definitions and Windows preferences are excluded.
+**Workspace snapshot**: an ordinary folder suited to user-controlled Git, representing exactly one logical workspace. It includes card files, shared report styles, workspace Knowledge/Processes, associated Inbox files and workspace-effective Codex, Claude and OpenCode Hub skills. It records linked folder names/IDs but never their machine paths or contents. Global Context, global Knowledge/Processes, chats, coordinator conversations, native auth/configuration, tool definitions and Windows preferences are excluded.
 
-**Full Hub archive**: a private machine-transfer backup of the Hub and its managed History, including available native Codex/Claude conversations. **Light Hub archive** omits native transcripts but still contains History/screens and potentially private material. These archives are not intended as public Git repositories. Unmanaged CLI conversations are not automatically swept into the export.
+**Full Hub archive**: a private machine-transfer backup of the Hub and its managed History, including supported native Codex, Claude and OpenCode conversations and available coordinator contexts. External referenced conversation files have a separate optional media review; some native formats already embed media. **Light Hub archive** omits native transcripts but still contains History/screens and potentially private material. Both include transferable Hub files. These archives are not intended as public Git repositories. Unmanaged CLI conversations are not automatically swept into the export.
 
 ## Export one workspace
 
 Select the workspace in the right sidebar, open Settings, and find **Workspace snapshot · Git**. Click **Export workspace**, then choose a folder outside the Hub. A new uniquely named folder is created. Nothing is written into linked projects.
 
-`mik-workspace.json` contains format `mr-mik-workspace`, schema `1`, app version, stable workspace/card/resource/linked-project IDs, relative paths, exported time and SHA-256/size per file. Its content is readable JSON; this is not a runnable application or a CLI session backup. `skills/codex` and `skills/claude` hold copies of effective Hub skills, not native linked-project skills. Global skill settings and other workspace scopes are omitted.
+`mik-workspace.json` contains format `mr-mik-workspace`, schema `1`, app version, stable workspace/card/resource/linked-project IDs, relative paths, exported time and SHA-256/size per file. Its content is readable JSON; this is not a runnable application or a CLI session backup. `skills/codex`, `skills/claude` and `skills/opencode` hold copies of enabled effective Hub skills, not native linked-project skills. The manifest records this workspace's effective On/Off decisions. Global skill settings and other workspace scopes are omitted. Codex and OpenCode share canonical Hub skill files; identical imported payloads are written once, while inconsistent payloads for the same destination are rejected.
 
 Review the folder before committing. Create/push your Git repository using your normal Git workflow; the application does not initialize, stage, commit, push or authenticate Git for you. Native MCP definitions often contain private values and are deliberately omitted. Configure those separately on the destination computer.
 
@@ -23,6 +23,12 @@ If you edited managed content directly in the snapshot, checksums no longer matc
 ## Import or update a Hub
 
 Click **Import snapshot**, select its folder and review the preview. Stable IDs avoid duplicated workspaces/cards. An existing workspace's metadata can be replaced only after explicit confirmation. Different file contents are conflicts; confirm each replacement, or cancel. No partial mixed workspace is imported when conflicts remain unresolved. Shared report styles or Hub skill definitions are identified by their file paths and may affect other workspaces if replaced.
+
+Snapshot import applies the manifest's effective skill decisions to this
+workspace's Codex/Claude/OpenCode overrides. Global choices and other workspace
+switches remain intact. This differs from **Transfer Hub**, which offers
+individual skill activation conflicts when merging complete Hubs. Neither
+format imports native linked-project skill settings or tool authentication.
 
 Use **Relink folder** next to Unity, Blender, etc. to pick the destination machine's existing external folders. Blank means keep a local link when available, otherwise leave it unavailable. Import never clones/copies external projects. Relink later through Workspaces before opening a linked-project chat. Cards without linked projects remain Hub/planning cards.
 

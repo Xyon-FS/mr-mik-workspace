@@ -91,7 +91,7 @@ export class HubFiles {
       if (!/\.(html|md)$/i.test(plan.relative) || /\.html$/i.test(plan.relative) && !/<html[\s>]/i.test(bytes.toString('utf8'))) fail('Choose a complete HTML page or Markdown note.');
       return this.projects.editWorkspace(registry => {
         const card = registry.entities.find(item => item.id === plan.cardId && (item.projectId || null) === grant.projectId && item.folder === plan.cardFolder);
-        if (!card) fail('Card association changed. Resolve its destination again.');
+        if (!card || (plan.existing || plan.registered) && !card.steps?.some(step => step.path === plan.relative)) fail('Card association changed. Resolve its destination again.');
         card.steps ||= [];
         if (!card.steps.some(step => step.path === plan.relative)) card.steps.push({ name: plan.title, path: plan.relative });
         card.updated = new Date().toISOString().slice(0, 10);

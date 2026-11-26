@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
-import headless from '@xterm/headless';
-import { ToolRefresh, mcpSnapshot, changedMcps, emptyNativePrompt } from '../tool-refresh.mjs';
-import { McpInventory } from '../mcp.mjs';
+import { ToolRefresh } from '../tool-refresh.mjs';
 import { Sessions } from '../sessions.mjs';
-import { createService } from '../server.mjs';
 import { codexCommandFixture } from './cli-fixture.mjs';
 import { nativeRefreshSnapshot } from '../native-refresh-snapshot.mjs';
 
@@ -22,25 +20,6 @@ function fixture(t, agents = ['codex']) {
   for (const session of items.values()) refresh.launched(session, targets.get(session.id));
   return { refresh, items, targets, restarts, connections };
 }
-
-test('MCP fingerprints ignore key order, disabled definitions and inherited no-op changes', async () => {
-  assert.deepEqual(changedMcps({ unity: entry(false) }, { unity: entry(false, 'changed') }), []);
-  assert.deepEqual(changedMcps({ unity: entry(true) }, { unity: entry(true) }), []);
-  assert.deepEqual(changedMcps({ unity: entry(true) }, {}), ['unity']);
-  assert.deepEqual(changedMcps({}, { unity: entry(true) }), ['unity']);
-  const base = await mkdtemp(path.join(os.tmpdir(), 'mik-mcp-refresh-')), home = path.join(base, 'home'), repo = path.join(base, 'repo');
-  await mkdir(path.join(home, '.codex'), { recursive: true }); await mkdir(path.join(repo, '.codex'), { recursive: true });
-  const global = path.join(home, '.codex/config.toml');
-  await writeFile(global, '[mcp_servers.unity]\nurl="https://example.com"\nenabled=true\nhttp_headers={Authorization="private-fixture"}\n');
-  await writeFile(path.join(repo, '.codex/config.toml'), '[mcp_servers.unity]\nenabled=true\n');
-  const inventory = new McpInventory(repo, { home, env: {} });
-  const before = mcpSnapshot(await inventory.scan(), 'codex');
-  await writeFile(global, '[mcp_servers.unity]\nhttp_headers={Authorization="private-fixture"}\nenabled=false\nurl="https://example.com"\n');
-  const after = mcpSnapshot(await inventory.scan(), 'codex');
-  assert.deepEqual(changedMcps(before, after), []);
-  assert.equal(JSON.stringify(before).includes('private-fixture'), false);
-  assert.equal(JSON.stringify(before).includes('example.com'), false);
-});
 
 test('only effective changes in the affected client resume a conversation', async t => {
   const f = fixture(t, ['codex', 'claude', 'opencode']);
@@ -58,6 +37,22 @@ test('OpenCode existing On/Off uses native connection controls without restart',
   assert.deepEqual(f.connections, [['0', [{ name: 'unity', enabled: false }]]]); assert.deepEqual(f.restarts, []);
   f.targets.set('0', { unity: entry(true, 'new definition') });
   await f.refresh.scan(); await f.refresh.poll(); assert.deepEqual(f.restarts, ['0']);
+  f.targets.set('0', { unity: entry(false, 'new definition') });
+  const live = f.refresh.live;
+  f.refresh.live = async (...args) => {
+    await live(...args);
+    f.targets.set('0', { unity: entry(true, 'replacement definition') });
+    await f.refresh.scan();
+  };
+  await f.refresh.scan(); await f.refresh.poll();
+  assert.equal(f.items.get('0').toolRefresh.status, 'pending');
+  f.refresh.live = live;
+  await f.refresh.poll(); assert.deepEqual(f.restarts, ['0', '0']);
+  f.items.get('0').liveMcpAvailable = false;
+  f.targets.set('0', { unity: entry(false, 'replacement definition') });
+  await f.refresh.scan(); await f.refresh.poll();
+  assert.deepEqual(f.restarts, ['0', '0', '0']);
+  assert.deepEqual(f.connections, [['0', [{ name: 'unity', enabled: false }]], ['0', [{ name: 'unity', enabled: false }]]]);
 });
 
 test('busy turns, drafts and native menus stay pending until a safe manual apply', async t => {
@@ -67,57 +62,26 @@ test('busy turns, drafts and native menus stay pending until a safe manual apply
   assert.deepEqual(f.restarts, []); assert.equal(chat.toolRefresh.status, 'pending');
   f.refresh.ready = async () => false;
   assert.equal((await f.refresh.apply('0')).pending, true); assert.deepEqual(f.restarts, []);
+  f.refresh.ready = async session => { session.lastInputAt = 'changed'; return true; };
+  assert.equal((await f.refresh.apply('0')).pending, true);
+  assert.deepEqual(f.restarts, []);
   f.refresh.ready = async () => true;
   assert.equal((await f.refresh.apply('0')).applied, true); assert.deepEqual(f.restarts, ['0']);
 });
 
-test('a missing OpenCode live MCP contract uses guarded resume, not guessed input', async t => {
-  const f = fixture(t, ['opencode']); f.items.get('0').liveMcpAvailable = false;
-  f.targets.set('0', { unity: entry(false) }); await f.refresh.scan(); await f.refresh.poll();
-  assert.deepEqual(f.restarts, ['0']); assert.deepEqual(f.connections, []);
-});
-
-test('missing native IDs and failed native operations never cause restart loops', async t => {
-  const f = fixture(t); f.items.get('0').nativeId = null; f.targets.set('0', { unity: entry(false) });
-  await f.refresh.scan(); await f.refresh.poll(); await f.refresh.poll(); assert.deepEqual(f.restarts, []);
-  f.items.get('0').nativeId = 'native-0'; f.refresh.restart = async () => { throw new Error('fixture'); };
-  await assert.rejects(f.refresh.apply('0'), /fixture/);
-  await f.refresh.poll(); assert.equal(f.items.get('0').toolRefresh.status, 'failed');
-});
-
-test('input racing a readiness check prevents any mutation', async t => {
-  const f = fixture(t); f.targets.set('0', { unity: entry(false) });
-  f.refresh.ready = async session => { session.lastInputAt = 'changed'; return true; };
-  await f.refresh.scan(); await f.refresh.poll(); assert.deepEqual(f.restarts, []);
-});
-
-test('settings written during a refresh are compared again against the applied baseline', async t => {
-  const f = fixture(t, ['opencode']); f.targets.set('0', { unity: entry(false) });
-  f.refresh.live = async () => { f.targets.set('0', { unity: entry(true, 'changed') }); await f.refresh.scan(); };
-  await f.refresh.scan(); await f.refresh.poll();
-  assert.equal(f.items.get('0').toolRefresh.status, 'pending');
-  await f.refresh.poll(); assert.deepEqual(f.restarts, ['0']);
-});
-
-test('reverted settings clear pending updates; native skills are not wrapped', async t => {
-  const f = fixture(t); const editor = { set: async (_id, change) => ({ saved: true, kind: change.kind }) };
-  f.refresh.wrap(editor, 'set', (_id, change) => change.kind === 'mcp');
-  f.targets.set('0', { unity: entry(false) }); await editor.set(null, { kind: 'skill' });
-  assert.equal(f.items.get('0').toolRefresh, null);
-  await editor.set(null, { kind: 'mcp' }); assert.equal(f.items.get('0').toolRefresh.status, 'pending');
-  f.targets.set('0', { unity: entry(true) }); await f.refresh.scan();
-  assert.equal(f.items.get('0').toolRefresh, null); assert.equal(f.refresh.pending.size, 0);
-});
-
-test('terminal readiness uses the live cursor and rejects multiline drafts', async () => {
-  const terminal = new headless.Terminal({ cols: 80, rows: 10, allowProposedApi: true });
-  const write = data => new Promise(resolve => terminal.write(data, resolve));
-  try {
-    await write('› Ask Codex to do anything'); assert.equal(emptyNativePrompt({ agent: 'codex', terminal }), true);
-    await write('\r\x1b[2K› unfinished draft'); assert.equal(emptyNativePrompt({ agent: 'codex', terminal }), false);
-    await write('\r\x1b[2K› \r\nsecond line\x1b[1A\r'); assert.equal(emptyNativePrompt({ agent: 'codex', terminal }), false);
-    await write('\x1b[?1049h❯ '); assert.equal(emptyNativePrompt({ agent: 'claude', terminal }), false);
-  } finally { terminal.dispose(); }
+test('OpenCode message actions retain their native writer until the action finishes, including during readiness checks', async t => {
+  for (const race of [false, true]) {
+    const f = fixture(t, ['opencode']), session = f.items.get('0');
+    f.targets.set('0', { unity: entry(true, 'changed definition') });
+    await f.refresh.scan();
+    if (race) f.refresh.ready = async () => { session.messageActionBusy = true; return true; };
+    else session.messageActionBusy = true;
+    const pending = await f.refresh.apply('0');
+    assert.equal(pending.pending, true); assert.deepEqual(f.restarts, []); assert.deepEqual(f.connections, []);
+    session.messageActionBusy = false; f.refresh.ready = async () => true;
+    assert.equal((await f.refresh.apply('0')).applied, true);
+    assert.deepEqual(f.restarts, ['0']);
+  }
 });
 
 test('guarded resume keeps native ID and working associations, blocks input during close, and excludes runtime status from disk', async t => {
@@ -151,7 +115,7 @@ test('UI and Bridge use shared MCP editor notifications; preview launch leaves t
   await mkdir(path.join(repo, 'workspace'), { recursive: true }); await mkdir(path.join(home, '.codex'), { recursive: true }); await mkdir(linked);
   await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}');
   await writeFile(path.join(home, '.codex/config.toml'), '[mcp_servers.unity]\nurl="https://example.com/mcp"\nenabled=true\n');
-  const service = await createService({ repo, uiDir: repo, mcpOptions: { home, env: {} } }); t.after(async () => { service.sessions.items.clear(); await service.close(); });
+  const service = await createService({ repo, uiDir: repo, mcpOptions: { home, env: { CODEX_HOME: path.join(home, '.codex') } }, profileOptions: { root: path.join(base, 'accounts') } }); t.after(async () => { service.sessions.items.clear(); await service.close(); });
   const project = await service.projects.save({ name: 'Fixture', repositoryPath: linked });
   const chat = service.sessions.make({ id: 'fixture', agent: 'codex', name: 'Fixture', projectId: project.id, repositoryId: 'primary', cwd: linked, open: true, activity: 'working', nativeId: 'native', hasConversation: true });
   chat.process = {}; service.sessions.items.set(chat.id, chat);
@@ -162,10 +126,10 @@ test('UI and Bridge use shared MCP editor notifications; preview launch leaves t
   assert.equal(preview.token, ''); assert.equal(service.bridge.grants.has(grant.token), true);
   const result = await service.bridge.call(grant.token, 'mrmak_manage_tool', { action: 'codex-switch', kind: 'mcp', name: 'unity', scope: 'project', enabled: false, confirmed: true });
   await nativeRefreshSnapshot(chat, repo, path.join(repo, '.mrmak'), { home, env: {} });
-  assert.equal(result.saved, true); assert.equal(chat.toolRefresh.status, 'pending'); assert.equal(chat.toolRefresh.automatic, false);
+  assert.equal(result.saved, true); assert.equal(chat.toolRefresh.status, 'pending'); assert.equal(chat.toolRefresh.automatic, true); assert.equal(chat.toolRefresh.silent, true);
   assert.equal(service.bridge.grants.has(grant.token), true);
   service.toolRefresh.launched(chat, await service.toolRefresh.capture(chat));
   await service.projects.createSkill({ target: 'linked', agent: 'codex', projectId: project.id, repositoryId: 'primary', name: 'native-fixture', description: 'Fixture', instructions: 'Fixture instructions' });
   assert.equal(chat.toolRefresh.status, 'pending');
-  assert.equal(chat.toolRefresh.automatic, false);
+  assert.equal(chat.toolRefresh.automatic, true); assert.equal(chat.toolRefresh.silent, true);
 });

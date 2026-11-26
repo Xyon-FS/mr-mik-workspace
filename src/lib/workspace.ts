@@ -3,14 +3,6 @@ import type { WorkspaceState } from '../types'
 import { api, isDesktop, onServiceEvent } from '../desktop/client'
 
 const POLL_MS = 30_000
-const ARCHIVE_DAYS = 7
-
-export function archiveCutoff(): string {
-  const d = new Date()
-  d.setDate(d.getDate() - ARCHIVE_DAYS)
-  return d.toISOString().slice(0, 10)
-}
-
 /**
  * Loads workspace.json and keeps it fresh: refetch on window focus /
  * visibility and a light poll while the tab is visible. State only

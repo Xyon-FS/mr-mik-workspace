@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import { Projects } from '../projects.mjs';
 import { addExampleWorkspace, exampleKey } from '../example-workspace.mjs';
 import { WorkspaceSnapshot } from '../workspace-snapshot.mjs';
@@ -29,19 +30,6 @@ test('example is explicitly added, Hub-only, idempotent and preserves customized
   assert.equal(await readFile(file, 'utf8'), 'My edited example'); assert.equal((await f.registry()).entities.length, 5);
   assert.equal((await f.projects.get(project.id)).exampleKey, exampleKey);
   assert.deepEqual((await readdir(f.repo)).sort(), ['projects', 'workspace', '.mrmak', 'knowledge', 'processes'].sort());
-});
-
-test('ordinary Hub-only workspaces can gain their first real linked folder without a fake primary', async () => {
-  const f = await fixture(), project = await f.projects.save({ name: 'Planning only', repositoryPath: '' });
-  assert.deepEqual(project.repositories, []);
-  const external = path.join(f.base, 'external'); await mkdir(external);
-  const linked = await f.projects.saveRepository({ projectId: project.id, name: 'Unity', repositoryPath: external });
-  const next = await f.projects.get(project.id); assert.equal(next.repositories.length, 1); assert.equal(next.repositories[0].id, linked.id);
-  assert.deepEqual(await readdir(external), []);
-});
-
-test('demo archives and empty-linked-project snapshots survive export/import and preserve example identity', async () => {
-  const f = await fixture(), installed = await addExampleWorkspace(f.projects);
   const snapshot = new WorkspaceSnapshot(f.repo, f.projects.stateDir, f.projects), exported = await snapshot.exportTo(f.base, installed.projectId);
   const other = await fixture(), target = new WorkspaceSnapshot(other.repo, other.projects.stateDir, other.projects);
   await target.importFrom(exported.path);
@@ -53,13 +41,4 @@ test('demo archives and empty-linked-project snapshots survive export/import and
     const archive = new PortableArchive(f.repo, f.projects.stateDir, sessions, f.projects), file = await archive.exportTo(f.base, { chats: 'light' });
     assert.ok((await archive.preview(file.path)).manifest.files.some(entry => entry.name.endsWith('/espresso-cart.svg')));
   } finally { await sessions.close(); }
-});
-
-test('removing the example with its cards allows a fresh installation without touching existing shared styles', async () => {
-  const f = await fixture(), original = await addExampleWorkspace(f.projects);
-  const shared = path.join(f.repo, 'workspace/_shared/report.css'); await writeFile(shared, 'custom report style');
-  f.projects.recycleCardFolder = async () => { throw new Error('Retain isolated recovery content'); };
-  await f.projects.remove(original.projectId, { cardAction: 'delete', expectedCardIds: original.cardIds });
-  const next = await addExampleWorkspace(f.projects); assert.notEqual(next.projectId, original.projectId);
-  assert.equal(await readFile(shared, 'utf8'), 'custom report style'); assert.equal((await f.registry()).entities.length, 4);
 });

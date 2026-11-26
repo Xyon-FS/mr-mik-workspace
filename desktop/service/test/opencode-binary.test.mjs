@@ -8,19 +8,11 @@ test('PATH-selected native OpenCode is never replaced by a legacy npm binary', (
   assert.deepEqual(resolveOpenCodeBinary(executable, { exists: () => true }), { file: executable, args: [] });
 });
 
-test('npm V2 shim resolves its own script even when V1 also exists', () => {
+test('Windows npm shims resolve their declared V1 or V2 entry', () => {
   const executable = path.resolve('fixture/npm/opencode.cmd');
   const result = resolveOpenCodeBinary(executable, { exists: () => true, read: () => '%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.cjs', node: 'node-fixture' });
   assert.deepEqual(result, { file: 'node-fixture', args: [path.join(path.dirname(executable), 'node_modules/@opencode/cli/bin/opencode.cjs')] });
-});
-
-test('published V2 Windows npm shim resolves the native executable', () => {
-  const executable = path.resolve('fixture/npm/opencode.cmd');
   assert.deepEqual(resolveOpenCodeBinary(executable, { exists: () => true, read: () => '%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe' }), { file: path.join(path.dirname(executable), 'node_modules/@opencode/cli/bin/opencode.exe'), args: [] });
-});
-
-test('npm V1 shim keeps its native executable and unknown wrappers stay literal', () => {
-  const executable = path.resolve('fixture/npm/opencode.cmd');
   assert.deepEqual(resolveOpenCodeBinary(executable, { exists: () => true, read: () => 'node_modules/opencode-ai/bin/opencode' }), { file: path.join(path.dirname(executable), 'node_modules/opencode-ai/bin/opencode.exe'), args: [] });
   assert.deepEqual(resolveOpenCodeBinary(executable, { exists: () => true, read: () => 'custom wrapper' }), { file: executable, args: [] });
 });

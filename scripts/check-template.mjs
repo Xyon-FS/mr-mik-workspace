@@ -14,6 +14,13 @@ assert.match(await read('src/desktop/client.ts'), /defaultBypass: false/);
 assert.match(await read('desktop/service/server.mjs'), /defaultBypass: false/);
 assert.match(await read('README.md'), /witnesstodark/);
 assert.match(await read('LICENSE'), /Copyright/);
+for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+  const hubInstructions = await read(`templates/hub/${name}`);
+  assert.notEqual(hubInstructions, await read(name), 'Hub and source development instructions must be separate.');
+  assert.doesNotMatch(hubInstructions, /npm run|src-tauri|desktop\/service\/test|docs\/getting-started\.md/, 'Hub instructions must not contain development commands or missing setup references.');
+}
+assert.match(await read('templates/hub/AGENTS.md'), /mrmak_hub_destination/);
+assert.match(await read('templates/hub/CLAUDE.md'), /\[AGENTS\.md\]\(AGENTS\.md\)/);
 await lstat(path.join(root, 'docs/assets/mr-mik.png'));
 for (const forbidden of ['.mrmak', '.codex/config.toml', '.claude/settings.local.json', 'projects/skill-scopes.json']) assert.equal(await lstat(path.join(root, forbidden)).catch(() => null), null, `Distribution contains ${forbidden}`);
 const names = (await readdir(path.join(root, '.agents/skills'), { withFileTypes: true })).filter(item => item.isDirectory()).map(item => item.name);

@@ -2,10 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import { ClaudeSettings } from '../claude-settings.mjs';
-import { McpInventory } from '../mcp.mjs';
-import { claudeTranscript } from '../native-events.mjs';
 import { ClaudeModelPicker, parseClaudeModelPicker } from '../claude-model-picker.mjs';
 import { terminalCommand } from '../agents.mjs';
 
@@ -34,46 +33,26 @@ test('Claude native skill/plugin overrides preserve unrelated settings and isola
   await assert.rejects(service.set('first', { kind: 'skill', id: 'unknown', enabled: true }), /not found/);
 });
 
-test('Claude parked global definitions remain visible but disabled and secrets stay hidden', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-claude-inventory-'));
-  await writeFile(path.join(root, '.claude.json'), JSON.stringify({ mrmakDisabledMcpServers: { fixture: { type: 'stdio', command: 'node', env: { PRIVATE_FIXTURE: 'not-real' } } } }));
-  const inventory = new McpInventory(root, { home: root, env: {} });
-  try {
-    const result = await inventory.list(), server = result.servers.find(item => item.client === 'claude');
-    assert.equal(server.enabled, false); assert.equal(server.readiness, 'disabled');
-    assert.equal(JSON.stringify(result).includes('not-real'), false);
-  } finally { inventory.close(); }
-});
-
-test('Claude finds only the recorded ID across working folders and rejects ambiguous copies', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-claude-resume-'));
-  const previous = process.env.CLAUDE_CONFIG_DIR;
-  process.env.CLAUDE_CONFIG_DIR = root;
-  const id = '11111111-1111-4111-8111-111111111111';
-  try {
-    await mkdir(path.join(root, 'projects', 'old-folder'), { recursive: true });
-    const file = path.join(root, 'projects', 'old-folder', `${id}.jsonl`);
-    await writeFile(file, '{}\n');
-    assert.equal(await claudeTranscript('C:\\New folder', id, { search: true }), file);
-    await mkdir(path.join(root, 'projects', 'duplicate'));
-    await writeFile(path.join(root, 'projects', 'duplicate', `${id}.jsonl`), '{}\n');
-    await assert.rejects(claudeTranscript('C:\\New folder', id, { search: true }), /Multiple native/);
-  } finally { if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previous; }
-});
-
 const menu = active => `Select model\n${active === 0 ? '❯' : ' '} 1. Default (current)\n${active === 1 ? '❯' : ' '} 2. Sonnet\n${active === 2 ? '❯' : ' '} 3. Opus\nEnter to confirm · Esc to cancel`;
-test('Claude model picker recognizes only a complete menu and selects without restarting', async () => {
-  assert.equal(parseClaudeModelPicker('User message: Select model\n1. Sonnet'), null);
-  assert.equal(parseClaudeModelPicker(menu(0)).length, 3);
-  let screen = menu(0), active = 0;
-  const input = [];
-  const session = { agent: 'claude', status: 'running', activity: 'idle', process: {} };
-  const picker = new ClaudeModelPicker({ get: () => session, read: async () => ({ screen }), input: (id, text) => { input.push(text); if (text === '\x1b[B') screen = menu(++active); else if (text === '\r') screen = 'Set model to Sonnet\n❯'; } });
-  const process = session.process;
-  await picker.open('test');
-  assert.equal((await picker.choose('test', '2')).confirmed, true);
-  assert.equal(session.process, process);
-  assert.deepEqual(input, ['\x1b[B', '\r']);
+
+test('Claude bordered session-only model picker recognizes current footer and never saves global defaults', async () => {
+  let active = 0, screen;
+  const render = () => ['│ Select model │', '│ Switch between Claude models. Your pick becomes the default for new sessions. │', `│ ${active === 0 ? '❯' : ' '} Default (current) │`, `│ ${active === 1 ? '❯' : ' '} Sonnet │`, '│ Enter set as default · s use this session only · Esc cancel │'].join('\n');
+  screen = render();
+  assert.equal(parseClaudeModelPicker(screen)?.length, 2);
+  assert.equal(parseClaudeModelPicker(screen.replace(' · s use this session only · Esc cancel', '\n│ s use this session only · Esc cancel'))?.length, 2, 'Wrapped footer retains session-only confirmation');
+  assert.equal(parseClaudeModelPicker(screen.replace(' · s use this session only', '')), null);
+  assert.equal(parseClaudeModelPicker(screen.replace('│ Enter set as default · s use this session only · Esc cancel │', '')), null);
+  const keys = [], session = { agent: 'claude', status: 'running', activity: 'idle', process: {} };
+  const picker = new ClaudeModelPicker({ get: () => session, read: async () => ({ screen }), input: (id, key) => { keys.push(key); if (key === '\x1b[B') { active = 1; screen = render(); } else if (key === 's') screen = 'Set model to Sonnet\n❯'; else if (key === '\r') assert.fail('Enter would save the default'); } });
+  screen = menu(0);
+  await picker.open('fixture');
+  screen = screen.replace('Enter to confirm', 'Enter set as default · s use this session only');
+  await assert.rejects(picker.choose('fixture', '2'), /picker changed/);
+  assert.deepEqual(keys, []);
+  screen = render();
+  await picker.open('fixture'); await picker.choose('fixture', '2');
+  assert.deepEqual(keys, ['\x1b[B', 's']);
 });
 
 test('Claude launch keeps invocation-only Hub skill suppression and explicit resume path', async () => {

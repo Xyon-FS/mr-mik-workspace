@@ -1,7 +1,8 @@
 // Explicit V2 smoke: separate XDG/profile/temp roots, private server, local mock
 // provider and real scoped Bridge transport. No login or paid model calls.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, cleanupFixtures } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
@@ -149,7 +150,7 @@ export default { id: 'fixture.explicit.identity', setup(ctx) {
   await nativeSettings.change({ projectId: 'fixture', scope: 'project', id: 'fixture', enabled: true });
   env.MRMAK_BRIDGE_URL = `http://127.0.0.1:${bridge.address().port}/bridge`;
   env.MRMAK_BRIDGE_TOKEN = 'fixture-bridge-token';
-  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ snapshots: false, model: 'fixture/test', enabled_providers: ['fixture'], provider: { fixture: { npm: '@ai-sdk/openai-compatible', name: 'Local fixture', options: { baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: { test: { name: 'Test', reasoning: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } }, limit: { context: 8192, output: 256 } }, second: { name: 'Second', limit: { context: 8192, output: 256 } } } } } });
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ snapshots: false, model: 'fixture/test', enabled_providers: ['fixture'], provider: { fixture: { npm: '@ai-sdk/openai-compatible', name: 'Local fixture', options: { baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: { test: { name: 'Test', reasoning: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } }, limit: { context: 200000, output: 256 } }, second: { name: 'Second', limit: { context: 200000, output: 256 } } } } } });
   const chat = { id: 'v2-fixture', cwd, nativeId: null };
   const prepared = await openCodeLaunchEnvironment(chat, stateDir, env, { script: fileURLToPath(new URL('../bridge-mcp.mjs', import.meta.url)), orientation: 'Fixture compact orientation', hubSkillNames: [] });
   assert.equal(prepared.family, 2);
@@ -381,5 +382,5 @@ export default { id: 'fixture.explicit.identity', setup(ctx) {
   }
   bridge.closeAllConnections(); mock.closeAllConnections(); mcp.closeAllConnections();
   await Promise.all([new Promise(resolve => bridge.close(resolve)), new Promise(resolve => mock.close(resolve)), new Promise(resolve => mcp.close(resolve))]);
-  await rm(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  await cleanupFixtures();
 }

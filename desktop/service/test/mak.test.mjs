@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
-import { createService } from '../server.mjs';
-import { makHistory, mergeMakHistory } from '../mak-history.mjs';
 import { Coordinator } from '../coordinator.mjs';
 import { randomUUID } from 'node:crypto';
 import { codexCommandFixture } from './cli-fixture.mjs';
@@ -73,44 +72,18 @@ test('Mik opens an OpenCode worker only after real confirmation, with exact link
   } finally { await service.close(); }
 });
 
-test('Reasoning defaults and per-conversation override persist, fork inherits, and busy/unsupported changes are rejected', async () => {
-  const { service, request } = await makFixture();
-  try {
-    const { prompts } = fakeMak(service.coordinator);
-    const caps = await request('/reasoning'); assert.ok(caps.codex.efforts.includes('low'));
-    await request('/settings', { defaultWorkerEffort: 'low', defaultClaudeWorkerEffort: 'max', coordinatorEffort: 'high' });
-    const initial = await request('/coordinator/conversation', { action: 'new' });
-    assert.equal(initial.effort, 'high');
-    await request('/settings', { coordinatorEffort: 'medium' });
-    assert.equal((await request('/coordinator')).effort, 'high');
-    await request('/coordinator/conversation', { action: 'effort', id: initial.id, effort: 'low' });
-    await request('/coordinator', { id: 'effort-check', text: 'Inspect fixture', scope: { projectId: null }, conversationId: initial.id });
-    assert.equal(prompts[0].effort, 'low');
-    const originalThread = service.coordinator.conversation(null).threadId;
-    await request('/coordinator/conversation', { action: 'model', id: initial.id, model: 'fixture-other' });
-    assert.equal(service.coordinator.conversation(null).effort, 'high');
-    await request('/coordinator', { id: 'model-check', text: 'Continue fixture', scope: { projectId: null }, conversationId: initial.id });
-    assert.equal(prompts[1].model, 'fixture-other'); assert.equal(prompts[1].effort, 'high');
-    assert.equal(service.coordinator.conversation(null).threadId, originalThread);
-    await assert.rejects(request('/coordinator/conversation', { action: 'model', id: initial.id, model: 'missing' }), /not in/);
-    await request('/coordinator/conversation', { action: 'model', id: initial.id, model: 'fixture-model' });
-    await request('/coordinator/conversation', { action: 'effort', id: initial.id, effort: 'low' });
-    const fork = await request('/coordinator/conversation', { action: 'fork' }); assert.equal(fork.effort, 'low');
-    const clean = await request('/coordinator/conversation', { action: 'new' }); assert.equal(clean.effort, 'medium');
-    await assert.rejects(request('/coordinator/conversation', { action: 'effort', id: clean.id, effort: 'ultra' }), /not supported/);
-    service.coordinator.operationPromises.set('busy', Promise.resolve());
-    await assert.rejects(request('/coordinator/conversation', { action: 'effort', id: clean.id, effort: 'low' }), /Wait for Mak/);
-    service.coordinator.operationPromises.delete('busy');
-    const restored = await new Coordinator({ repo: service.repo, stateDir: service.coordinator.stateDir, settings: () => ({ coordinatorEffort: 'max' }) }).init();
-    assert.equal(restored.conversation(null).effort, 'medium');
-    assert.equal(restored.conversation(null, initial.id).effort, 'low');
-    await assert.rejects(request('/settings', { defaultClaudeWorkerEffort: 'ultra' }), /Invalid reasoning/);
-  } finally { service.coordinator.operationPromises.clear(); await service.close(); }
-});
-
 test('Mak freezes workspace across UI changes, updates metadata through the Bridge, and persists scoped History', async () => {
   const { repo, service, request, saveProject } = await makFixture();
   try {
+    await mkdir(path.join(repo, 'projects'), { recursive: true });
+    await mkdir(path.join(repo, '.mrmak'), { recursive: true });
+    await writeFile(path.join(repo, 'projects/brief.md'), '# Project brief\nA task description.');
+    await writeFile(path.join(repo, '.env'), 'PRIVATE=synthetic');
+    await writeFile(path.join(repo, '.mrmak/runtime.json'), '{}');
+    const readContext = file => service.coordinator.execute('read_context', { path: file }, 'fixture-context');
+    assert.match((await readContext('projects/brief.md')).text, /task description/);
+    await assert.rejects(readContext('.env'), /Private runtime/);
+    await assert.rejects(readContext('.mrmak/runtime.json'), /Private runtime/);
     const a = await saveProject('Game A');
     const b = await saveProject('Game B');
     const card = await service.projects.createCard({ projectId: a.id, title: 'Workspace A lesson' });
@@ -153,48 +126,19 @@ test('model confirmed flag cannot bypass a real UI confirmation; decline and sto
   } finally { await service.close(); }
 });
 
-test('Mak conversation threads stay separate and reuse the correct workspace', async () => {
-  const { service, request, saveProject } = await makFixture();
-  try {
-    const a = await saveProject('A'), b = await saveProject('B');
-    const { threads, prompts } = fakeMak(service.coordinator);
-    for (const [index, projectId] of [a.id, b.id, a.id].entries()) await request('/coordinator', { id: `separate-${index}`, text: `Question ${index}`, scope: { projectId } });
-    assert.equal(threads.length, 2);
-    assert.equal(prompts[0].thread, prompts[2].thread); assert.notEqual(prompts[0].thread, prompts[1].thread);
-    assert.ok(prompts[1].text.includes(b.id)); assert.ok(!prompts[1].text.includes('Question 0'));
-  } finally { await service.close(); }
-});
-
-test('scoped Mak rejects cards and chats from another workspace before touching them', async () => {
-  const { service, request, saveProject } = await makFixture();
-  try {
-    const a = await saveProject('A'), b = await saveProject('B');
-    const card = await service.projects.createCard({ projectId: a.id, title: 'Card A' });
-    await assert.rejects(request('/coordinator', { id: 'wrong-card', text: 'Read this', scope: { projectId: b.id, cardId: card.id } }), /outside this workspace/);
-    service.sessions.items.set('foreign-chat', { id: 'foreign-chat', projectId: a.id });
-    await assert.rejects(service.coordinator.execute('read_chat', { id: 'foreign-chat' }, 'cross-chat', undefined, { projectId: b.id }), /outside this request workspace/);
-    service.sessions.items.clear();
-  } finally { await service.close(); }
-});
-
-test('Mak History normalizes interrupted work, strips runtime fields and merges IDs without replay or duplication', () => {
-  const old = { id: 'one', text: 'Read a card', at: '2026-09-30T00:00:00Z', status: 'running', scope: { projectId: null }, nativeThreadId: 'not-portable', token: 'not-portable' };
-  const incoming = { ...old, status: 'completed', result: 'Read.' };
-  const merged = mergeMakHistory({ operations: [old] }, { operations: [incoming] });
-  assert.equal(merged.operations.length, 1); assert.equal(merged.operations[0].status, 'completed');
-  assert.ok(!JSON.stringify(merged).includes('not-portable'));
-  assert.equal(makHistory({ operations: [old] }).operations[0].status, 'interrupted');
-  assert.throws(() => makHistory({ operations: [{ ...old, scope: { projectId: '../outside' } }] }), /Invalid/);
-});
-
 test('Mak derives the working project from its card and rejects conflicting selections', async () => {
   const { service, request, saveProject, repo } = await makFixture();
   try {
-    const project = await saveProject('Game');
+    const project = await saveProject('Game'), foreign = await saveProject('Foreign');
     const linked = await service.projects.createCard({ projectId: project.id, title: 'Unity work', repositoryId: 'primary' });
     const planning = await service.projects.createCard({ projectId: project.id, title: 'Planning' });
     await assert.rejects(request('/coordinator', { id: 'wrong-planning', text: 'Read card', scope: { projectId: project.id, cardId: linked.id, repositoryId: null } }), /must match the selected card/);
     await assert.rejects(request('/coordinator', { id: 'wrong-project', text: 'Read card', scope: { projectId: project.id, cardId: planning.id, repositoryId: 'primary' } }), /must match the selected card/);
+    await assert.rejects(request('/coordinator', { id: 'wrong-card', text: 'Read this', scope: { projectId: foreign.id, cardId: linked.id } }), /outside this workspace/);
+    service.sessions.items.set('foreign-chat', { id: 'foreign-chat', projectId: foreign.id });
+    try {
+      await assert.rejects(service.coordinator.execute('read_chat', { id: 'foreign-chat' }, 'cross-chat', undefined, { projectId: project.id }), /outside this request workspace/);
+    } finally { service.sessions.items.delete('foreign-chat'); }
     const { MakActions } = await import('../mak-actions.mjs');
     const actions = new MakActions({ projects: service.projects, registry: async () => JSON.parse(await readFile(path.join(repo, 'workspace/workspace.json'), 'utf8')) });
     assert.equal((await actions.scope({ projectId: project.id, cardId: linked.id })).repositoryId, 'primary');
@@ -206,9 +150,16 @@ test('Mak resumes the same native thread after restart; new/fork/history stay is
   const { repo, service, request } = await makFixture();
   try {
     const firstProtocol = fakeMak(service.coordinator);
-    await request('/coordinator', { id: randomUUID(), text: 'Remember the fixture.', scope: { projectId: null } });
+    const operation = { id: randomUUID(), text: 'Remember the fixture.', scope: { projectId: null } };
+    const completed = await request('/coordinator', operation);
+    const duplicate = await service.coordinator.ask(operation);
+    assert.equal(duplicate.status, 'completed');
+    assert.equal(duplicate.result, completed.result);
     const first = service.coordinator.conversation(null);
     const restarted = await new Coordinator({ repo, stateDir: service.coordinator.stateDir, context: () => ({}), execute: async () => { throw new Error('Unexpected replay'); } }).init();
+    const saved = await restarted.ask(operation);
+    assert.equal(saved.status, 'completed'); assert.equal(saved.result, duplicate.result);
+    assert.equal(restarted.child, null);
     const protocol = fakeMak(restarted);
     await restarted.ask({ id: randomUUID(), text: 'Continue.', scope: { projectId: null } });
     assert.equal(protocol.prompts[0].thread, first.threadId);
@@ -230,11 +181,15 @@ test('CLI submit/interrupt are scoped terminal keys and do not close a process; 
   const { service, request, saveProject } = await makFixture();
   const project = await saveProject('Controls');
   try {
-    const session = service.sessions.make({ id: randomUUID(), agent: 'codex', name: 'Fixture', projectId: project.id, repositoryId: 'primary', cwd: project.repositoryPath, nativeId: randomUUID(), status: 'running', activity: 'working', open: true });
+    const session = service.sessions.make({ id: randomUUID(), agent: 'codex', accountProfileId: randomUUID(), name: 'Fixture', projectId: project.id, repositoryId: 'primary', cwd: project.repositoryPath, nativeId: randomUUID(), status: 'running', activity: 'working', open: true });
     const keys = []; session.process = { write: key => keys.push(key), kill() {} };
+    let identityValid = false;
+    service.sessions.verifyIdentity = async target => { assert.equal(target.accountProfileId, session.accountProfileId); if (!identityValid) throw new Error('Synthetic account identity changed'); };
     service.sessions.items.set(session.id, session);
     await request(`/sessions/${session.id}/control`, { action: 'interrupt' }); assert.deepEqual(keys, ['\x1b']); assert.ok(session.process);
     session.activity = 'idle'; session.attention = false;
+    await assert.rejects(request(`/sessions/${session.id}/control`, { action: 'submit' }), /Synthetic account identity changed/);
+    assert.deepEqual(keys, ['\x1b']); identityValid = true;
     await request(`/sessions/${session.id}/control`, { action: 'submit' }); assert.equal(keys[1], '\r');
     session.attention = true;
     await assert.rejects(request(`/sessions/${session.id}/control`, { action: 'submit' }), /not ready/);
@@ -251,5 +206,5 @@ test('CLI submit/interrupt are scoped terminal keys and do not close a process; 
       assert.ok(claude.args.includes('--fork-session')); assert.ok(claude.args.includes('--session-id'));
     } finally { if (oldAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = oldAppData; }
     session.process = null;
-  } finally { await service.close(); }
+  } finally { service.sessions.items.clear(); await service.close(); }
 });

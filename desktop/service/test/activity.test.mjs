@@ -1,11 +1,12 @@
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, appendFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { Sessions } from '../sessions.mjs';
-import { createService } from '../server.mjs';
 import { codexTranscriptForChat, nativeActivity, tailNativeFile } from '../native-events.mjs';
 import { sleep } from '../util.mjs';
 
@@ -34,7 +35,11 @@ test('native activity separates accepted tasks, tool work, final answers and int
   assert.equal(nativeActivity({ type: 'assistant', message: { stop_reason: 'tool_use' } }, 'claude').kind, 'turn-started');
   assert.equal(nativeActivity({ type: 'user', message: { content: [{ type: 'tool_result', content: 'Command finished.' }] } }, 'claude').kind, 'turn-started');
   assert.equal(nativeActivity({ type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: 'Internal reasoning.' }] } }, 'claude'), null);
-  assert.equal(nativeActivity({ type: 'assistant', message: { id: 'msg-1', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } }, 'claude').id, 'msg-1');
+  const final = { type: 'assistant', message: { id: 'msg-1', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } };
+  assert.equal(nativeActivity({ ...final, isSidechain: true }, 'claude'), null);
+  const completion = nativeActivity(final, 'claude');
+  assert.equal(completion.kind, 'turn-completed');
+  assert.equal(completion.id, 'msg-1');
   assert.equal(nativeActivity({ type: 'user', message: { content: '[Request interrupted by user]' } }, 'claude').kind, 'turn-interrupted');
   assert.equal(nativeActivity({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } }, 'claude').kind, 'turn-interrupted');
   assert.equal(nativeActivity({ type: 'assistant', message: { stop_reason: 'end_turn' } }, 'kimi'), null);
@@ -42,10 +47,17 @@ test('native activity separates accepted tasks, tool work, final answers and int
 
 test('unread answers survive new work and restart; stale acknowledgements and duplicate completions are ignored', async () => {
   const { repo, sessions, item } = await fixture();
-  let restored;
+  let restored, writes = 0;
+  item.process = { write() { writes++; } };
   try {
     assert.equal(item.activity, 'idle'); // A live process is not a working agent.
+    sessions.nativeEvent(item, nativeActivity({ type: 'event_msg', payload: { type: 'error', message: 'fetch failed' } }, 'codex'));
+    assert.equal(item.connectionIssue.category, 'remote-unreachable');
+    assert.equal(writes, 0);
+    await sessions.persist();
+    assert.equal(JSON.parse(await readFile(path.join(repo, '.mrmak/sessions.json'), 'utf8'))[0].connectionIssue, undefined);
     sessions.nativeEvent(item, { kind: 'turn-started' });
+    assert.equal(item.connectionIssue, null);
     assert.equal(item.activity, 'working'); assert.equal(item.unread, false);
     sessions.nativeEvent(item, answer('turn-1'));
     assert.equal(item.activity, 'idle'); assert.equal(item.unread, true);
@@ -58,6 +70,7 @@ test('unread answers survive new work and restart; stale acknowledgements and du
     sessions.seen(item.id, version);
     assert.equal(item.unread, true);
     sessions.nativeEvent(item, { kind: 'turn-started' });
+    item.process = null;
     await sessions.close();
     restored = await new Sessions(repo, path.join(repo, '.mrmak')).init();
     const saved = restored.get(item.id);
@@ -69,7 +82,7 @@ test('unread answers survive new work and restart; stale acknowledgements and du
     restored.nativeEvent(saved, { kind: 'turn-started' });
     restored.nativeEvent(saved, { kind: 'turn-interrupted' });
     assert.equal(saved.activity, 'idle'); assert.equal(saved.unread, false);
-  } finally { await restored?.close(); await sessions.close(); }
+  } finally { item.process = null; await restored?.close(); await sessions.close(); }
 });
 
 test('tailing reacts to new native records without replaying history or completing from silence', async () => {
@@ -135,24 +148,15 @@ test('History recovers an uncaptured Codex ID only from an unambiguous native ro
     const resumed = await sessions.resume(item.id);
     assert.equal(resumed.nativeId, nativeId);
     assert.equal(resumed.open, true);
-  } finally { if (original === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = original; await sessions.close(); }
-});
 
-test('legacy Codex recovery rejects ambiguous or already claimed rollout IDs', async () => {
-  const { repo, sessions, item } = await fixture();
-  const original = process.env.CODEX_HOME;
-  process.env.CODEX_HOME = path.join(repo, 'codex-home');
-  const folder = path.join(process.env.CODEX_HOME, 'sessions', '2026', '09', '12');
-  await mkdir(folder, { recursive: true });
-  const createdAt = new Date().toISOString();
-  const ids = ['00000000-0000-0000-0000-000000000125', '00000000-0000-0000-0000-000000000126'];
-  try {
-    const write = id => writeFile(path.join(folder, `rollout-${id}.jsonl`), JSON.stringify({ timestamp: createdAt, type: 'session_meta', payload: { id, cwd: repo, source: 'cli' } }) + '\n');
-    await write(ids[0]);
-    assert.equal((await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, allowLegacy: true }))?.id, ids[0]);
-    await write(ids[1]);
-    assert.equal(await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, allowLegacy: true }), null);
-    assert.equal((await codexTranscriptForChat({ id: item.id, cwd: repo, createdAt, claimedIds: [ids[0]], allowLegacy: true }))?.id, ids[1]);
+    const legacy = randomUUID(), competing = randomUUID();
+    const writeLegacy = id => writeFile(path.join(folder, `rollout-${id}.jsonl`), JSON.stringify({ timestamp: createdAt, type: 'session_meta', payload: { id, cwd: repo, source: 'cli' } }) + '\n');
+    const legacyChat = { id: 'legacy-fixture', cwd: repo, createdAt, allowLegacy: true };
+    await writeLegacy(legacy);
+    assert.equal((await codexTranscriptForChat(legacyChat))?.id, legacy);
+    await writeLegacy(competing);
+    assert.equal(await codexTranscriptForChat(legacyChat), null);
+    assert.equal((await codexTranscriptForChat({ ...legacyChat, claimedIds: [legacy] }))?.id, competing);
   } finally { if (original === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = original; await sessions.close(); }
 });
 
@@ -180,11 +184,16 @@ test('only the subscribed Chats view can acknowledge the exact answer; navigatio
     await until(() => messages.filter(x => x.type === 'pong').length > before);
   }
   try {
+    const bootstrap = await fetch(service.origin + '/api/bootstrap', { headers: { Authorization: `Bearer ${service.token}` } });
+    assert.equal((await bootstrap.json()).browserSessionId, null);
+    service.sharedBrowsers.selectedId = 'synthetic-late-browser';
     const item = service.sessions.get('chat-a');
     service.sessions.nativeEvent(item, answer('new'));
     await fetch(service.origin + '/api/sessions/chat-a/focus', { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(item.unread, true);
     const workspace = await connect('workspace'), chats = await connect('chats');
+    assert.equal(workspace.messages.find(item => item.type === 'connected').browserSessionId, 'synthetic-late-browser');
+    assert.equal(chats.messages.find(item => item.type === 'connected').browserSessionId, undefined);
     for (const client of [workspace, chats]) {
       await send(client.ws, { type: 'selected', id: item.id }, client.messages);
       assert.equal(item.unread, true);
@@ -199,5 +208,24 @@ test('only the subscribed Chats view can acknowledge the exact answer; navigatio
     await send(chats.ws, { ...seen, completionVersion: seen.completionVersion - 1 }, chats.messages);
     assert.equal(item.unread, true);
     await send(chats.ws, seen, chats.messages); assert.equal(item.unread, false);
+    // Structured chats register a loaded view without requesting an xterm
+    // snapshot. Navigation alone and Workspace clients still cannot mark read.
+    item.chatInterface = 'chat';
+    service.sessions.nativeEvent(item, answer('graphical-answer'));
+    const graphical = await connect('chats');
+    const graphSeen = { type: 'seen', id: item.id, completionVersion: item.completionVersion };
+    await send(graphical.ws, graphSeen, graphical.messages); assert.equal(item.unread, true);
+    await send(graphical.ws, { type: 'subscribe', id: item.id }, graphical.messages);
+    await until(() => graphical.messages.some(x => x.type === 'chat-view' && x.id === item.id));
+    assert.equal(graphical.messages.some(x => x.type === 'snapshot'), false);
+    await send(workspace.ws, graphSeen, workspace.messages); assert.equal(item.unread, true);
+    await send(graphical.ws, { ...graphSeen, completionVersion: graphSeen.completionVersion - 1 }, graphical.messages); assert.equal(item.unread, true);
+    await send(graphical.ws, graphSeen, graphical.messages); assert.equal(item.unread, false);
+    const errors = chats.messages.filter(x => x.type === 'service-error').length;
+    item.process = null;
+    await send(chats.ws, { type: 'input', id: item.id, data: '\x1b[I' }, chats.messages);
+    assert.equal(chats.messages.filter(x => x.type === 'service-error').length, errors);
+    await send(chats.ws, { type: 'input', id: item.id, data: 'actual typed input' }, chats.messages);
+    assert.equal(chats.messages.filter(x => x.type === 'service-error').length, errors + 1);
   } finally { sockets.forEach(ws => ws.terminate()); await service.close(); }
 });

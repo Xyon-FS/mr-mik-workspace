@@ -5,12 +5,13 @@ export function workerControls(sessions, openCodePicker) {
     async prepare(id) {
       const chat = sessions.get(id);
       if (chat.agent !== 'opencode') return;
+      if (chat.nativeControlBusy) throw new Error('Wait for the native session control before preparing input.');
       if (chat.activity !== 'idle' || chat.attention) throw new Error('Handle native prompts and wait for an idle OpenCode chat before sending.');
       await openCodePicker.command(id, 'prepare');
     },
     async send(id, text) {
       const chat = sessions.get(id);
-      if (chat.agent !== 'opencode') return sessions.input(id, text, { coordinator: true, submit: true });
+      if (chat.agent !== 'opencode') { await sessions.verifyIdentity?.(chat); return sessions.input(id, text, { coordinator: true, submit: true }); }
       if (typeof text !== 'string' || !text.trim() || text.length > 64000) throw new Error('Provide a non-empty worker message of at most 64000 characters.');
       if (chat.activity !== 'idle' || chat.attention) throw new Error('Handle native prompts and wait for an idle OpenCode chat before sending.');
       const process = chat.process, lastInputAt = chat.lastInputAt;
@@ -27,6 +28,7 @@ export function workerControls(sessions, openCodePicker) {
       return { delivered: true, sessionId: id, name: chat.name, note: 'Native submit dispatched. Inspect the worker for acceptance and progress; this does not prove task completion.' };
     },
     async interrupt(id) {
+      if (sessions.get(id).chatInterface === 'chat') return sessions.get(id).graphical.interrupt();
       if (sessions.get(id).agent === 'opencode') { await openCodePicker.command(id, 'interrupt'); return { interrupted: true, sessionId: id, note: 'Native abort requested; the chat remains open. Inspect its state afterwards.' }; }
       sessions.input(id, '\x03'); return { delivered: 'Ctrl+C', sessionId: id };
     },

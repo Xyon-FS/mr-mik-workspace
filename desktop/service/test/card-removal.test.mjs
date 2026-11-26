@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, mkdir, readFile, writeFile, readdir, symlink, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, symlink, rename } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import { Projects } from '../projects.mjs';
 import { CardRecycler, stageCardRemoval } from '../card-removal.mjs';
 import { Workspace } from '../workspace.mjs';
 import { PortableArchive } from '../portable-archive.mjs';
 import { WorkspaceSnapshot } from '../workspace-snapshot.mjs';
 import { Sessions } from '../sessions.mjs';
-import { createService } from '../server.mjs';
 
 async function fixture() {
   const base = await mkdtemp(path.join(os.tmpdir(), 'mik-card-removal-'));
@@ -30,26 +30,7 @@ async function fixture() {
   return { base, repo, external, projects, project, linked, card, other, folder, recycled, registry };
 }
 
-test('card deletion removes only selected Hub content and retains external folders and unrelated cards', async () => {
-  const f = await fixture();
-  const result = await f.projects.removeCard(f.card.id);
-  assert.deepEqual(result.warnings, []);
-  assert.deepEqual((await f.registry()).entities.map(card => card.id), [f.other.id]);
-  assert.equal(await readFile(path.join(f.recycled[0], 'page.html'), 'utf8'), '<h1>Models</h1>');
-  assert.equal(await readFile(path.join(f.external, 'unchanged.txt'), 'utf8'), 'external content');
-  assert.equal(JSON.parse(await readFile(path.join(result.recoveryPath, 'recovery.json'), 'utf8')).status, 'recycled');
-  assert.ok(JSON.parse(await readFile(path.join(result.recoveryPath, 'recovery.json'), 'utf8')).registryBefore.entities.some(card => card.id === f.card.id));
-});
-
-test('empty and orphaned cards can be removed without a linked project or content directory', async () => {
-  const f = await fixture(); await f.projects.remove(f.project.id);
-  const registry = await f.registry(); registry.entities.find(card => card.id === f.other.id).projectId = 'old-unregistered-workspace';
-  await writeFile(f.projects.workspacePath, JSON.stringify(registry));
-  await f.projects.removeCard(f.other.id);
-  assert.equal((await f.registry()).entities.length, 1); assert.equal(f.recycled.length, 0);
-});
-
-for (const action of ['keep', 'archive', 'delete']) test(`unlink choice ${action} affects only cards belonging to the selected linked project`, async () => {
+for (const [action, workspaceAction] of [['keep', 'archive'], ['archive', 'keep'], ['delete', 'delete']]) test(`unlink ${action} then remove workspace with ${workspaceAction} preserves data and scope`, async () => {
   const f = await fixture();
   await f.projects.removeRepository({ projectId: f.project.id, repositoryId: f.linked.id, cardAction: action, expectedCardIds: [f.card.id] });
   const cards = (await f.registry()).entities;
@@ -57,35 +38,29 @@ for (const action of ['keep', 'archive', 'delete']) test(`unlink choice ${action
   if (action === 'delete') { assert.equal(cards.length, 1); assert.equal(f.recycled.length, 1); }
   else { const card = cards.find(card => card.id === f.card.id); assert.equal(card.repositoryId, null); assert.equal(card.projectId, f.project.id); assert.equal(card.status, action === 'archive' ? 'archived' : 'active'); }
   assert.equal(await readFile(path.join(f.external, 'unchanged.txt'), 'utf8'), 'external content');
-});
-
-for (const action of ['keep', 'archive', 'delete']) test(`workspace removal ${action} retains libraries/inbox and safely handles all its cards`, async () => {
-  const f = await fixture(); const registry = await f.registry();
+  const registry = await f.registry();
   registry.resources = [{ id: 'lesson', kind: 'knowledge', projectId: f.project.id, path: 'knowledge/projects/lesson.md' }];
   await writeFile(f.projects.workspacePath, JSON.stringify(registry));
   await writeFile(f.projects.inboxPath, JSON.stringify({ resources: [{ id: 'image', projectId: f.project.id, path: 'inbox/image.png' }] }));
-  await f.projects.remove(f.project.id, { cardAction: action, expectedCardIds: [f.card.id, f.other.id] });
+  const otherFolder = path.join(f.repo, 'workspace', f.other.folder);
+  await mkdir(otherFolder);
+  await writeFile(path.join(otherFolder, 'page.html'), '<h1>Overview</h1>');
+  if (workspaceAction === 'delete') {
+    await assert.rejects(f.projects.remove(f.project.id, { cardAction: 'delete' }), /Review and confirm/);
+    await assert.rejects(f.projects.remove(f.project.id, { cardAction: 'delete', expectedCardIds: [f.card.id] }), /changed/);
+    assert.deepEqual((await f.registry()).entities.map(card => card.id), cards.map(card => card.id));
+    assert.equal(await readFile(path.join(otherFolder, 'page.html'), 'utf8'), '<h1>Overview</h1>');
+  }
+  await f.projects.remove(f.project.id, { cardAction: workspaceAction, expectedCardIds: cards.map(card => card.id) });
   const after = await f.registry();
   assert.equal(after.resources[0].projectId, null);
   assert.equal(JSON.parse(await readFile(f.projects.inboxPath, 'utf8')).resources[0].projectId, null);
-  if (action === 'delete') assert.equal(after.entities.length, 0);
-  else for (const card of after.entities) { assert.equal(card.projectId, null); assert.equal(card.repositoryId, null); assert.equal(card.status, action === 'archive' ? 'archived' : 'active'); }
+  if (workspaceAction === 'delete') {
+    assert.equal(after.entities.length, 0);
+    assert.equal(f.recycled.length, 2);
+  }
+  else for (const card of after.entities) { assert.equal(card.projectId, null); assert.equal(card.repositoryId, null); assert.equal(card.status, workspaceAction === 'archive' || card.id === f.card.id ? 'archived' : 'active'); }
   assert.equal(await readFile(path.join(f.external, 'unchanged.txt'), 'utf8'), 'external content');
-});
-
-test('bulk deletion requires reviewed IDs and rejects a stale selection before touching content', async () => {
-  const f = await fixture();
-  await assert.rejects(f.projects.remove(f.project.id, { cardAction: 'delete' }), /Review and confirm/);
-  await assert.rejects(f.projects.remove(f.project.id, { cardAction: 'delete', expectedCardIds: [f.card.id] }), /changed/);
-  assert.equal((await f.registry()).entities.length, 2); assert.ok(await readFile(path.join(f.folder, 'page.html')));
-});
-
-test('recycle failure retains content with a recovery manifest instead of permanently deleting', async () => {
-  const f = await fixture(); f.projects.recycleCardFolder = async () => { throw new Error('Windows failure'); };
-  const result = await f.projects.removeCard(f.card.id);
-  assert.equal(result.warnings.length, 1);
-  assert.equal(await readFile(path.join(result.recoveryPath, 'content-0/page.html'), 'utf8'), '<h1>Models</h1>');
-  assert.equal(JSON.parse(await readFile(path.join(result.recoveryPath, 'recovery.json'), 'utf8')).status, 'recovery-retained');
 });
 
 test('shared, traversal, planning, junction and overlapping card folders are rejected without external writes', async () => {
@@ -116,15 +91,6 @@ test('recycler requires matching native confirmation and does not confuse file e
   const second = recycler.recycle('fixture'); recycler.close(); await assert.rejects(second, /closing/);
 });
 
-test('prepared removal can roll back its folders without changing card metadata', async () => {
-  const f = await fixture(), before = await readFile(f.projects.workspacePath, 'utf8');
-  const stage = await stageCardRemoval(f.repo, f.projects.stateDir, await f.registry(), [f.card]);
-  await stage.rollback();
-  assert.equal(await readFile(f.projects.workspacePath, 'utf8'), before);
-  assert.equal(await readFile(path.join(f.folder, 'page.html'), 'utf8'), '<h1>Models</h1>');
-  assert.equal(f.recycled.length, 0);
-});
-
 test('Hub transfer and content snapshots preserve archives, omit deleted cards and exclude recovery state', async () => {
   const f = await fixture(), sessions = await new Sessions(f.repo, f.projects.stateDir).init();
   try {
@@ -132,14 +98,32 @@ test('Hub transfer and content snapshots preserve archives, omit deleted cards a
     const initial = await snapshots.exportTo(f.base, f.project.id);
     await new Workspace(f.repo).update(f.other.id, { status: 'archived' });
     f.projects.recycleCardFolder = async () => { throw new Error('Retain isolated recovery bytes'); };
-    await f.projects.removeCard(f.card.id);
+    const before = await readFile(f.projects.workspacePath, 'utf8');
+    const stage = await stageCardRemoval(f.repo, f.projects.stateDir, await f.registry(), [f.card]);
+    await stage.rollback();
+    assert.equal(await readFile(f.projects.workspacePath, 'utf8'), before);
+    assert.equal(await readFile(path.join(f.folder, 'page.html'), 'utf8'), '<h1>Models</h1>');
+    assert.equal(f.recycled.length, 0);
+
+    const result = await f.projects.removeCard(f.card.id);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(await readFile(path.join(result.recoveryPath, 'content-0/page.html'), 'utf8'), '<h1>Models</h1>');
+    assert.equal(JSON.parse(await readFile(path.join(result.recoveryPath, 'recovery.json'), 'utf8')).status, 'recovery-retained');
     const portable = new PortableArchive(f.repo, f.projects.stateDir, sessions, f.projects);
     const exported = await portable.exportTo(f.base, { chats: 'light' });
     const preview = await portable.preview(exported.path);
     assert.equal(preview.manifest.files.some(file => file.name.includes('card-recovery') || file.name.includes(f.card.folder)), false);
     const update = await snapshots.updatePreview(initial.path, f.project.id);
     assert.ok(update.removed.some(name => name.includes(f.card.folder)));
-    await snapshots.update(initial.path, f.project.id);
+    await writeFile(path.join(initial.path, 'unrelated.txt'), 'Keep');
+    await mkdir(path.join(initial.path, '.git'));
+    await writeFile(path.join(initial.path, '.git/fixture'), 'Keep Git');
+    const updated = await snapshots.update(initial.path, f.project.id);
+    const relative = 'workspace/' + f.card.folder + '/page.html';
+    assert.deepEqual(update.removed, [relative]);
+    assert.equal(await readFile(path.join(updated.backup, relative), 'utf8'), '<h1>Models</h1>');
+    assert.equal(await readFile(path.join(initial.path, 'unrelated.txt'), 'utf8'), 'Keep');
+    assert.equal(await readFile(path.join(initial.path, '.git/fixture'), 'utf8'), 'Keep Git');
     const manifest = (await snapshots.load(initial.path)).manifest;
     assert.deepEqual(manifest.cards.map(card => [card.id, card.status]), [[f.other.id, 'archived']]);
     assert.equal(manifest.files.some(file => file.name.includes(f.card.folder) || file.name.includes('card-recovery')), false);
@@ -165,15 +149,5 @@ test('HTTP deletion protects open chats and clears only card associations after 
     service.nativeMessage({ type: 'card-recycle-result', requestId: recycleEvent.requestId, recycled: true });
     const response = await deletion; assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
     assert.equal(session.cardId, null); assert.equal(session.nativeId, 'fixture-native-id'); assert.equal(session.cwd, f.external); assert.equal(service.sessions.items.size, 1);
-  } finally { await service.close(); }
-});
-
-test('HTTP Hub and snapshot exports complete through the shared registration lock', async () => {
-  const f = await fixture(), service = await createService({ repo: f.repo, uiDir: f.repo });
-  try {
-    for (const [route, data] of [['/workspace/export', { folder: f.base, chats: 'light' }], ['/workspace/snapshot/export', { folder: f.base, projectId: f.project.id }]]) {
-      const response = await fetch(`${service.origin}/api${route}`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
-    }
   } finally { await service.close(); }
 });

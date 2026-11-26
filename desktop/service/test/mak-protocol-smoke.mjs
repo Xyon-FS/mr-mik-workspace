@@ -1,5 +1,6 @@
 // Local protocol only. Never starts a model turn or uses the user's Codex profile.
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { Coordinator } from '../coordinator.mjs';

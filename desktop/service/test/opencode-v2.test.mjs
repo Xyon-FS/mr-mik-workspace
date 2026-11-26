@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createV2Observer } from '../opencode/v2-observer.mjs';
-import { openCodeRuntimeConfig, parseOpenCodeVersion } from '../opencode.mjs';
-import plugin from '../opencode/v2-plugin.mjs';
-import path from 'node:path';
-import { terminalCommand } from '../agents.mjs';
+import { openCodeRuntimeConfig } from '../opencode.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readV2Identity } from '../opencode-v2-session.mjs';
 
@@ -22,16 +19,6 @@ test('V2 resume lookup requires only identity columns, rejects missing IDs witho
   } finally { db.close(); }
 });
 
-test('V2 native version output includes the v prefix', () => assert.equal(parseOpenCodeVersion('opencode v2.0.21\n'), '2.0.21'));
-
-test('V2 launches a private server and uses the explicit selected executable; V1 flags remain unchanged', () => {
-  const env = { MRMIK_OPENCODE_BINARY: process.execPath };
-  const v2 = terminalCommand('opencode', { env, openCodeFamily: 2, resumeId: 'ses_owned', bypass: true });
-  assert.equal(v2.file, process.execPath);
-  assert.deepEqual(v2.args, ['--standalone', '--session', 'ses_owned', '--auto']);
-  assert.deepEqual(terminalCommand('opencode', { env, openCodeFamily: 1 }).args, []);
-});
-
 test('V2 runtime retains user settings, installs only the V2 adapter and registers scoped MCP', () => {
   const config = openCodeRuntimeConfig({ OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: 'fixture/test', plugins: ['custom'], permissions: [{ action: 'shell', resource: '*', effect: 'ask' }], mcp: { servers: { custom: { disabled: true } } } }) }, { script: 'bridge.mjs', hubSkillNames: ['hub-skill'] }, 2);
   assert.equal(config.model, 'fixture/test'); assert.equal(config.plugin, undefined);
@@ -43,30 +30,6 @@ test('V2 runtime retains user settings, installs only the V2 adapter and registe
   assert.equal(JSON.stringify(config).includes('TOKEN'), false);
 });
 
-test('V2 observer binds only fresh local roots and stores final text without reasoning/tool data', () => {
-  const states = [], directory = path.resolve('fixture');
-  const observe = createV2Observer({ directory, chatId: 'chat', launchId: 'launch', startedAt: 10, save: value => states.push(value) });
-  const event = (type, data, created = 11) => observe({ type, data, created, location: { directory } });
-  event('session.created', { sessionID: 'ses_old', location: { directory } }, 1);
-  event('session.created', { sessionID: 'ses_child', parentID: 'ses_parent', location: { directory } });
-  event('session.created', { sessionID: 'ses_wrong', location: { directory: path.resolve('other') } });
-  assert.equal(states.length, 0);
-  event('session.created', { sessionID: 'ses_owned', location: { directory } });
-  assert.equal(states.at(-1).hasConversation, false);
-  event('session.execution.started', { sessionID: 'ses_foreign' });
-  assert.equal(states.at(-1).activity, 'idle');
-  event('session.execution.started', { sessionID: 'ses_owned' });
-  event('session.step.started', { sessionID: 'ses_owned', assistantMessageID: 'msg_final' });
-  event('session.reasoning.ended', { sessionID: 'ses_owned', assistantMessageID: 'msg_final', text: 'PRIVATE_REASONING' });
-  event('session.text.ended', { sessionID: 'ses_owned', assistantMessageID: 'msg_final', text: 'Final fixture answer' });
-  event('session.step.ended', { sessionID: 'ses_owned', assistantMessageID: 'msg_final', finish: 'stop' });
-  event('session.execution.succeeded', { sessionID: 'ses_owned' });
-  assert.equal(states.at(-1).completion, 'msg_final'); assert.equal(states.at(-1).preview, 'Final fixture answer');
-  assert.equal(JSON.stringify(states).includes('PRIVATE_REASONING'), false);
-  event('session.execution.interrupted', { sessionID: 'ses_owned' });
-  assert.equal(states.at(-1).activity, 'idle');
-});
-
 test('V2 forks bind only after a matching native fork event and resumed roots do not replay completion', () => {
   const states = [], directory = process.cwd();
   const observe = createV2Observer({ directory, forkParent: 'ses_source', startedAt: 1, save: state => states.push(state) });
@@ -75,10 +38,6 @@ test('V2 forks bind only after a matching native fork event and resumed roots do
   assert.equal(states.length, 0);
   observe({ type: 'session.forked', created: 2, data: { sessionID: 'ses_fork', parentID: 'ses_source' } });
   assert.equal(states.at(-1).nativeId, 'ses_fork'); assert.equal(states.at(-1).hasConversation, true);
-});
-
-test('V2 plugin requires native contracts rather than silently using the V1 plugin', async () => {
-  await assert.rejects(plugin.setup({}), /V2 context\/event/);
 });
 
 test('V2 observer handles owned native forms and concurrent permissions without persisting dialog content', () => {

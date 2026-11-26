@@ -29,7 +29,7 @@ export class OpenCodePicker extends CodexModelPicker {
       const file = path.join(this.sessions.stateDir, 'opencode', `${id}.control`), requestId = randomUUID();
       await writeFile(`${file}.tmp`, JSON.stringify({ ...extra, id: requestId, launchId, action, at: Date.now() }), { mode: 0o600 });
       await replaceControlFile(`${file}.tmp`, file, () => session.process === process && session.openCodeLaunchId === launchId && session.status === 'running');
-      const deadline = Date.now() + (action === 'mcp-refresh' ? 30000 : 3000);
+      const deadline = Date.now() + (['mcp-refresh', 'message-fork'].includes(action) ? 30000 : 3000);
       while (Date.now() < deadline && session.process === process) {
         const reply = await readFile(`${file}.reply`, 'utf8').then(JSON.parse).catch(() => null);
         if (reply?.id === requestId && reply.launchId === launchId && session.openCodeLaunchId === launchId) { if (reply.error) throw new Error(reply.error); if (reply.accepted) return reply; }

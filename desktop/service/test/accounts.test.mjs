@@ -1,24 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Accounts, accountCommand, accountStatusCommand, parseAccountStatus, parseOpenCodeProviders } from '../accounts.mjs';
+import { Accounts, accountCommand, accountStatusCommand, parseAccountStatus, runHiddenAccountCommand } from '../accounts.mjs';
+import { spawn } from 'node:child_process';
 
 const resolve = Object.fromEntries(['codex', 'claude', 'opencode'].map(agent => [agent, () => ({ file: `C:/Fixture/${agent}.exe`, args: [] })]));
-test('provider inventory projects only safe identities and connection state; native picker handles unknown V1 identities', async () => {
-  const details = { code: 0, stdout: JSON.stringify([{ id: 'anthropic', name: 'Private account', connections: [{ type: 'credential', label: 'private@example.com', token: 'secret' }] }, { id: 'google', connections: [{ type: 'environment', name: 'PRIVATE_KEY' }] }]) };
-  const result = parseOpenCodeProviders(details);
-  assert.deepEqual(result, { status: 'logged-in', providers: [{ provider: 'anthropic', label: 'anthropic', status: 'logged-in', canLogout: true }, { provider: 'google', label: 'google', status: 'logged-in', canLogout: false }] });
-  assert.ok(!/Private|private|secret|KEY/.test(JSON.stringify(result)));
-  assert.deepEqual(parseOpenCodeProviders({ code: 0, stdout: 'Credentials\n● Anthropic api\n● OpenAI oauth\n2 credentials' }).providers.map(row => row.provider), ['', '']);
-  assert.equal(parseOpenCodeProviders({ code: 1, stdout: details.stdout }).status, 'unknown');
-  assert.equal(parseOpenCodeProviders({ code: 0, stdout: '[{"id":"bad;command","connections":[]}]' }).status, 'unknown');
-  assert.deepEqual(accountCommand('opencode', 'login', resolve, '').args, ['auth', 'login']);
-  const v2 = { ...resolve, openCodeFamily: () => 2 };
-  assert.deepEqual(accountCommand('opencode', 'logout', v2, 'anthropic').args, ['auth', 'logout', 'anthropic', '--standalone']);
-  assert.throws(() => accountCommand('opencode', 'login', v2, 'x; dangerous'), /provider/);
-  const launches = [], accounts = new Accounts({ resolve: v2, status: async agent => agent === 'opencode' ? result : 'unknown', launch: async command => launches.push(command) });
-  const inventory = await accounts.inventory(); assert.deepEqual(inventory[2].providers, result.providers);
-  const plan = accounts.plan('opencode', 'logout', 'anthropic'); assert.match(plan.label, /anthropic/); await accounts.confirm(plan.token);
-  assert.deepEqual(launches[0].args, ['auth', 'logout', 'anthropic', '--standalone']);
+
+test('hidden account command observes completion with ignored streams, bounded timeout and cancellation', async () => {
+  let options, started;
+  const command = { file: process.execPath, args: ['-e', 'console.log("synthetic-auth-output"); console.error("synthetic-private-details")'] };
+  const result = await runHiddenAccountCommand(command, process.env, { onStart: pid => { started = pid; }, spawnProcess: (file, args, value) => { options = value; return spawn(file, args, value); } });
+  assert.deepEqual(result, { requested: true, completed: true });
+  assert.ok(Number.isInteger(started)); assert.equal(options.windowsHide, true); assert.equal(options.stdio, 'ignore'); assert.equal(options.shell, false);
+  await assert.rejects(runHiddenAccountCommand({ file: process.execPath, args: ['-e', 'process.exit(1)'] }), /did not complete/);
+  const long = { file: process.execPath, args: ['-e', 'setTimeout(()=>{},60000)'] };
+  await assert.rejects(runHiddenAccountCommand(long, process.env, { timeoutMs: 10 }), /timed out/);
+  const controller = new AbortController();
+  await assert.rejects(runHiddenAccountCommand(long, process.env, { signal: controller.signal, onStart: () => controller.abort() }), /cancelled/);
 });
 test('account controls use exact native commands, never prompts or untrusted command parameters', () => {
   assert.deepEqual(accountCommand('codex', 'logout', resolve).args, ['logout']);
@@ -42,6 +39,34 @@ test('account plans require fresh single-use confirmation, reject live chats and
   plan = accounts.plan('codex', 'logout'); const original = resolve.codex; resolve.codex = () => ({ file: 'changed.exe', args: [] });
   try { await assert.rejects(accounts.confirm(plan.token), /CLI changed/); } finally { resolve.codex = original; }
   assert.equal(launched.length, 1);
+});
+
+test('display reads coalesce only in flight and invalidated stale reads cannot evict a newer request', async () => {
+  const accounts = new Accounts({resolve}), gates = [];
+  accounts.readProfileInventory = () => new Promise(done => gates.push(done));
+  try {
+    const old = accounts.profileInventory(); assert.equal(accounts.profileInventory(), old); assert.equal(gates.length, 1);
+    accounts.invalidateDisplay('codex'); const fresh = accounts.profileInventory(); assert.notEqual(fresh, old);
+    gates[0]([{label:'old'}]); await old; assert.equal(accounts.profileInventory(), fresh);
+    gates[1]([{label:'new'}]); assert.deepEqual(await fresh,[{label:'new'}]);
+    const last=accounts.profileInventory(); assert.equal(gates.length,3);
+    let closed=false;const closing=accounts.close().then(()=>{closed=true;});await Promise.resolve();assert.equal(closed,false);
+    gates[2]([]);await last;await closing;await assert.rejects(accounts.profileInventory(),/shutting down/);
+  } finally { for(const done of gates)done([]);await accounts.close(); }
+});
+
+test('large registries bound native status processes and shutdown skips queued accounts', async () => {
+  const rows=Array.from({length:20},(_,n)=>({id:String(n),label:'Fixture '+n,system:false}));
+  const gates=[];let started=0;
+  const accounts=new Accounts({resolve,profiles:{list:async()=>rows,accountAction:async()=>null,identityStates:async()=>[],statusContext:async()=>({env:{}})},status:()=>{started++;return new Promise(done=>gates.push(done));}});
+  try {
+    const reading=accounts.profileInventory();
+    for(let n=0;n<30&&started<4;n++)await new Promise(done=>setTimeout(done,1));
+    assert.equal(started,4);
+    const closing=accounts.close();for(const done of gates)done('logged-out');
+    const values=await reading;await closing;assert.equal(started,4);assert.deepEqual(values.map(row=>row.id),rows.map(row=>row.id));
+    assert.equal(values.filter(row=>row.status==='logged-out').length,4);assert.equal(values.filter(row=>row.available===false).length,16);
+  } finally {for(const done of gates)done('logged-out');await accounts.close();}
 });
 
 test('status reads return fixed enums only, never native account details', async () => {

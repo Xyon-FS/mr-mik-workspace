@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { within } from './util.mjs';
 
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-function imageExtension(data) {
+export function describeAttachment(file, info) {
+  const kind = info?.isDirectory() ? 'folder' : /\.(png|jpe?g|gif|webp|bmp)$/i.test(file) ? 'image' : 'file';
+  return { path: file, name: path.basename(file), kind, ...(info ? { size: info.size, mtimeMs: info.mtimeMs } : { unavailable: true }) };
+}
+export function imageExtension(data) {
   if (data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return '.png';
   if (data[0] === 255 && data[1] === 216 && data[2] === 255) return '.jpg';
   if (/^GIF8[79]a/.test(data.subarray(0, 6).toString())) return '.gif';

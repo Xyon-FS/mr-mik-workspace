@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +9,9 @@ import { portableLauncher } from '../../../scripts/portable-layout.mjs';
 
 test('desktop isolates the launch profile before plugins and keeps portable Hub discovery independent', async () => {
   const main = await readFile(new URL('../../../src-tauri/src/main.rs', import.meta.url), 'utf8');
-  assert.ok(main.indexOf('context.config_mut().identifier = launch_profile::identifier') < main.indexOf('let result = tauri::Builder::default()'));
+  const assign = main.indexOf('context.config_mut().identifier = launch_profile::identifier');
+  const builder = main.indexOf('let result = tauri::Builder::default()');
+  assert.ok(assign >= 0 && builder > assign, 'Set the launch profile before constructing the Tauri builder');
   assert.match(main, /\.build\(context\)/);
   assert.match(main, /portable\.as_deref\(\)\.map\(launch_profile::portable_hub\)/);
 });
@@ -24,6 +27,21 @@ test('native launch profile policies distinguish installer, portable and explici
     const result = spawnSync(binary, [], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('native Hub selection reuses direct, modern and legacy locations without recursive discovery', { skip: spawnSync('rustc', ['--version'], { windowsHide: true }).status !== 0 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-hub-selection-test-'));
+  const binary = path.join(root, process.platform === 'win32' ? 'selection.exe' : 'selection');
+  const { fileURLToPath } = await import('node:url');
+  const source = fileURLToPath(new URL('../../../src-tauri/src/hub_selection.rs', import.meta.url));
+  const compile = spawnSync('rustc', ['--edition=2021', '--test', source, '-o', binary], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  assert.equal(compile.status, 0, compile.stderr);
+  const result = spawnSync(binary, [], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const main = await readFile(new URL('../../../src-tauri/src/main.rs', import.meta.url), 'utf8');
+  assert.match(main, /if selected\.is_none\(\)/);
+  assert.match(main, /hub_selection::creation_destination/);
+  assert.match(main, /arg\("--reuse-existing"\)/);
 });
 
 test('portable launcher selects new, legacy or explicit Hub without copying or modifying data', { skip: process.platform !== 'win32' }, async () => {

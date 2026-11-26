@@ -9,9 +9,12 @@ import { buildStarterHub } from './starter-hub.mjs';
 import { portableLauncher } from './portable-layout.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const args = process.argv.slice(2);
+if (args.length && !(args.length === 1 && args[0] === '--portable-only')) throw new Error('Usage: node scripts/package-release.mjs [--portable-only]');
+const portableOnly = args.includes('--portable-only');
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Release packages require Windows x64.');
 const require = createRequire(path.join(root, 'desktop/service/package.json'));
-const { Zip, ZipDeflate } = require('fflate');
+const { Zip, ZipDeflate, ZipPassThrough } = require('fflate');
 const suffix = process.env.MRMIK_RELEASE_SUFFIX || '';
 if (suffix && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(suffix)) throw new Error('Invalid development release suffix.');
 const label = suffix ? `${version}-${suffix}` : version;
@@ -21,9 +24,10 @@ const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TAR
 const executable = path.join(target, 'release/mrmak-workspace.exe');
 const runtime = path.join(root, '.cache/desktop-runtime');
 await lstat(executable); await lstat(path.join(runtime, 'node.exe'));
-const installers = (await readdir(path.join(target, 'release/bundle/nsis'))).filter(name => name.endsWith('.exe') && name.includes(version));
-if (installers.length !== 1) throw new Error('Build exactly one matching NSIS installer before packaging.');
+const installers = portableOnly ? [] : (await readdir(path.join(target, 'release/bundle/nsis'))).filter(name => name.endsWith('.exe') && name.includes(version));
+if (!portableOnly && installers.length !== 1) throw new Error('Build exactly one matching NSIS installer before packaging.');
 await mkdir(output, { recursive: true });
+for (const name of ['CODEX-APACHE-2.0.txt', 'CODEX-NOTICE.txt']) await copyFile(path.join(root, 'desktop/licenses', name), path.join(output, name));
 const portable = path.join(output, 'Mr-Mik-portable'); await mkdir(portable);
 const app = path.join(portable, 'App'); await mkdir(app);
 await copyFile(executable, path.join(app, 'mrmak-workspace.exe'));
@@ -43,7 +47,9 @@ const visit = async (folder, relative = '') => {
     const name = relative + item.name;
     if (item.isDirectory()) await visit(path.join(folder, item.name), `${name}/`);
     else if (item.isFile()) {
-      const entry = new ZipDeflate(`Mr-Mik/${name}`, { level: 6 }); zip.add(entry);
+      // Some KaTeX TTF byte patterns produce invalid distances with fflate's
+      // streaming deflater. Fonts are small/already compressed; store them.
+      const entry = /\.(?:ttf|woff2?)$/i.test(name) ? new ZipPassThrough(`Mr-Mik/${name}`) : new ZipDeflate(`Mr-Mik/${name}`, { level: 6 }); zip.add(entry);
       for await (const chunk of createReadStream(path.join(folder, item.name), { highWaterMark: 65536 })) { if (failure) throw failure; entry.push(chunk) }
       entry.push(new Uint8Array(), true);
     }
@@ -51,8 +57,8 @@ const visit = async (folder, relative = '') => {
 };
 try { await visit(portable); zip.end(); await once(stream, 'finish'); if (failure) throw failure; } catch (error) { zip.terminate(); stream.destroy(); throw error; }
 const installer = `Mr-Mik_${label}_windows-x64_setup.exe`;
-await copyFile(path.join(target, 'release/bundle/nsis', installers[0]), path.join(output, installer));
+if (!portableOnly) await copyFile(path.join(target, 'release/bundle/nsis', installers[0]), path.join(output, installer));
 const sums = [];
-for (const name of [installer, path.basename(archive)]) { const hash = createHash('sha256'); for await (const chunk of createReadStream(path.join(output, name))) hash.update(chunk); sums.push(`${hash.digest('hex')}  ${name}`); }
+for (const name of [...(portableOnly ? [] : [installer]), path.basename(archive)]) { const hash = createHash('sha256'); for await (const chunk of createReadStream(path.join(output, name))) hash.update(chunk); sums.push(`${hash.digest('hex')}  ${name}`); }
 await writeFile(path.join(output, 'SHA256SUMS.txt'), sums.join('\n') + '\n');
-console.log(`Installer, portable ZIP and SHA256SUMS ready: ${output}. Nothing was published.`);
+console.log(`${portableOnly ? 'Portable ZIP' : 'Installer, portable ZIP'} and SHA256SUMS ready: ${output}. Nothing was published.`);

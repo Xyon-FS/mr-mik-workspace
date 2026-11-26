@@ -16,7 +16,8 @@ export async function buildStarterHub(root, destination) {
     await writeFile(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
   }
   for (const folder of ['context', 'knowledge', 'processes', 'inbox', '.agents/skills', '.claude/skills']) await mkdir(path.join(destination, folder), { recursive: true });
-  for (const name of ['AGENTS.md', 'CLAUDE.md', 'processes/workspace-authoring.md', 'knowledge/video-watch.md', 'knowledge/voice-dictation.md']) {
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) await copyFile(path.join(root, 'templates/hub', name), path.join(destination, name));
+  for (const name of ['processes/workspace-authoring.md', 'knowledge/video-watch.md', 'knowledge/voice-dictation.md']) {
     const file = path.join(destination, name); await mkdir(path.dirname(file), { recursive: true }); await copyFile(path.join(root, name), file);
   }
   await cp(path.join(root, 'workspace/_shared'), path.join(destination, 'workspace/_shared'), { recursive: true });

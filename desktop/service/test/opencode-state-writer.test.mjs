@@ -20,30 +20,23 @@ test('control publication retries the same file without creating a second reques
 });
 
 test('observer atomic state retries Windows reader locks and coalesces to the newest revision', () => {
-  let job, bytes, saved, locked = true;
+  let job, bytes, saved, attempts = 0, locked = true;
   const save = createStateWriter('fixture', {
     write: (_file, value) => { bytes = value; },
-    rename: () => { if (locked) throw Object.assign(new Error('reader lock'), { code: 'EPERM' }); saved = JSON.parse(bytes); },
+    rename: () => { if (locked) attempts++; if (locked) throw Object.assign(new Error('reader lock'), { code: 'EPERM' }); saved = JSON.parse(bytes); },
     schedule: callback => { job = callback; return 1; }, cancel: () => { job = null; },
   });
   save({ revision: 1, activity: 'waiting' });
   save({ revision: 2, activity: 'idle' });
   assert.equal(saved, undefined);
-  locked = false; job();
+  locked = false; const retry = job; job = null; retry();
   assert.deepEqual(saved, { revision: 2, activity: 'idle' });
-  save.dispose(); save({ revision: 3 });
-  assert.equal(saved.revision, 2);
-});
-
-test('observer retries are bounded and disposal cancels outstanding timers', () => {
-  let job, attempts = 0, cancelled = false;
-  const save = createStateWriter('fixture', {
-    write: () => {}, rename: () => { attempts++; throw Object.assign(new Error('lock'), { code: 'EACCES' }); },
-    schedule: callback => { job = callback; return 1; }, cancel: () => { cancelled = true; job = null; },
-  });
-  save({ revision: 1 });
+  locked = true; attempts = 0;
+  save({ revision: 3 });
   while (job) { const next = job; job = null; next(); }
   assert.equal(attempts, 40);
-  save({ revision: 2 }); save.dispose();
-  assert.equal(cancelled, true); assert.equal(job, null);
+  save({ revision: 4 }); assert.equal(typeof job, 'function');
+  save.dispose(); assert.equal(job, null);
+  save({ revision: 5 });
+  assert.equal(saved.revision, 2);
 });

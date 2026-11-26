@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CodexModelPicker, parseModelPicker, parseReasoningPicker } from '../model-picker.mjs';
+import { CodexModelPicker } from '../model-picker.mjs';
 import { ClaudeEffortPicker, parseClaudeEffortPicker } from '../claude-model-picker.mjs';
+import { claudeEffortScreen } from './claude-picker-layouts.mjs';
 
 const modelScreen = `  Select Model and Effort
   1. GPT-6-Astra (default)  Frontier intelligence
@@ -14,39 +15,27 @@ const effortScreen = `  Select Reasoning Level for GPT-6-Luna
   3. High               More
   enter default · s session · esc back`;
 
-test('model picker reads only a complete, numbered native menu', () => {
-  assert.deepEqual(parseModelPicker(modelScreen).map(item => item.slug), ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']);
-  assert.equal(parseModelPicker('  Select Model and Effort\n  1. GPT-6-Luna'), null);
-  assert.equal(parseReasoningPicker(effortScreen, 'GPT-6-Luna').find(item => item.default).key, '2');
-});
-
-test('model picker drives the same running terminal and confirms the switch', async () => {
-  const process = {};
-  const session = { agent: 'codex', status: 'running', process, activity: 'idle' };
-  let screen = '› Ask Codex to do anything\n  GPT-6-Sol xhigh · test';
-  const inputs = [];
-  const sessions = {
-    get: () => session,
-    read: async () => ({ screen }),
-    input: (_id, text) => {
-      inputs.push(text);
-      if (text === '/model') screen = '› /model\n  GPT-6-Sol xhigh · test';
-      if (text === '\r') screen = modelScreen;
-      if (text === '3') screen = effortScreen;
-      if (text === '2') screen = '• Model changed to gpt-6-luna medium\n› Ask Codex to do anything';
-    },
-  };
-  const picker = new CodexModelPicker(sessions);
-  assert.equal((await picker.open('chat')).options.length, 3);
-  assert.deepEqual(await picker.choose('chat', 'gpt-6-luna'), { model: 'gpt-6-luna', effort: 'medium', confirmed: true });
-  assert.deepEqual(inputs, ['/model', '\r', '3', '2']);
-});
-
-test('model picker refuses a draft message and never types into it', async () => {
-  const inputs = [];
-  const sessions = { get: () => ({ agent: 'codex', status: 'running', process: {}, activity: 'idle' }), read: async () => ({ screen: '› Ask Codex to do anything\n› do not submit this draft\n  GPT-6-Sol xhigh · test' }), input: (_id, text) => inputs.push(text) };
-  await assert.rejects(new CodexModelPicker(sessions).open('chat'), /idle Codex prompt/);
-  assert.deepEqual(inputs, []);
+test('Codex picker selects spaced Terra through its native row and confirms the canonical slug', async () => {
+  const session = { agent: 'codex', status: 'running', activity: 'idle', process: {} };
+  let screen = modelScreen.replace('GPT-6-Luna', 'GPT-6.1 Terra');
+  const keys = [];
+  const picker = new CodexModelPicker({ get: () => session, read: async () => ({ screen }), input: (_id, key) => {
+    keys.push(key);
+    if (key === '3') screen = effortScreen.replace('GPT-6-Luna', 'GPT-6.1 Terra');
+    if (key === '2') screen = 'Model changed to gpt-6.1-terra medium\n› Ask Codex to do anything';
+  } });
+  const ready = screen;
+  screen = '› Ask Codex to do anything\n› do not submit this draft\n  GPT-6-Sol xhigh · test';
+  await assert.rejects(picker.open('chat'), /idle Codex prompt/);
+  assert.deepEqual(keys, []);
+  screen = ready;
+  const { options } = await picker.open('chat');
+  assert.equal(options[0].label, 'GPT-6-Astra');
+  assert.equal(options[1].current, true);
+  assert.equal(options[2].key, '3');
+  assert.equal(options[2].label, 'GPT-6.1 Terra');
+  assert.deepEqual(await picker.choose('chat', 'gpt-6.1-terra'), { model: 'gpt-6.1-terra', effort: 'medium', confirmed: true });
+  assert.deepEqual(keys, ['3', '2']);
 });
 
 test('Codex reasoning changes only the running session using native highlight and s, and persists after confirmation', async () => {
@@ -61,14 +50,17 @@ test('Codex reasoning changes only the running session using native highlight an
   assert.deepEqual(keys, ['2', '\x1b[B', '\x1b[B', 's']);
 });
 
-test('Claude native slider parser follows triangle position, exposes only native levels and uses s for session-only changes', async () => {
-  const session = { agent: 'claude', status: 'running', activity: 'idle', process: {} };
-  let active = 1, screen;
-  const menu = () => { const points = [1, 10, 20], track = '─'.repeat(points[active]) + '▲' + '─'.repeat(23 - points[active]); return `Effort\nFaster           Smarter\n${track}\nlow     medium     high\ns for this session only · esc cancel`; };
-  screen = menu(); const keys = [];
-  assert.equal(parseClaudeEffortPicker(screen).find(row => row.active).slug, 'medium');
-  assert.equal(parseClaudeEffortPicker('Effort\nlow medium high'), null);
-  const picker = new ClaudeEffortPicker({ get: () => session, read: async () => ({ screen }), input: (id, text) => { keys.push(text); if (text === '\x1b[C') { active++; screen = menu(); } if (text === 's') screen = 'Effort set to high for this session\n❯'; } });
-  await picker.openEffort('chat'); await picker.chooseEffort('chat', 'high');
-  assert.deepEqual(keys, ['\x1b[C', 's']); assert.equal(session.effort, 'high');
+test('Claude 2.1.312 effort slider ignores its separate Ultracode toggle and exposes all native levels', async () => {
+  const keys = [], session = { agent: 'claude', status: 'running', activity: 'idle', process: {} };
+  let active = 1, screen = claudeEffortScreen(active), confirm = true;
+  assert.deepEqual(parseClaudeEffortPicker(screen).map(row => row.slug), ['low', 'medium', 'high', 'xhigh', 'max']);
+  const picker = new ClaudeEffortPicker({ get: () => session, read: async () => ({ screen }), input: (_id, key) => { keys.push(key); if (key === '\x1b[C') screen = claudeEffortScreen(++active); else if (key === '\x1b[D') screen = claudeEffortScreen(--active); else if (key === 's') screen = confirm ? 'Effort set to max for this session\n❯' : 'Old effort set to low\nCurrent effort is max\n❯'; } });
+  await picker.openEffort('fixture'); await picker.chooseEffort('fixture', 'max');
+  assert.deepEqual(keys, ['\x1b[C', '\x1b[C', '\x1b[C', 's']); assert.equal(session.effort, 'max');
+  screen = claudeEffortScreen(active);
+  confirm = false;
+  picker.until = async (id, parse) => parse((await picker.sessions.read(id)).screen);
+  await picker.openEffort('fixture');
+  await assert.rejects(picker.chooseEffort('fixture', 'low'), /not confirmed/);
+  assert.equal(session.effort, 'max');
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, symlink, rename } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { installMissingGameSkills, gameSkillPack } from '../skill-pack.mjs';
@@ -41,19 +42,15 @@ test('new pack is synchronized for both agents, Off by default, with independent
     assert.equal((await projects.hubSkills(a.id, agent)).find(s => s.id === gameSkillPack[1]).effective, false);
     assert.equal((await projects.hubSkills(b.id, agent)).find(s => s.id === gameSkillPack[1]).effective, true);
   }
-});
-
-test('pack install preserves customized folders and existing scope bytes', async t => {
-  const repo = await mkdtemp(path.join(os.tmpdir(), 'mik-skills-preserve-'));
-  t.after(() => rm(repo, { recursive: true, force: true }));
-  const folder = path.join(repo, '.agents/skills', gameSkillPack[0]);
-  await mkdir(folder, { recursive: true }); await writeFile(path.join(folder, 'SKILL.md'), 'Custom skill');
-  await mkdir(path.join(repo, 'projects'));
-  const scopes = '{"skills":{"custom":{"global":true}},"claudeSkills":{}}\n';
-  await writeFile(path.join(repo, 'projects/skill-scopes.json'), scopes);
-  assert.equal((await installMissingGameSkills(repo)).length, gameSkillPack.length * 2 - 1);
-  assert.equal(await readFile(path.join(folder, 'SKILL.md'), 'utf8'), 'Custom skill');
-  assert.equal(await readFile(path.join(repo, 'projects/skill-scopes.json'), 'utf8'), scopes);
+  const custom = path.join(repo, '.agents/skills', gameSkillPack[0], 'SKILL.md');
+  const missing = path.join(repo, '.claude/skills', gameSkillPack[0]);
+  const scopeFile = path.join(repo, 'projects/skill-scopes.json');
+  const scopes = await readFile(scopeFile);
+  await writeFile(custom, 'Custom skill');
+  await rename(missing, path.join(base, 'temporarily-moved-skill'));
+  assert.equal((await installMissingGameSkills(repo)).length, 1);
+  assert.equal(await readFile(custom, 'utf8'), 'Custom skill');
+  assert.deepEqual(await readFile(scopeFile), scopes);
 });
 
 test('pack install rejects an external Hub skill junction', async t => {

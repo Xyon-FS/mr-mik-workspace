@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 

@@ -4,7 +4,12 @@ import { createService } from './server.mjs';
 import { saveJson } from './util.mjs';
 import { createInterface } from 'node:readline';
 import { installMissingGameSkills } from './skill-pack.mjs';
+import { stopService } from './shutdown.mjs';
 
+const reportStartup = process.env.MRMIK_STARTUP_TIMING === '1' ? (phase, details) => {
+  process.stderr.write(JSON.stringify({ type: 'startup-timing', phase, at: Date.now(), elapsedMs: Math.round(performance.now()), ...details }) + '\n');
+} : undefined;
+reportStartup?.('service-entry');
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = name => { const index = args.indexOf(name); return index < 0 ? null : args[index + 1]; };
@@ -17,16 +22,13 @@ await installMissingGameSkills(repo).catch(() => {
   // additions cannot be installed. Do not expose filesystem paths in diagnostics.
   process.stderr.write('Optional game skill pack could not be added; existing Hub content is unchanged.\n');
 });
-const service = await createService({ repo, uiDir, stateDir, native: writeNative, restoreSessions: true });
+reportStartup?.('service-create');
+const service = await createService({ repo, uiDir, stateDir, native: writeNative, restoreSessions: true, reportStartup });
 // Window authentication travels over the private startup pipe, not diagnostics.
 await saveJson(path.join(stateDir, 'runtime.json'), { pid: process.pid, origin: service.origin });
-writeNative({ type: 'ready', ...service.urls });
-let exiting = false;
-async function stop() {
-  if (exiting) return; exiting = true;
-  const deadline = setTimeout(() => process.exit(1), 8000); deadline.unref();
-  await service.close(); process.exit(0);
-}
+reportStartup?.('service-ready');
+writeNative({ type: 'ready', ...service.urls, chatWidthPercent: service.chatWidthPercent });
+const stop = stopService(service, { report: () => process.stderr.write('Service shutdown did not finish cleanly; retained conversation locks require review.\n') });
 process.on('SIGINT', stop); process.on('SIGTERM', stop);
 if (process.env.MRMAK_PARENT_PID) {
   const parent = Number(process.env.MRMAK_PARENT_PID);

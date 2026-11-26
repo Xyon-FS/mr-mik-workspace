@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, realpath } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'mik-accounts-ui-')));
@@ -14,7 +14,7 @@ await writeFile(path.join(repo, 'workspace/workspace.json'), JSON.stringify({ en
 const service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: path.join(base, 'home'), env: {} } });
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
   const errors = [], plans = []; page.on('pageerror', error => errors.push(error.message));
   let accountRows = [
@@ -25,6 +25,9 @@ try {
       { provider: 'google', label: 'google', status: 'logged-in', canLogout: false },
     ] },
   ];
+  await page.route('**/api/accounts/profiles*', route => route.fulfill({ json: [{ id: 'fixture-account', label: 'Test account', available: true, status: 'logged-in', identityState: 'verified' }] }));
+  const limitQueries = [];
+  await page.route('**/api/accounts/limits?*', route => { limitQueries.push(new URL(route.request().url()).searchParams); return route.fulfill({ json: { windows: [{ label: '5h window', percent: 0, resetsAt: '2030-01-01T00:00:00Z' }], note: 'Native fixture usage' } }); });
   await page.route('**/api/accounts', route => route.fulfill({ json: accountRows }));
   await page.route('**/api/accounts/plan', route => {
     const request = route.request().postDataJSON(); plans.push(request);
@@ -33,6 +36,8 @@ try {
   await page.route('**/api/accounts/confirm', () => { throw new Error('UI fixture must not execute auth.'); });
   await page.goto(service.urls.workspace);
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Accounts settings', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'OpenCode', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out OpenCode · anthropic', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Sign out OpenCode · google', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Sign out OpenCode · anthropic', exact: true }).click();
@@ -60,16 +65,38 @@ try {
   accountRows = [{ agent: 'opencode', label: 'OpenCode', available: true, status: 'logged-out', providers: [] }];
   await page.reload();
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Accounts settings', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'OpenCode', exact: true }).click();
   await page.getByText('No connected providers', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Sign out OpenCode', exact: true }).count(), 0);
   accountRows = [{ agent: 'opencode', label: 'OpenCode', available: true, status: 'unknown', providers: [] }];
   await page.reload();
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Accounts settings', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'OpenCode', exact: true }).click();
   await page.getByRole('button', { name: 'Sign out OpenCode', exact: true }).waitFor();
   accountRows = [{ agent: 'opencode', label: 'OpenCode', available: false, status: 'unknown', providers: [] }];
   await page.reload();
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Accounts settings', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'OpenCode', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: 'Connect OpenCode provider', exact: true }).isDisabled(), true);
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'Codex', exact: true }).click();
+  await page.getByRole('button', { name: 'Codex account limits', exact: true }).focus();
+  await page.getByRole('tooltip').getByText('5h window: 0% used', { exact: false }).waitFor();
+  assert.equal(limitQueries.at(-1).get('profileId'), 'fixture-account');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('tooltip').count(), 0);
+  accountRows = [{ agent: 'claude', label: 'Claude', available: true, status: 'logged-in' }];
+  await page.reload(); await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Accounts settings', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'OpenCode', exact: true }).click();
+  await page.getByRole('group', { name: 'Account provider', exact: true }).getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('button', { name: 'Claude account limits', exact: true }).focus();
+  await page.getByRole('tooltip').getByText('5h window: 0% used', { exact: false }).waitFor();
+  assert.equal(limitQueries.at(-1).get('agent'), 'claude');
+  assert.equal(limitQueries.at(-1).get('profileId'), 'system');
+  await page.keyboard.press('Escape');
   assert.deepEqual(errors, []);
   console.log('Provider account rows and safe confirmation UI passed; no authentication command executed.');
 } finally { await browser?.close(); await service.close(); }

@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { validSessionId } from './observer.mjs';
 import { createStateWriter } from './state-writer.mjs';
+import { connectionIssue } from '../connection-errors.mjs';
 
 const sameDirectory = (a, b) => typeof a === 'string' && typeof b === 'string' && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
 export function createV2Observer({ directory, nativeId, forkParent, chatId, launchId, hasConversation = false, startedAt = Date.now(), save }) {
@@ -34,12 +35,12 @@ export function createV2Observer({ directory, nativeId, forkParent, chatId, laun
       emit({ activity: dialogs.size ? 'waiting' : executing ? 'working' : 'idle' }); return;
     }
     if (event.type === 'session.inbox.delivered') emit({ hasConversation: true });
-    else if (event.type === 'session.execution.started') { executing = true; message = null; text = ''; final = false; emit({ activity: dialogs.size ? 'waiting' : 'working', hasConversation: true }); }
+    else if (event.type === 'session.execution.started') { executing = true; message = null; text = ''; final = false; emit({ activity: dialogs.size ? 'waiting' : 'working', hasConversation: true, connectionIssue: null }); }
     else if (event.type === 'session.step.started') { message = data.assistantMessageID; text = ''; final = false; }
     else if (event.type === 'session.text.ended' && data.assistantMessageID === message && typeof data.text === 'string') text = `${text}${text ? '\n' : ''}${data.text.slice(-350)}`.slice(-350);
     else if (event.type === 'session.step.ended' && data.assistantMessageID === message) final = !!data.finish && !['tool-calls', 'unknown'].includes(data.finish);
     else if (event.type === 'session.execution.succeeded') { executing = false; emit({ activity: dialogs.size ? 'waiting' : 'idle', ...(final && typeof message === 'string' ? { completion: message, preview: text } : {}) }); }
-    else if (['session.execution.failed', 'session.execution.interrupted'].includes(event.type)) { executing = false; dialogs.clear(); message = null; text = ''; final = false; emit({ activity: 'idle' }); }
+    else if (['session.execution.failed', 'session.execution.interrupted'].includes(event.type)) { executing = false; dialogs.clear(); message = null; text = ''; final = false; emit({ activity: 'idle', connectionIssue: event.type === 'session.execution.failed' ? connectionIssue(data.error) : null }); }
     else if (event.type === 'session.status' && ['busy', 'retry'].includes(data.status?.type)) { executing = true; emit({ activity: dialogs.size ? 'waiting' : 'working' }); }
     else if (event.type === 'session.status' && data.status?.type === 'idle') { executing = false; emit({ activity: dialogs.size ? 'waiting' : 'idle' }); }
   };

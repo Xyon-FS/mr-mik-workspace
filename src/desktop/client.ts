@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import type { DesktopState, Preview, ServiceEvent } from './types'
+import { workspaceViews } from './workspaceViewStore'
+import { rememberPreview } from './previewMemory'
+import { connectionIssue, type ConnectionIssue } from '../../desktop/service/connection-errors.mjs'
 
 const params = new URLSearchParams(window.location.search)
 export const isDesktop = params.get('desktop') === '1'
@@ -24,20 +27,45 @@ const update = (values: Partial<DesktopState>) => { state = { ...state, ...value
 export const desktopState = () => state
 export const useDesktop = () => useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener) }, desktopState)
 export const onServiceEvent = (listener: (event: ServiceEvent) => void) => { events.add(listener); return () => { events.delete(listener) } }
-export const setPreview = (preview: Preview | null) => update({ preview })
+workspaceViews.subscribe(() => {
+  const views = workspaceViews.read(), active = views.tabs.find(tab => tab.id === views.active)
+  update({ preview: active?.type === 'preview' ? active.file : null, browserSessionId: active?.type === 'browser' ? active.sessionId : null, inspector: active?.type === 'inspector' ? active.selection : null })
+})
+export const setPreview = (preview: Preview | null, automatic = false) => {
+  if (preview) { if (preview.viewState) rememberPreview(`image:${preview.identity || preview.path}`, preview.viewState); workspaceViews.open({ id: `preview:${preview.identity || preview.path}`, title: preview.name, type: 'preview', file: preview }, automatic) }
+  else workspaceViews.select(null)
+}
+export const closeBrowserPanel = () => { const id = workspaceViews.read().active; if (id) workspaceViews.close(id) }
+export async function browserUpload(id: string, file: File) {
+  const response = await fetch(`/api/browser/${encodeURIComponent(id)}/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-File-Name': encodeURIComponent(file.name) }, body: file })
+  const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Upload failed'); return result
+}
+export async function browserDownload(id: string, downloadId: string, name: string) {
+  const response = await fetch(`/api/browser/${encodeURIComponent(id)}/download/${encodeURIComponent(downloadId)}`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok) throw new Error('This download is no longer available.')
+  const url = URL.createObjectURL(await response.blob()), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 export const dismissError = () => update({ error: null })
 export const reportError = (error: unknown) => update({ error: error instanceof Error ? error.message : String(error) })
 export const contentUrl = (relative: string) => isDesktop ? `${state.contentBase}${relative}` : relative
 
 export async function api<T>(path: string, data?: unknown, method?: string): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  let response: Response
+  try { response = await fetch(`/api${path}`, {
     method: method || (data === undefined ? 'GET' : 'POST'),
     headers: { Authorization: `Bearer ${token}`, ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: data === undefined ? undefined : JSON.stringify(data),
-  })
+  }) } catch (cause) { const issue = connectionIssue(cause, { localService: true }); throw Object.assign(new Error(issue.message), { connectionIssue: issue }) }
   const value = await response.json()
-  if (!response.ok) throw new Error(value.error || `Request failed (${response.status})`)
+  if (!response.ok) throw Object.assign(new Error(value.error || `Request failed (${response.status})`), { connectionIssue: value.connectionIssue as ConnectionIssue | undefined })
   return value as T
+}
+export async function retryLocalConnection() {
+  if (!state.ready) { await startDesktop(); return }
+  const initial = await api<DesktopState>('/bootstrap')
+  update({ ...initial, ready: true, selectedId: initial.sessions.some(item => item.id === state.selectedId) ? state.selectedId : initial.selectedId, error: null })
+  clearTimeout(reconnectTimer)
+  connect()
 }
 export function pickFiles(options: { window?: 'chats' | 'workspace'; folder?: boolean } = {}): Promise<string[]> {
   const requestId = crypto.randomUUID()
@@ -86,22 +114,33 @@ export async function startDesktop() {
     const selected = localStorage.getItem('mrmak.selectedChat')
     if (surface === 'workspace' && !location.hash && initial.settings.workspaceRoute?.startsWith('#/')) history.replaceState(null, '', location.pathname + location.search + initial.settings.workspaceRoute)
     update({ ...initial, ready: true, error: null, selectedId: initial.sessions.some(item => item.id === selected) ? selected : initial.selectedId })
+    if (!performance.getEntriesByName('mr-mik:bootstrap-ready').length) performance.mark('mr-mik:bootstrap-ready')
+    if (surface === 'workspace') { if (initial.browserSessionId) workspaceViews.open({ id: `browser:${initial.browserSessionId}`, title: 'Browser', type: 'browser', sessionId: initial.browserSessionId }); else if (initial.inspector) workspaceViews.open({ id: `inspector:${initial.inspector.sessionId}:${initial.inspector.itemId}`, title: 'Changes', type: 'inspector', selection: initial.inspector }) }
     connect()
   } catch (error) { started = false; reportError(error) }
 }
 function connect() {
-  socket = new WebSocket(`${location.origin.replace('http:', 'ws:')}/events`)
-  socket.onopen = () => socket?.send(JSON.stringify({ type: 'auth', token, clientId, surface }))
-  socket.onmessage = ({ data }) => {
+  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return
+  const currentSocket = new WebSocket(`${location.origin.replace('http:', 'ws:')}/events`)
+  socket = currentSocket
+  currentSocket.onopen = () => currentSocket.send(JSON.stringify({ type: 'auth', token, clientId, surface }))
+  currentSocket.onmessage = ({ data }) => {
+    if (socket !== currentSocket) return
     const event = JSON.parse(data) as ServiceEvent
-    if (event.type === 'connected') update({ connected: true, sessions: event.sessions || state.sessions, selectedId: event.selectedId ?? state.selectedId, coordinator: event.state || state.coordinator, error: null })
+    if (event.type === 'connected') update({ connected: true, sessions: event.sessions || state.sessions, selectedId: event.selectedId ?? state.selectedId, coordinator: event.state || state.coordinator, error: null, ...(surface === 'workspace' && event.browserSessionId && !state.preview && !state.inspector && !state.browserSessionId ? { browserSessionId: event.browserSessionId } : {}) })
+    if (event.type === 'connected' && surface === 'workspace' && event.browserSessionId && !workspaceViews.read().active) workspaceViews.open({ id: `browser:${event.browserSessionId}`, title: 'Browser', type: 'browser', sessionId: event.browserSessionId }, !event.userInitiated)
     if (event.type === 'selection') update({ selectedId: event.selectedId || null })
     if (event.type === 'session' && event.session) {
       const next = event.session
+      if (!next.open || ['stopped', 'exited'].includes(next.status)) for (const tab of workspaceViews.read().tabs) if (tab.type === 'browser' && tab.sessionId === next.id) workspaceViews.close(tab.id)
+      if (state.browserSessionId === next.id && (!next.open || ['stopped', 'exited'].includes(next.status))) update({ browserSessionId: null })
       update({ sessions: state.sessions.some(item => item.id === next.id) ? state.sessions.map(item => item.id === next.id ? next : item) : [...state.sessions, next] })
     }
     if (event.type === 'removed') {
+      for (const tab of workspaceViews.read().tabs) if (tab.type === 'browser' && tab.sessionId === event.id || tab.type === 'inspector' && tab.selection.sessionId === event.id) workspaceViews.close(tab.id)
       const sessions = state.sessions.filter(item => item.id !== event.id)
+      if (state.browserSessionId === event.id) update({ browserSessionId: null })
+      if (state.inspector?.sessionId === event.id) update({ inspector: null })
       update({ sessions, selectedId: state.selectedId === event.id ? sessions[0]?.id || null : state.selectedId })
     }
     if (event.type === 'service-error') reportError(event.error || 'Connection error')
@@ -117,20 +156,24 @@ function connect() {
     if (event.type === 'navigate') {
       if (event.sessionId) selectChat(event.sessionId)
       if (surface === 'workspace' && event.window === 'workspace') {
-        if (event.route !== undefined) { setPreview(null); location.hash = event.route || '' }
-        if (event.preview) setPreview(event.preview)
+        if (event.browserSessionId) workspaceViews.open({ id: `browser:${event.browserSessionId}`, title: 'Browser', type: 'browser', sessionId: event.browserSessionId }, !event.userInitiated)
+        if (event.inspector) workspaceViews.open({ id: `inspector:${event.inspector.sessionId}:${event.inspector.itemId}`, title: 'Changes', type: 'inspector', selection: event.inspector }, !event.userInitiated)
+        if (event.route !== undefined) { workspaceViews.select(null, true); location.hash = event.route || '' }
+        if (event.preview) setPreview(event.preview, !event.userInitiated)
       }
     }
     if (event.type === 'workspace-changed') window.dispatchEvent(new Event('mrmak-workspace-changed'))
+    if (event.type === 'card-content-changed') window.dispatchEvent(new CustomEvent('mrmak-card-content-changed', { detail: event.pages }))
     events.forEach(listener => listener(event))
   }
-  socket.onclose = () => {
+  currentSocket.onclose = () => {
+    if (socket !== currentSocket) return
     update({ connected: false })
     clearTimeout(reconnectTimer)
     reconnectTimer = window.setTimeout(connect, 1500)
     events.forEach(listener => listener({ type: 'disconnected' }))
   }
-  socket.onerror = () => socket?.close()
+  currentSocket.onerror = () => currentSocket.close()
 }
 
 // Exposing a capability through a DOM attribute would give report pages access to it.

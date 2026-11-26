@@ -43,8 +43,8 @@ export function emptyNativePrompt(session) {
 }
 
 export class ToolRefresh {
-  constructor(sessions, { snapshot, ready, live, restart, delay = 1200 }) {
-    Object.assign(this, { sessions, snapshot, ready, live, restart, delay });
+  constructor(sessions, { snapshot, ready, live, restart, silent = () => false, watch = false, delay = 1200 }) {
+    Object.assign(this, { sessions, snapshot, ready, live, restart, silent, watch, delay });
     this.baselines = new Map(); this.pending = new Map(); this.busy = new Set(); this.closed = false;
     this.timer = setInterval(() => void this.poll(), delay); this.timer.unref();
   }
@@ -57,7 +57,7 @@ export class ToolRefresh {
     session.toolRefresh = null; this.sessions.changed(session);
   }
   state(session, status, reason, automatic = false) {
-    session.toolRefresh = { status, reason, automatic };
+    session.toolRefresh = { status, reason, automatic, silent: this.silent(session) && status !== 'failed' };
     this.sessions.changed(session);
   }
   // Wrap the shared editors, so UI, Bridge and coordinator writes follow the
@@ -82,8 +82,9 @@ export class ToolRefresh {
         if (!baseline) { this.pending.set(session.id, { desired, automatic: false }); this.state(session, 'pending', 'Live configuration is unknown. Apply manually from an idle, empty prompt.'); continue; }
         const changes = changedMcps(baseline, desired);
         if (!changes.length) { this.pending.delete(session.id); if (session.toolRefresh && session.toolRefresh.status !== 'applied') { session.toolRefresh = null; this.sessions.changed(session); } continue; }
+        if (session.toolRefresh?.status === 'failed' && hash(this.pending.get(session.id)?.desired || null) === hash(desired)) continue;
         // A second settings write supersedes the target, not the launch baseline.
-        const automatic = session.activity === 'idle';
+        const automatic = this.silent(session) || session.activity === 'idle';
         this.pending.set(session.id, { desired, changes, automatic });
         this.state(session, 'pending', automatic ? 'Chat configuration changed. Waiting for an idle, empty prompt.' : 'Chat configuration changed during a request. Apply after it finishes.', automatic);
       } catch { this.pending.set(session.id, { automatic: false }); this.state(session, 'failed', 'Chat configuration could not be read safely. Repair it, then retry.'); }
@@ -92,7 +93,11 @@ export class ToolRefresh {
   async poll() {
     if (this.closed || this.polling) return;
     this.polling = true;
-    try { for (const [id, job] of [...this.pending]) {
+    try {
+      // Catch folder registration edits and external native configuration writes.
+      // Scans are read-only and never contact an MCP or model endpoint.
+      if (this.watch && Date.now() - (this.lastScan || 0) >= 5000) { this.lastScan = Date.now(); await this.scan(); }
+      for (const [id, job] of [...this.pending]) {
       if (!this.sessions.items.get(id)?.open) { this.pending.delete(id); this.baselines.delete(id); continue; }
       if (job.automatic && this.pending.get(id) === job && !this.busy.has(id)) await this.apply(id, false);
     } }
@@ -102,20 +107,20 @@ export class ToolRefresh {
     const session = this.sessions.get(id), job = this.pending.get(id);
     if (this.closed || !job || this.busy.has(id)) return { applied: false };
     if (!session.open || !session.process) { this.pending.delete(id); return { applied: false }; }
-    if (session.activity !== 'idle' || session.stopping || session.toolUpdating) return { applied: false, pending: true };
+    if (session.activity !== 'idle' || session.stopping || session.toolUpdating || session.messageActionBusy) return { applied: false, pending: true };
     this.busy.add(id);
     let completed = false;
     const proc = session.process, inputAt = session.lastInputAt;
     try {
-      if (!await this.ready(session) || session.process !== proc || session.lastInputAt !== inputAt || session.activity !== 'idle') {
-        job.automatic = false;
+      if (!await this.ready(session) || session.process !== proc || session.lastInputAt !== inputAt || session.activity !== 'idle' || session.messageActionBusy) {
+        job.automatic = this.silent(session);
         this.state(session, 'pending', 'Finish the current request, clear the draft and close native menus before applying.');
         return { applied: false, pending: true };
       }
       const desired = await this.snapshot(session), baseline = this.baselines.get(id);
       const changes = baseline ? changedMcps(baseline, desired) : null;
       if (changes?.length === 0) { this.pending.delete(id); session.toolRefresh = null; this.sessions.changed(session); return { applied: false }; }
-      if (this.closed || !session.open || session.process !== proc || session.lastInputAt !== inputAt || session.activity !== 'idle') return { applied: false, pending: true };
+      if (this.closed || !session.open || session.process !== proc || session.lastInputAt !== inputAt || session.activity !== 'idle' || session.messageActionBusy) return { applied: false, pending: true };
       this.state(session, 'applying', 'Applying native tools and skills to this conversation.');
       const liveChanges = changes?.map(key => ({ before: baseline[key], after: desired[key] }));
       const livePossible = session.agent === 'opencode' && session.liveMcpAvailable !== false && liveChanges?.length <= 32 && liveChanges?.every(({ before, after }) => before && !before.kind && !after?.kind && !before.plugin && !after?.plugin && (!after || before.definition === after.definition));
@@ -123,11 +128,11 @@ export class ToolRefresh {
         await this.live(session, liveChanges.map(({ before, after }) => ({ name: before.name, enabled: !!after?.enabled })));
         this.baselines.set(id, desired);
       } else {
-        if (!session.nativeId || !session.hasConversation) {
-          job.automatic = false; this.state(session, 'pending', 'No saved native conversation ID yet. Submit your first message or reconnect it before applying.');
+        if ((!session.nativeId || !session.hasConversation) && !this.silent(session)) {
+          job.automatic = this.silent(session); this.state(session, 'pending', 'No saved native conversation ID yet. Submit your first message or reconnect it before applying.');
           return { applied: false, pending: true };
         }
-        await this.restart(session, { process: proc, inputAt });
+        await this.restart(session, { process: proc, inputAt, ...(this.silent(session) && !session.hasConversation ? { freshTools: true } : {}) });
       }
       this.pending.delete(id); this.state(session, 'applied', livePossible ? 'MCP connections updated without restarting.' : 'CLI resumed the same conversation with current native configuration. Native permissions still apply.');
       // Catch writes made during an asynchronous refresh without losing them.

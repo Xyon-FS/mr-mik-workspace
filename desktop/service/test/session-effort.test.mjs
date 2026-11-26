@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Sessions } from '../sessions.mjs';

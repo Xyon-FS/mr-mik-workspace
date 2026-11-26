@@ -1,11 +1,12 @@
 // Real renderer + service snapshots, with a deterministic fullscreen CLI fixture.
+import { selectChatInNavigation } from './chat-navigation.mjs';
 // No live chats, agent logins or user settings are changed.
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const repo = await mkdtemp(path.join(root, '.cache/scroll-ui-'));
@@ -37,13 +38,13 @@ for (const [id, agent, fullscreen] of [['codex', 'codex', false], ['claude-class
 }
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const context = await browser.newContext({ viewport: { width: 640, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await context.newPage(); page.setDefaultTimeout(6000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto(service.urls.chats, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const select = async id => {
-    await page.locator(`[data-chat-tab="${id}"] [role=tab]`).click();
+    await selectChatInNavigation(page, id);
     await page.locator('.xterm-rows').filter({ hasText: id === 'claude-fullscreen' ? 'Claude fullscreen transcript' : 'History line' }).waitFor();
   };
   for (const id of ['codex', 'claude-classic']) {

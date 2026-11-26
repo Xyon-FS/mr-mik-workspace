@@ -1,5 +1,6 @@
 export const codexPermissionsOptions = [
-  { value: 'native', label: 'Native CLI configuration' },
-  { value: 'full-access', label: 'Full access · ask for approval' },
-  { value: 'bypass', label: 'Bypass · no approvals' },
+  { value: 'ask', label: 'Ask for approval' },
+  { value: 'auto-review', label: 'Approve for me' },
+  { value: 'full-access', label: 'Full access · user review' },
+  { value: 'bypass', label: 'Full access (bypass)' },
 ]

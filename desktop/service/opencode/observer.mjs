@@ -2,6 +2,7 @@
 // Persist IDs/activity and at most a short final-answer History excerpt.
 import { writeFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
+import { connectionIssue } from '../connection-errors.mjs';
 
 export const validSessionId = value => typeof value === 'string' && /^ses[a-zA-Z0-9_-]{1,160}$/.test(value);
 const sameDirectory = (a, b) => typeof a === 'string' && typeof b === 'string' &&
@@ -36,11 +37,11 @@ export function createObserver({ directory, nativeId, forkParent, chatId, launch
       // OpenCode 1.18.34 emits another busy status after the final assistant
       // message. It is still the same turn; do not erase its completion ID.
       if (state.activity !== 'working') finalMessage = null;
-      emit({ activity: 'working', hasConversation: true });
+      emit({ activity: 'working', hasConversation: true, connectionIssue: null });
     } else if (event.type === 'message.updated' && info?.role === 'user') {
       emit({ hasConversation: true });
     } else if (event.type === 'message.updated' && info?.role === 'assistant' && info.time?.completed) {
-      if (info.error) { finalMessage = null; emit({ activity: 'idle' }); }
+      if (info.error) { finalMessage = null; emit({ activity: 'idle', connectionIssue: connectionIssue(info.error) }); }
       else if (info.finish && !['tool-calls', 'unknown'].includes(info.finish)) finalMessage = info.id;
     } else if (event.type === 'session.idle' || event.type === 'session.status' && data.status?.type === 'idle') {
       if (finalMessage && state.completion !== finalMessage) {
@@ -53,7 +54,7 @@ export function createObserver({ directory, nativeId, forkParent, chatId, launch
         }).catch(() => {});
       }
       else if (state.activity === 'working') emit({ activity: 'idle' });
-    } else if (event.type === 'session.error') { finalMessage = null; emit({ activity: 'idle' }); }
+    } else if (event.type === 'session.error') { finalMessage = null; emit({ activity: 'idle', connectionIssue: connectionIssue(data.error) }); }
     else if (['permission.asked', 'question.asked'].includes(event.type)) emit({ activity: 'waiting' });
     else if (['permission.replied', 'question.replied', 'question.rejected'].includes(event.type)) emit({ activity: 'working' });
   };

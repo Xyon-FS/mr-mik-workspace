@@ -15,10 +15,11 @@ export function installedIde(env = process.env) {
   return null;
 }
 
-export async function openIde(root, env = process.env) {
+export async function openIde(target, { line, column, env = process.env, spawnChild = spawn } = {}) {
   const ide = installedIde(env);
-  if (!ide) throw Object.assign(new Error('No supported IDE installation was found. Open the project folder in your editor manually.'), { status: 400 });
-  const child = spawn(ide.file, [root], { detached: true, windowsHide: true, stdio: 'ignore' });
+  if (!ide) throw Object.assign(new Error('No supported IDE installation was found. Install Visual Studio Code or Cursor, or open the file in your editor manually.'), { status: 400 });
+  const args = line ? ['--goto', `${target}:${line}${column ? `:${column}` : ''}`] : [target];
+  const child = spawnChild(ide.file, args, { detached: true, windowsHide: true, stdio: 'ignore' });
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', () => reject(Object.assign(new Error('The IDE could not be opened.'), { status: 400 }))); });
   child.unref();
   return { requested: true, ide: ide.name };

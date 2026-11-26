@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { Projects } from '../projects.mjs';
@@ -40,32 +41,24 @@ test('destination prepares no content; native file is registered once without tr
     assert.ok(!bridgeTools.some(tool => tool.name === name));
     await assert.rejects(f.bridge.call(f.token, name, {}), /Unsupported/);
   }
+  const libraryTarget = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'knowledge', title: 'Long bird study' });
+  await writeFile(libraryTarget.path, '# Birds\n' + 'observation\n'.repeat(3000));
+  const item = await f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: libraryTarget.destinationId });
+  const existingLibrary = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'knowledge', id: item.id });
+  assert.equal(existingLibrary.path, libraryTarget.path); assert.ok(!('text' in existingLibrary));
+  await writeFile(existingLibrary.path, (await readFile(existingLibrary.path, 'utf8')).replace('# Birds', '# Updated birds'));
+  await f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: existingLibrary.destinationId });
+  assert.match(await readFile(existingLibrary.path, 'utf8'), /^# Updated birds/);
   const other = f.bridge.issue('other', null);
   await assert.rejects(f.bridge.call(other, 'mrmak_register_hub_file', { destinationId: target.destinationId }), /this chat/);
+  await assert.rejects(f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'card', path: '../outside.html' }), /registered/);
+  const reassigned = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'card', title: 'New bird notes' });
+  await writeFile(reassigned.path, '<html>Birds</html>');
+  await f.projects.editWorkspace(registry => { registry.entities[0].projectId = 'another'; });
+  await assert.rejects(f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: reassigned.destinationId }), /association changed/);
+  assert.equal(await readFile(reassigned.path, 'utf8'), '<html>Birds</html>');
   f.bridge.revoke('chat');
   await assert.rejects(f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: target.destinationId }), /expired/);
-});
-
-test('large library files are authored natively and registered without the old replacement limit', async () => {
-  const f = await fixture();
-  const target = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'knowledge', title: 'Long bird study' });
-  await writeFile(target.path, '# Birds\n' + 'observation\n'.repeat(3000));
-  const item = await f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: target.destinationId });
-  const existing = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'knowledge', id: item.id });
-  assert.equal(existing.path, target.path); assert.ok(!('text' in existing));
-  await writeFile(existing.path, (await readFile(existing.path, 'utf8')).replace('# Birds', '# Updated birds'));
-  await f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: existing.destinationId });
-  assert.match(await readFile(existing.path, 'utf8'), /^# Updated birds/);
-});
-
-test('registration rejects traversal and ownership changes without editing file contents', async () => {
-  const f = await fixture();
-  await assert.rejects(f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'card', path: '../outside.html' }), /registered/);
-  const target = await f.bridge.call(f.token, 'mrmak_hub_destination', { kind: 'card', title: 'Birds' });
-  await writeFile(target.path, '<html>Birds</html>');
-  await f.projects.editWorkspace(registry => { registry.entities[0].projectId = 'another'; });
-  await assert.rejects(f.bridge.call(f.token, 'mrmak_register_hub_file', { destinationId: target.destinationId }), /association changed/);
-  assert.equal(await readFile(target.path, 'utf8'), '<html>Birds</html>');
 });
 
 test('additional Codex roots never force read-only or custom profiles into workspace-write', async () => {

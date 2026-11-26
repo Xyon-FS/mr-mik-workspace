@@ -1,10 +1,11 @@
+import { testBrowserEnvironment } from './fixtures.mjs';
 // Isolated production UI: no real agent, account, Hub, or native picker.
 import assert from 'node:assert/strict';
-import { chromium } from '@playwright/test';
-import { mkdtemp, mkdir, writeFile, cp } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
+import { mkdir, writeFile, cp } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 await cp(path.join(root, 'public/assets'), path.join(root, 'dist/assets'), { recursive: true });
 const repo = await mkdtemp(path.join(root, '.cache/snapshot-ui-'));
@@ -12,7 +13,7 @@ await mkdir(path.join(repo, 'workspace')); await writeFile(path.join(repo, 'work
 const service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: path.join(repo, 'fake-home'), env: {} } });
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/files/pick', async route => {
@@ -20,14 +21,18 @@ try {
     await page.evaluate(requestId => window.dispatchEvent(new CustomEvent('mrmak-picked-files', { detail: { requestId, paths: ['C:\\FixtureSnapshot'] } })), requestId);
   });
   await page.route('**/api/workspace/snapshot/preview', route => route.fulfill({ json: { path: 'C:\\FixtureSnapshot', metadataConflict: true, manifest: { project: { id: 'fixture', name: 'Fixture workspace', repositories: [{ id: 'primary', name: 'Unity' }] }, cards: [{}], resources: [{}] }, files: [{ name: 'workspace/card/index.html', status: 'conflict' }] } }));
-  let submitted;
-  await page.route('**/api/workspace/snapshot/import', route => { submitted = route.request().postDataJSON(); return route.fulfill({ json: { backup: 'Fixture backup' } }); });
+  let submitted, importAttempts = 0, releaseImport;
+  await page.route('**/api/workspace/snapshot/import', async route => { submitted = route.request().postDataJSON(); if (++importAttempts === 1) return route.fulfill({status:409,json:{error:'Synthetic snapshot changed'}}); await new Promise(resolve => { releaseImport = resolve }); return route.fulfill({ json: { backup: 'Fixture backup' } }); });
   await page.goto(service.urls.workspace, { waitUntil: 'domcontentloaded' });
   await page.locator('.mak-logo').first().waitFor();
   await page.waitForFunction(() => Array.from(document.querySelectorAll('img.mak-logo')).every(image => image.complete && image.naturalWidth > 0));
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Workspace snapshots settings', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: 'Export workspace…', exact: true }).isDisabled(), true);
   await page.getByRole('button', { name: 'Import snapshot…', exact: true }).click();
+  const snapshotDialog=page.getByRole('dialog',{name:'Import workspace snapshot',exact:true});
+  assert.ok((await snapshotDialog.boundingBox()).width<=401);
+  assert.equal(await snapshotDialog.locator(':scope > .portable-preview').evaluate(el=>getComputedStyle(el).display),'block');
   const importButton = page.getByRole('button', { name: 'Import with backup', exact: true }); await importButton.waitFor();
   assert.equal(await importButton.isDisabled(), true);
   await page.locator('label.setting-toggle').filter({ hasText: 'Replace workspace metadata' }).getByRole('checkbox').check();
@@ -35,7 +40,20 @@ try {
   await page.locator('label.setting-toggle').filter({ hasText: 'Replace workspace/card/index.html' }).getByRole('checkbox').check();
   assert.equal(await importButton.isDisabled(), false);
   await page.screenshot({ path: path.join(repo, 'snapshot-preview.png') });
+  assert.ok(await snapshotDialog.locator('label.setting-toggle').evaluateAll(rows=>rows.every(row=>row.querySelector('input').getBoundingClientRect().width<=20&&row.querySelector('span').getBoundingClientRect().width>150)));
+  await snapshotDialog.evaluate(el=>{el.scrollTop=0});
+  await page.screenshot({ path: path.join(root, '.cache/settings-implemented-snapshot.png') });
   await importButton.click();
+  await snapshotDialog.getByRole('alert').filter({hasText:'Synthetic snapshot changed'}).waitFor();
+  assert.equal(await snapshotDialog.getByRole('alert').evaluate(el=>getComputedStyle(el).color),'rgb(223, 157, 167)');
+  await page.screenshot({path:path.join(root,'.cache/settings-review-snapshot-error.png')});
+  await importButton.click();
+  await expect.poll(() => typeof releaseImport).toBe('function');
+  await page.waitForFunction(() => document.querySelector('dialog[open] button')?.disabled);
+  assert.equal(await snapshotDialog.getByRole('button',{name:'Cancel',exact:true}).isDisabled(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await snapshotDialog.isVisible(),true,'Busy snapshot retains its modal');
+  releaseImport();
   await page.getByRole('status').filter({ hasText: 'Workspace imported' }).waitFor();
   assert.deepEqual(submitted.replaceFiles, ['workspace/card/index.html']); assert.equal(submitted.replaceMetadata, true);
   assert.deepEqual(errors, []);

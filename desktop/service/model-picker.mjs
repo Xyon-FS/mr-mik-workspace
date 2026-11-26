@@ -7,7 +7,19 @@ export function parseModelPicker(screen) {
   if (start < 0) return null;
   const end = lines.findIndex((line, index) => index > start && /enter select\s*·\s*esc back/i.test(line));
   if (end < 0 || end - start > 24) return null;
-  const options = lines.slice(start + 1, end).map(line => /^\s*[›>]?\s*([1-9])\.\s+(GPT-[\d.]+(?:-[A-Za-z]+)?)(?:\s+\((current|default)\))?/i.exec(line)).filter(Boolean).map(match => ({ key: match[1], label: match[2], slug: match[2].toLowerCase(), current: match[3] === 'current' }));
+  const rows = lines.slice(start + 1, end).map(line => /^\s*[›>]?\s*(\d{1,3})\.\s+(.+)$/.exec(line)).filter(Boolean);
+  const options = rows.map(row => {
+    // Native display names can contain spaces (e.g. GPT-6.1 Terra). Columns
+    // use two or more spaces; consuming only the first word loses the model.
+    const title = row[2].split(/\s{2,}/)[0].trim();
+    const marker = /\s+\((current|default)\)$/i.exec(title);
+    const label = marker ? title.slice(0, marker.index) : title;
+    if (!/^[1-9]$/.test(row[1]) || label.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*(?: [A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(label)) return null;
+    return { key: row[1], label, slug: label.toLowerCase().replace(/\s+/g, '-'), current: marker?.[1].toLowerCase() === 'current' };
+  });
+  // An unknown native row must not silently disappear from an otherwise valid
+  // application picker. Leave that menu to the native terminal instead.
+  if (options.some(item => !item)) return null;
   if (options.length < 2 || new Set(options.map(item => item.key)).size !== options.length || new Set(options.map(item => item.slug)).size !== options.length) return null;
   return options;
 }
@@ -79,6 +91,7 @@ export class CodexModelPicker {
       const confirmed = await this.until(id, value => recent(value).some(line => line.toLowerCase().includes(`model changed to ${slug} `)) ? true : null);
       if (!confirmed) throw new Error('Selection sent, but Codex did not confirm it. Check the terminal before continuing.');
       const effortValue = { 'Extra high': 'xhigh' }[selected.label] || selected.label.toLowerCase();
+      session.cliModelLabel = target.label;
       session.effort = effortValue;
       this.sessions.changed?.(session);
       await this.sessions.persist?.();

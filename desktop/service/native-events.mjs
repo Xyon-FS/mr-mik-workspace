@@ -3,17 +3,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import { codexMetadata } from './codex-metadata.mjs';
+import { connectionIssue } from './connection-errors.mjs';
+
+export function nativeConnectionIssue(record, agent) {
+  if (agent === 'codex' && record?.type === 'event_msg' && record.payload?.type === 'error') return connectionIssue(record.payload.error || record.payload);
+  if (agent === 'claude' && !record?.isSidechain && record?.type === 'system' && record.subtype === 'api_error') return connectionIssue(record.error || { message: record.message, status: record.statusCode });
+  return null;
+}
 
 export function completedTurn(record, agent) {
   if (agent === 'codex' && record.type === 'event_msg' && record.payload?.type === 'task_complete') return { kind: 'turn-completed', id: record.payload.turn_id, text: 'The agent finished its turn. Review the result.', preview: String(record.payload.last_agent_message || '').slice(-350) };
   // Claude writes thinking and text as separate records with the same message ID
   // and stop reason. Only the actual final answer creates a completion notice.
   if (agent === 'claude' && !record.isSidechain && record.type === 'assistant' && record.message?.stop_reason === 'end_turn' && record.message.content?.some(item => item.type === 'text')) return { kind: 'turn-completed', id: record.message.id, text: 'The agent finished its turn. Review the result.', preview: record.message.content.filter(item => item.type === 'text').map(item => item.text).join('\n').slice(-350) };
-  if (agent === 'claude' && !record.isSidechain && record.type === 'system' && record.subtype === 'api_error') return { kind: 'attention', text: 'The agent reported an API error.' };
+  if (agent === 'claude' && !record.isSidechain && record.type === 'system' && record.subtype === 'api_error') { const issue = nativeConnectionIssue(record, agent); return { kind: 'attention', text: issue.message, connectionIssue: issue }; }
   return null;
 }
 
 export function nativeActivity(record, agent) {
+  if (agent === 'codex') { const issue = nativeConnectionIssue(record, agent); if (issue) return { kind: 'attention', text: issue.message, connectionIssue: issue }; }
   const completed = completedTurn(record, agent);
   if (completed) return completed;
   if (agent === 'codex' && record.type === 'event_msg') {
@@ -23,6 +31,12 @@ export function nativeActivity(record, agent) {
   if (agent === 'claude' && !record.isSidechain) {
     if (record.type === 'user' && !record.isMeta) {
       const content = record.message?.content;
+      // Local slash-command records have no assistant turn/end_turn. Treating
+      // /model or /effort and their stdout as prompts leaves the UI working
+      // forever. Ignore complete native envelopes, not actual tool results or
+      // ordinary messages that merely mention a command.
+      const local = value => typeof value === 'string' && /^(?:<command-name>[^<\r\n]+<\/command-name>\s*<command-message>[\s\S]*?<\/command-message>\s*<command-args>[\s\S]*?<\/command-args>|<local-command-(stdout|stderr|caveat)>[\s\S]*<\/local-command-\1>)$/.test(value.trim());
+      if (local(content) || Array.isArray(content) && content.length > 0 && content.every(item => item.type === 'text' && local(item.text))) return null;
       const interrupted = value => typeof value === 'string' && value.startsWith('[Request interrupted by user');
       if (interrupted(content) || Array.isArray(content) && content.some(item => item.type === 'text' && interrupted(item.text))) return { kind: 'turn-interrupted' };
       // Tool results also confirm ongoing work; file snapshots and metadata do not.
@@ -63,8 +77,8 @@ export function tailNativeFile(file, agent, onEvent, from = 0) {
   return () => { closed = true; clearInterval(timer); };
 }
 
-export async function claudeTranscript(cwd, nativeId, { search = false } = {}) {
-  const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+export async function claudeTranscript(cwd, nativeId, { search = false, home } = {}) {
+  const root = path.join(home || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
   if (search) {
     if (!/^[a-f0-9-]{36}$/i.test(nativeId || '')) throw new Error('Invalid Claude conversation ID.');
     const matches = [];
@@ -83,9 +97,8 @@ export async function claudeTranscript(cwd, nativeId, { search = false } = {}) {
   return path.join(root, folder, `${nativeId}.jsonl`);
 }
 
-export async function codexTranscript(nativeId, { strict = false } = {}) {
+export async function codexTranscript(nativeId, { strict = false, home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex') } = {}) {
   if (!/^[a-f0-9-]{36}$/i.test(nativeId)) return null;
-  const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   const pending = [path.join(home, 'sessions')];
   const matches = [];
   while (pending.length) {
@@ -110,8 +123,7 @@ export async function codexTranscript(nativeId, { strict = false } = {}) {
 // Recover a managed chat whose CLI ID was not captured before its tab closed.
 // Exact originator identity wins; the legacy fallback requires one unclaimed
 // CLI rollout in the same folder and a narrow creation-time window.
-export async function codexTranscriptForChat({ id, cwd, createdAt, claimedIds = [], allowLegacy = false }) {
-  const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+export async function codexTranscriptForChat({ id, cwd, createdAt, claimedIds = [], allowLegacy = false, home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex') }) {
   const pending = [path.join(home, 'sessions')];
   const claimed = new Set(claimedIds.filter(Boolean).map(value => value.toLowerCase()));
   const owned = [], legacy = [];

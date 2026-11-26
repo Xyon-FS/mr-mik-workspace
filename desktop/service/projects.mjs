@@ -41,7 +41,8 @@ export class Projects {
         const repositoryPath = saved.repositories?.[item.id] || (item.id === 'primary' ? saved.repositoryPath : null) || null;
         return { id: item.id, name: item.id === 'primary' && item.name === 'Repository' ? 'Main project' : item.name, repositoryPath, available: !!repositoryPath && !!(await stat(repositoryPath).catch(() => null))?.isDirectory() };
       }));
-      return { ...project, repositories, repositoryPath: repositories[0]?.repositoryPath || null, available: !repositories.length || repositories.some(item => item.available) };
+      const { iconDataUrl, ...publicProject } = project; void iconDataUrl;
+      return { ...publicProject, repositories, repositoryPath: repositories[0]?.repositoryPath || null, available: !repositories.length || repositories.some(item => item.available) };
     }));
   }
   async get(id) {
@@ -194,6 +195,7 @@ export class Projects {
       // Retain libraries as global content rather than orphaning their scope.
       for (const resource of workspace.resources || []) if (resource.projectId === id) resource.projectId = null;
       const inbox = JSON.parse(JSON.stringify(previous.inbox));
+      inbox.resources ||= [];
       for (const item of inbox.resources || []) if (item.projectId === id) item.projectId = null;
       let committing = false;
       try {
@@ -322,13 +324,16 @@ export class Projects {
       await saveJson(this.workspacePath, registry); this.changed(); return result;
     });
   }
-  async assignCard(id, projectId) {
-    if (projectId) await this.get(projectId);
-    return this.editWorkspace(registry => {
+  async assignCard(id, projectId, repositoryId) {
+    return this.editWorkspace(async registry => {
+      const project = projectId ? await this.get(projectId) : null;
+      if (repositoryId && !project?.repositories.some(item => item.id === repositoryId)) throw invalid('Repository is not linked to this project.');
       const card = registry.entities.find(item => item.id === id);
       if (!card) throw invalid('Card was not found.');
       if (card.projectId !== (projectId || null)) card.repositoryId = null;
-      card.projectId = projectId || null; return card;
+      card.projectId = projectId || null;
+      if (repositoryId !== undefined) card.repositoryId = repositoryId || null;
+      return card;
     });
   }
   async assignCardRepository(id, repositoryId) {
@@ -456,11 +461,11 @@ export class Projects {
       return artifact;
     });
   }
-  async artifactLocation(projectId, id, relative, repositoryId) {
-    const card = (await document(this.workspacePath, { entities: [] })).entities.find(item => item.id === id && item.projectId === projectId);
-    const artifact = card?.artifacts?.find(item => item.projectId === projectId && item.path === relative && (!repositoryId || (item.repositoryId || 'primary') === repositoryId));
+  async artifactLocation(projectId, id, relative, repositoryId, scope) {
+    const card = (await document(this.workspacePath, { entities: [] })).entities.find(item => item.id === id && (item.projectId || null) === (projectId || null));
+    const artifact = card?.artifacts?.find(item => (item.projectId || null) === (projectId || null) && item.path === relative && (!scope || (item.scope || 'repository') === scope) && (!repositoryId || (item.repositoryId || 'primary') === repositoryId));
     if (!artifact || privatePath(relative)) throw invalid('Artifact is not linked to this project card.');
-    const root = await this.root(projectId, artifact.repositoryId), actual = await realpath(path.resolve(root, relative));
+    const root = artifact.scope === 'hub' ? await realpath(this.repo) : await this.root(projectId, artifact.repositoryId), actual = await realpath(path.resolve(root, relative));
     if (!within(root, actual) || !(await stat(actual)).isFile()) throw invalid('Artifact leaves this project.');
     return actual;
   }

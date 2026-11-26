@@ -3,8 +3,11 @@
 use std::{fs, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, Command, Stdio}, sync::Mutex};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 use tauri_plugin_window_state::StateFlags;
+use tauri_plugin_notification::NotificationExt;
 mod external_links;
 mod launch_profile;
+mod hub_selection;
+mod window_layout;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
@@ -112,6 +115,9 @@ fn valid_hub(root: &std::path::Path) -> bool {
 }
 
 fn create_hub(app: &tauri::AppHandle, root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Updates/onboarding may select a ready Hub. Reuse it without touching any
+    // content, settings or customized instructions, even if the template is absent.
+    if valid_hub(root) { return Ok(()); }
     let resource = app.path().resource_dir()?;
     let resource = PathBuf::from(resource.to_string_lossy().trim_start_matches(r"\\?\"));
     let mut runtime = resource.join("runtime");
@@ -119,7 +125,7 @@ fn create_hub(app: &tauri::AppHandle, root: &std::path::Path) -> Result<(), Box<
         runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().ok_or("Source directory unavailable")?.join(".cache/desktop-runtime");
     }
     let result = hidden(&mut Command::new(runtime.join("node.exe")))
-        .arg(runtime.join("service/create-hub.mjs")).arg(runtime.join("hub-template")).arg(root).output()?;
+        .arg(runtime.join("service/create-hub.mjs")).arg(runtime.join("hub-template")).arg(root).arg("--reuse-existing").output()?;
     if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).trim().to_string().into()); }
     if !valid_hub(root) { return Err("The new Hub could not be initialized. No existing Hub was changed.".into()); }
     Ok(())
@@ -133,6 +139,11 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
     let current = std::env::current_dir().ok().filter(|root| root.join("workspace/workspace.json").is_file());
     let portable = std::env::current_exe().ok().and_then(|exe| launch_profile::portable_root(&exe));
     let mut selected = supplied.or(saved).or_else(|| portable.as_deref().map(launch_profile::portable_hub)).or(current);
+    // Only recover the default when no explicit, saved or portable selection
+    // exists. An unavailable saved/explicit Hub must never silently redirect.
+    if selected.is_none() {
+        selected = hub_selection::existing_hub(&app.path().document_dir()?.join("Mr. Mik/MyHub"), valid_hub);
+    }
     loop {
         if let Some(ref root) = selected {
             if valid_hub(root) {
@@ -153,22 +164,23 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
             rfd::MessageDialogResult::Custom(label) if label == "Create a new Hub" => {
                 let default = portable.as_deref().map(launch_profile::portable_hub).unwrap_or(app.path().document_dir()?.join("Mr. Mik/MyHub"));
                 let location = rfd::MessageDialog::new().set_title("Create your Hub")
-                    .set_description(format!("Create MyHub at:\n{}\n\nOr choose a parent folder: a new MyHub folder will be created inside it. Existing folders are never overwritten.", default.display()))
+                    .set_description(format!("Use MyHub at:\n{}\n\nAn existing valid Hub will be opened unchanged. Otherwise a new Hub will be created. You can also choose a Hub or its parent folder. Existing unrelated folders are never overwritten.", default.display()))
                     .set_buttons(rfd::MessageButtons::YesNoCancelCustom("Use default location".into(), "Choose another location".into(), "Cancel".into())).show();
                 let destination = match location {
                     rfd::MessageDialogResult::Custom(label) if label == "Use default location" => Some(default),
-                    rfd::MessageDialogResult::Custom(label) if label == "Choose another location" => rfd::FileDialog::new().set_title("Choose a parent folder for a NEW MyHub").pick_folder().map(|folder| folder.join("MyHub")),
+                    rfd::MessageDialogResult::Custom(label) if label == "Choose another location" => rfd::FileDialog::new().set_title("Choose a Hub or a parent folder for MyHub").pick_folder().map(|folder| hub_selection::creation_destination(&folder, valid_hub)),
                     _ => None,
                 };
                 if let Some(root) = destination {
                     match create_hub(app, &root) {
                         Ok(()) => selected = Some(root),
-                        Err(error) => { rfd::MessageDialog::new().set_title("Hub not created").set_level(rfd::MessageLevel::Error).set_description(error.to_string()).show(); }
+                        Err(error) => { rfd::MessageDialog::new().set_title("Hub could not be opened or created").set_level(rfd::MessageLevel::Error).set_description(error.to_string()).show(); }
                     }
                 }
             },
             rfd::MessageDialogResult::Custom(label) if label == "Open an existing Hub" => {
                 selected = rfd::FileDialog::new().set_title("Open your Hub folder (not a linked project)").pick_folder();
+                selected = selected.map(|root| hub_selection::existing_hub(&root, valid_hub).unwrap_or(root));
                 if let Some(ref root) = selected {
                     if !valid_hub(root) {
                         rfd::MessageDialog::new().set_title("This is not a Hub").set_description("Choose an existing Mr. Mik or Mr. Mak Hub containing workspace/workspace.json. To start with a new folder, choose Create a new Hub instead.").show();
@@ -180,7 +192,7 @@ fn repo_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Erro
     }
 }
 
-fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str, chat_percent: f64) -> Result<(), Box<dyn std::error::Error>> {
     let (mut x, mut y, mut width, mut height) = (0.0, 0.0, 1440.0, 900.0);
     if let Some(monitor) = app.primary_monitor()? {
         let scale = monitor.scale_factor();
@@ -188,7 +200,7 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
         x = area.position.x as f64 / scale; y = area.position.y as f64 / scale;
         width = area.size.width as f64 / scale; height = area.size.height as f64 / scale;
     }
-    let chat_width = (width * 0.27).clamp(360.0, 560.0);
+    let chat_width = window_layout::chat_width(width, chat_percent);
     let workspace_window = WebviewWindowBuilder::new(app, "workspace", WebviewUrl::External(workspace.parse()?))
         .on_new_window(|url, _| external_links::open_popup(url))
         .disable_drag_drop_handler().visible(false)
@@ -226,6 +238,14 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close(); let _ = handle.hide();
+                if handle.label() == "workspace" {
+                    if let Some(child) = handle.app_handle().state::<Service>().0.lock().unwrap().as_mut() {
+                        if let Some(stdin) = child.stdin.as_mut() {
+                            let event = serde_json::json!({ "type": "workspace-hidden" });
+                            let _ = writeln!(stdin, "{event}");
+                        }
+                    }
+                }
             }
         });
         if selected.is_none() || selected == Some(window.label()) { window.show()?; }
@@ -235,7 +255,7 @@ fn make_windows(app: &tauri::AppHandle, workspace: &str, chats: &str) -> Result<
     Ok(())
 }
 
-fn restore_default_layout(app: &tauri::AppHandle, source: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_default_layout(app: &tauri::AppHandle, source: &str, chat_percent: f64) -> Result<(), Box<dyn std::error::Error>> {
     let monitor = app.get_webview_window(source).and_then(|window| window.current_monitor().ok().flatten())
         .or(app.primary_monitor()?);
     let Some(monitor) = monitor else { return Err("No monitor available for window layout".into()) };
@@ -246,7 +266,7 @@ fn restore_default_layout(app: &tauri::AppHandle, source: &str) -> Result<(), Bo
     let width = area.size.width as f64 / scale;
     let height = area.size.height as f64 / scale;
     // Same split as first launch, bounded by the existing window minimum sizes.
-    let chat_width = (width * 0.27).clamp(360.0, 560.0);
+    let chat_width = window_layout::chat_width(width, chat_percent);
     // Adjacent outer bounds: no artificial gutter between app windows.
     for (label, left, outer_width) in [("chats", x + 2.0, chat_width), ("workspace", x + chat_width + 2.0, width - chat_width - 4.0)] {
         let window = app.get_webview_window(label).ok_or("Both app windows must exist")?;
@@ -295,6 +315,7 @@ fn main() {
             else { reveal(app, "workspace"); reveal(app, "chats"); }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED).build())
+        .plugin(tauri_plugin_notification::init())
         .manage(Service(Mutex::new(None)))
         .setup(|app| {
             if std::env::args().any(|arg| arg == "--quit") { app.handle().exit(0); return Ok(()); }
@@ -339,17 +360,28 @@ fn main() {
                             let handle = app_handle.clone();
                             let workspace = event["workspace"].as_str().unwrap_or("").to_owned();
                             let chats = event["chats"].as_str().unwrap_or("").to_owned();
+                            let chat_percent = event["chatWidthPercent"].as_f64().unwrap_or(window_layout::DEFAULT_CHAT_PERCENT);
                             let _ = app_handle.run_on_main_thread(move || {
-                                if let Err(error) = make_windows(&handle, &workspace, &chats) {
+                                if let Err(error) = make_windows(&handle, &workspace, &chats, chat_percent) {
                                     rfd::MessageDialog::new().set_title("Mr. Mik could not open").set_description(error.to_string()).show(); handle.exit(1);
                                 }
                             });
+                        },
+                        "completion-notification" => {
+                            if let Some(window) = app_handle.get_webview_window("chats") {
+                                if event["selected"].as_bool().unwrap_or(false) && window.is_focused().unwrap_or(false) { continue; }
+                                let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+                            }
+                            let name = event["name"].as_str().unwrap_or("Agent chat");
+                            if let Err(error) = app_handle.notification().builder().title("Mr. Mik — request completed").body(format!("{name} has finished. Open Chats to read the response.")).show() {
+                                eprintln!("Completion notification unavailable: {error}");
+                            }
                         },
                         "window" => {
                             let label = event["window"].as_str().unwrap_or("");
                             if let Some(window) = app_handle.get_webview_window(label) {
                                 match event["action"].as_str().unwrap_or("") {
-                                    "layout" => { if let Err(error) = restore_default_layout(&app_handle, label) { eprintln!("Window layout could not be restored: {error}"); } },
+                                    "layout" => { if let Err(error) = restore_default_layout(&app_handle, label, event["chatWidthPercent"].as_f64().unwrap_or(window_layout::DEFAULT_CHAT_PERCENT)) { eprintln!("Window layout could not be restored: {error}"); } },
                                     "show" => reveal(&app_handle, label),
                                     "hide" => { let _ = window.hide(); },
                                     "minimize" => { let _ = window.minimize(); },
@@ -462,7 +494,10 @@ fn main() {
                 if let Some(shortcut) = app.try_state::<win_key::WinKeyShortcut>() { shortcut.shutdown(); }
                 if let Some(mut child) = app.state::<Service>().0.lock().unwrap().take() {
                     if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(b"quit\n"); }
-                    for _ in 0..80 { if child.try_wait().ok().flatten().is_some() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
+                    // Outlast the service's 30-second cleanup deadline. Native
+                    // writers must exit and release their leases before the job
+                    // is destroyed; an equal deadline races that final cleanup.
+                    for _ in 0..350 { if child.try_wait().ok().flatten().is_some() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
                     let _ = child.kill(); let _ = child.wait();
                 }
                 #[cfg(windows)]

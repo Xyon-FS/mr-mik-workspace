@@ -1,0 +1,1 @@
+export type ComposerContext = { id: string; type: 'quote'; sourceUrl?: string; inspection?: boolean; itemId: string; role: 'user' | 'assistant'; text: string } | { id: string; type: 'skill'; name: string; path: string; invocation?: 'native' }

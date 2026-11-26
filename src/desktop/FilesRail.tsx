@@ -1,25 +1,55 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
 import { api, desktopState, onServiceEvent, reportError, setPreview, uploadFile, useDesktop, windowAction } from './client'
 import type { FileEntry, Folder, LibraryResource, Preview } from './types'
-import { Icon } from './Icons'
+import { AgentLogo, Icon } from './Icons'
 import MarkdownDocument from '../components/MarkdownDocument'
 import WorkspaceSettings from './WorkspaceSettings'
 import McpPanel from './McpPanel'
 import { ZoomImage } from '../components/ImagePreview'
 import ProjectsPanel from './ProjectsPanel'
+import WorkspaceDialog from './WorkspaceDialog'
+import ProjectIcon from './ProjectIcon'
 import HubTree from './HubTree'
 import HubSkills from './HubSkills'
 import NativeSkills from './NativeSkills'
 import DarkSelect from './DarkSelect'
 import SkillCreate from './SkillCreate'
 import HelpSite from './HelpSite'
+import { usePreviewViewport } from './previewMemory'
+import { downloadPreview } from './previewDownloads'
+import { downloadImage } from '../lib/download'
+import { PreviewButton, PreviewOptions } from './PreviewChrome'
+import './preview-consistency.css'
+import './skills-panel.css'
+
+const RichPreview = lazy(() => import('./RichPreview'))
 
 export function FilePreview({ file }: { file: Preview }) {
-  return <div className="file-preview"><header><span><Icon name="files" size={16} /><strong title={file.name}>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB</small></span><div><button className="desk-icon" onClick={() => api('/reveal', { path: file.path }).catch(reportError)} title="Show in Explorer"><Icon name="external" size={17} /></button><button className="desk-icon" onClick={() => setPreview(null)} title="Back to Workspace" aria-label="Close file preview"><Icon name="close" size={18} /></button></div></header><div className={`file-preview-body ${file.kind}`}>
-    {file.kind === 'text' && (/\.md$/i.test(file.name) ? <MarkdownDocument key={`${file.path}:${file.revision}`} file={file} /> : <pre>{file.text}</pre>)}
+  const viewport = usePreviewViewport(`workspace:${file.identity || file.path}`), root = useRef<HTMLDivElement>(null)
+  const [notice, setNotice] = useState('')
+  const [fullscreen, setFullscreen] = useState(false)
+  useEffect(() => {
+    const changed = () => setFullscreen(document.fullscreenElement === root.current)
+    document.addEventListener('fullscreenchange', changed)
+    return () => document.removeEventListener('fullscreenchange', changed)
+  }, [])
+  const structuredLanguage = file.kind === 'text' && (file.text?.length || 0) <= 200000 ? /\.(json|csv|tsv)$/i.exec(file.name)?.[1].toLowerCase() : undefined
+  const download = () => { if (file.url) void downloadImage(file.url, file.name).catch(cause => setNotice(cause.message)); else if (file.text != null) downloadPreview(file.text, file.name) }
+  return <div ref={root} data-preview-identity={file.identity || file.path} className="file-preview preview-surface"><header><span><Icon name="files" size={15} /><strong title={file.name}>{file.name}</strong><small>{Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB</small></span><div>
+    {file.source && <PreviewButton label="Source chat" icon="chats" onClick={() => { void api(`/sessions/${file.source!.sessionId}/focus`, {}).catch(reportError) }} />}
+    <PreviewButton label={fullscreen ? 'Exit fullscreen' : 'Expand'} icon="layout" aria-pressed={file.kind === 'image' ? undefined : fullscreen} title={file.kind === 'image' ? 'Expand image' : fullscreen ? 'Exit fullscreen' : 'Fullscreen preview'} onClick={() => { if (file.kind === 'image') { root.current?.querySelector<HTMLAnchorElement>('.file-preview-body.image a[aria-label="Expand image"]')?.click(); return } if (document.fullscreenElement === root.current) void document.exitFullscreen().catch(() => setNotice('Could not exit fullscreen. Press Escape to return.')); else if (root.current?.requestFullscreen) void root.current.requestFullscreen().catch(() => setNotice('Fullscreen is unavailable. The preview remains open.')) }} />
+    {(file.kind !== 'rich' || file.path) && <PreviewOptions label="File preview options">
+      {file.kind !== 'rich' && <>{file.kind === 'text' && <button type="button" onClick={() => { void navigator.clipboard.writeText(file.text || '').then(() => setNotice('Copied'), () => setNotice('Copy unavailable')) }}><Icon name="files" size={14} />Copy text</button>}{(file.url || file.text != null) && <button type="button" onClick={download}><Icon name="download" size={14} />Download</button>}</>}
+      {file.path && <button type="button" onClick={() => { void api('/reveal', { path: file.path }).catch(reportError) }}><Icon name="external" size={14} />Show in Explorer</button>}
+      <p>{file.name} · {Math.max(1, Math.round(file.size / 1024)).toLocaleString()} KB</p>
+    </PreviewOptions>}
+    <PreviewButton label="Close file preview" icon="close" title="Back to Workspace" onClick={() => { if (document.fullscreenElement === root.current) void document.exitFullscreen().catch(() => {}); setPreview(null) }} />
+  </div></header>{notice && <p role="status">{notice}</p>}<div ref={viewport} className={`file-preview-body ${file.kind}`}>
+    {(file.kind === 'rich' || structuredLanguage) && <Suspense fallback={<p>Loading preview…</p>}><RichPreview file={structuredLanguage ? { ...file, blockKind: 'code', language: structuredLanguage } : file} /></Suspense>}
+    {file.kind === 'text' && !structuredLanguage && (/\.md$/i.test(file.name) ? <MarkdownDocument key={`${file.path}:${file.revision}`} file={file} /> : <pre>{file.text}</pre>)}
     {file.kind === 'document' && <iframe src={file.url} title={file.name} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" />}
-    {file.kind === 'image' && <ZoomImage src={file.url} alt={file.name} />}
+    {file.kind === 'image' && <ZoomImage src={file.url} alt={file.name} stateKey={file.identity || file.path} />}
     {file.kind === 'video' && <video src={file.url} controls />}
     {file.kind === 'audio' && <audio src={file.url} controls />}
     {file.kind === 'unsupported' && <div className="file-unsupported"><Icon name="files" size={38} /><h2>{file.name}</h2><p>{file.reason}</p><button className="desk-secondary" onClick={() => api('/reveal', { path: file.path }).catch(reportError)}>Show in Explorer</button></div>}
@@ -29,9 +59,6 @@ export function FilePreview({ file }: { file: Preview }) {
 const pathKey = (path: string) => path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
 const fileName = (path: string) => path.replace(/[\\/]$/, '').split(/[\\/]/).pop() || path
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
-function RevealFolder({ path, name }: { path: string; name: string }) {
-  return <button className="file-reveal" title={`Open ${name} in Explorer`} aria-label={`Open ${name} in Explorer`} onClick={event => { event.stopPropagation(); api('/reveal', { path }).catch(reportError) }}><Icon name="external" size={14} /></button>
-}
 type TreeControls = {
   expanded: Set<string>; selected: string; dropTarget: string; query: string; revision: number
   toggle: (path: string) => void
@@ -65,7 +92,7 @@ function FolderBranch({ path, mode = 'all', depth = 1, ancestors = [], tree, onL
   return <div role="group" {...tree.dropProps(folder.path)}>{entries.map(entry => {
     const expanded = tree.expanded.has(pathKey(entry.path))
     return <div role="none" key={entry.path}>
-      <div role="none" className={`file-entry ${entry.directory ? 'has-reveal' : ''}`} {...(entry.directory ? tree.dropProps(entry.path) : {})}>
+      <div role="none" className="file-entry has-reveal" {...(entry.directory ? tree.dropProps(entry.path) : {})}>
       <button role="treeitem" data-path={entry.path} aria-level={depth + 1} aria-expanded={entry.directory ? expanded : undefined} aria-selected={pathKey(tree.selected) === pathKey(entry.path)}
         className={`file-row ${entry.directory ? 'directory' : ''} ${pathKey(tree.selected) === pathKey(entry.path) ? 'selected' : ''} ${tree.dropTarget === pathKey(entry.path) ? 'drop-target' : ''}`}
         style={{ paddingLeft: 8 + Math.min(depth, 10) * 14 }} title={entry.path}
@@ -77,7 +104,7 @@ function FolderBranch({ path, mode = 'all', depth = 1, ancestors = [], tree, onL
         <Icon name={entry.directory ? 'folder' : 'files'} size={15} /><span>{entry.name}</span>
         {!entry.directory && <small>{entry.size < 1024 * 1024 ? `${Math.max(1, Math.round(entry.size / 1024))}k` : `${(entry.size / (1024 * 1024)).toFixed(1)}m`}</small>}
       </button>
-      {entry.directory && <RevealFolder path={entry.path} name={entry.name} />}
+      <button className="file-row-actions desk-icon" aria-label={`Actions for ${entry.name}`} onClick={event => tree.contextMenu(event, entry.path, entry.directory)}><Icon name="more" size={14} /></button>
       </div>
       {entry.directory && expanded && <FolderBranch path={entry.path} depth={depth + 1} ancestors={[...ancestors, pathKey(folder.path)]} tree={tree} />}
     </div>
@@ -113,6 +140,7 @@ export default function FilesRail() {
   const [skillAgent, setSkillAgent] = useState<'codex' | 'claude' | 'opencode'>('codex')
   const [skillSource, setSkillSource] = useState<'hub' | 'linked'>('hub')
   const [skillCreateOpen, setSkillCreateOpen] = useState(false)
+  const [skillView, setSkillView] = useState<'skills' | 'files'>('skills')
   const [skillRevision, setSkillRevision] = useState(0)
   const [selectedSkillRepositoryId, setSelectedSkillRepositoryId] = useState('')
   const skillRoot = selectedProject?.repositories.find(repository => repository.id === selectedSkillRepositoryId)?.repositoryPath || selectedProject?.repositories.find(repository => repository.available)?.repositoryPath || selectedProject?.repositories[0]?.repositoryPath || repo
@@ -123,6 +151,8 @@ export default function FilesRail() {
   const [typedPath, setTypedPath] = useState(repo)
   const [rootFolder, setRootFolder] = useState<Folder | null>(null)
   const [mode, setMode] = useState<'main' | 'all'>('main')
+  const [collection, setCollection] = useState<'all' | 'cards' | 'knowledge' | 'process' | 'inbox'>('all')
+  const [pathOpen, setPathOpen] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try { const saved: unknown = JSON.parse(localStorage.getItem(`${storageKey}.expanded`) || '[]'); return new Set(Array.isArray(saved) ? saved.filter(item => typeof item === 'string') : []) } catch { return new Set() }
   })
@@ -195,7 +225,7 @@ export default function FilesRail() {
   }
   useEffect(() => onServiceEvent(event => {
     if (event.type !== 'navigate' || event.window !== 'workspace' || !event.section || !['projects', 'files', 'knowledge', 'process', 'inbox', 'skills', 'mcp', 'settings'].includes(event.section)) return
-    setPanel(event.section as typeof panel); setOpen(true)
+    const legacy = ['knowledge', 'process', 'inbox'].includes(event.section); setPanel(legacy ? 'files' : event.section as typeof panel); if (legacy) { setMode('main'); setCollection(event.section as 'knowledge' | 'process' | 'inbox') } setOpen(true)
     if (event.section === 'files') { setMode('main'); setRoot(repo); setTypedPath(repo); setQuery('') }
     if (event.section === 'skills') { setMode('all'); setSkillSource('hub'); setRoot(`${repo}/.agents/skills`); setTypedPath(`${repo}/.agents/skills`); setSkillAgent('codex'); setQuery('') }
   }), [repo])
@@ -257,7 +287,7 @@ export default function FilesRail() {
   const openContextMenu = (event: MouseEvent, path: string, directory: boolean, resource?: LibraryResource) => {
     event.preventDefault(); event.stopPropagation()
     if (path) setSelected(path)
-    setContextMenu({ path, directory, resource, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 100)) })
+    setContextMenu({ path, directory, resource, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 228)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 100)) })
   }
   const hubFileContextMenu = (event: MouseEvent, path: string, resource?: LibraryResource) => openContextMenu(event, path, false, resource)
   const dropProps = (folder: string) => ({
@@ -284,49 +314,58 @@ export default function FilesRail() {
       api('/files/drag', { paths: [path] }).catch(error => { internalDrag.current = null; setError(message(error)); setStatus('') })
     },
   }
+  const workspaceScope = <label className="hub-workspace-select"><DarkSelect appearance="workspace" leading={selectedProject ? <ProjectIcon id={selectedProject.id} initials={selectedProject.name.slice(0,2).toUpperCase()} className="workspace-choice-icon" /> : <span className="workspace-choice-icon"><Icon name="layers" size={17} /></span>} label="Active workspace" value={settings.selectedProjectId || ''} options={[{ value: '', label: 'Mr. Mik Hub · Global', leading: <span className="workspace-choice-icon"><Icon name="layers" size={17} /></span> }, ...projects.map(project => ({ value: project.id, label: project.name + (!project.available ? ' · folder missing' : ''), leading: <ProjectIcon id={project.id} initials={project.name.slice(0,2).toUpperCase()} className="workspace-choice-icon" /> }))]} onChange={value => { void api('/settings', { selectedProjectId: value || null }).then(() => { setMode(panel === 'skills' ? 'all' : 'main'); setSelectedSkillRepositoryId(''); const project = projects.find(item => item.id === value); const linkedFolder = project?.repositories.find(item => item.available)?.repositoryPath; if (!linkedFolder) setSkillSource('hub'); navigate(panel === 'skills' ? linkedFolder && skillSource === 'linked' ? `${linkedFolder}/${skillAgent === 'claude' ? '.claude' : skillAgent === 'opencode' && skillSource === 'linked' ? '.opencode' : '.agents'}/skills` : `${repo}/${skillAgent === 'claude' ? '.claude' : '.agents'}/skills` : repo); window.location.hash = '' }).catch(reportError) }} /></label>
   return <aside className={`files-container ${open ? 'expanded' : ''}`}>
-    {open && <div className="hub-rail-content">
-    {open && <label className="hub-workspace-select">WORKSPACE<select aria-label="Active workspace" value={settings.selectedProjectId || ''} onChange={event => { void api('/settings', { selectedProjectId: event.target.value || null }).then(() => { setMode(panel === 'skills' ? 'all' : 'main'); setSelectedSkillRepositoryId(''); const project = projects.find(item => item.id === event.target.value); const linkedFolder = project?.repositories.find(item => item.available)?.repositoryPath; if (!linkedFolder) setSkillSource('hub'); navigate(panel === 'skills' ? linkedFolder && skillSource === 'linked' ? `${linkedFolder}/${skillAgent === 'claude' ? '.claude' : skillAgent === 'opencode' && skillSource === 'linked' ? '.opencode' : '.agents'}/skills` : `${repo}/${skillAgent === 'claude' ? '.claude' : '.agents'}/skills` : repo); window.location.hash = '' }).catch(reportError) }}><option value="">Mr. Mik Hub · Global</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}{!project.available ? ' · folder missing' : ''}</option>)}</select></label>}
+    {open && <div className={`hub-rail-content${panel === 'skills' ? ' skills-rail' : ''}`}>
+    {open && !['projects', 'files', 'skills', 'mcp', 'settings'].includes(panel) && workspaceScope}
     {open && panel === 'settings' && <WorkspaceSettings onClose={() => setOpen(false)} />}
-    {open && panel === 'mcp' && <McpPanel onClose={() => setOpen(false)} />}
-    {open && panel === 'projects' && <ProjectsPanel onClose={() => setOpen(false)} onSelect={() => { setMode('main'); navigate(repo) }} />}
-    {open && (panel === 'knowledge' || panel === 'process' || panel === 'inbox') && <div className="files-panel hub-panel"><header><h2>{panel === 'process' ? 'Processes' : panel[0].toUpperCase() + panel.slice(1)}</h2><button className="desk-icon" onClick={() => setOpen(false)} aria-label={`Close ${panel}`}><Icon name="close" size={17} /></button></header><HubTree section={panel} fileRevision={revision} onFileContextMenu={hubFileContextMenu} /></div>}
-    {open && (panel === 'files' || panel === 'skills') && <div className="files-panel"><header><h2>{panel === 'skills' ? 'Skills' : 'Files'}</h2><div>
+    {open && panel === 'mcp' && <McpPanel workspaceScope={workspaceScope} onClose={() => setOpen(false)} />}
+    {open && panel === 'projects' && <ProjectsPanel scope={workspaceScope} onClose={() => setOpen(false)} onSelect={() => { setMode('main'); navigate(repo) }} />}
+
+    {open && (panel === 'files' || panel === 'skills') && <div className={`files-panel${panel === 'skills' ? ' skills-panel' : ''}`}><header><h2>{panel === 'skills' ? 'Skills' : 'Files'}</h2><div>
       {panel === 'skills' ? <button className="desk-icon" onClick={() => setSkillCreateOpen(value => !value)} title="Add skill" aria-label="Add skill"><Icon name="plus" size={16} /></button> : mode === 'all' && <button className="desk-icon" disabled={copying} onClick={() => input.current?.click()} title={`Copy files into ${fileName(destination)}`} aria-label="Add files"><Icon name="plus" size={16} /></button>}
-      <button className="desk-icon" onClick={refresh} title="Refresh files"><Icon name="refresh" size={15} /></button><button className="desk-icon" onClick={() => setOpen(false)} title="Collapse files"><Icon name="close" size={17} /></button>
+      <button className="desk-icon" onClick={() => { refresh(); if (panel === 'skills') setSkillRevision(value => value + 1) }} title={panel === 'skills' ? 'Refresh skills' : 'Refresh files'} aria-label={panel === 'skills' ? 'Refresh skills' : 'Refresh files'}><Icon name="refresh" size={15} /></button><button className="desk-icon" onClick={() => setOpen(false)} title={panel === 'skills' ? 'Collapse Skills' : 'Collapse files'} aria-label={panel === 'skills' ? 'Collapse Skills' : 'Collapse files'}><Icon name="close" size={17} /></button>
     </div></header>
+      {panel === 'skills' ? <div className="skills-workspace">{workspaceScope}</div> : workspaceScope}
+      {panel === 'files' && error && <p className="desk-error-inline file-operation-error" role="alert">{error}</p>}
       <input ref={input} type="file" multiple hidden onChange={event => { void copy(Array.from(event.target.files || []), destination); event.target.value = '' }} />
-      {panel === 'skills' && skillCreateOpen && <SkillCreate agent={skillAgent} initialTarget={skillSource} preferredLinkedId={selectedSkillRepositoryId} onClose={() => setSkillCreateOpen(false)} onCreated={skill => { setSkillCreateOpen(false); setSkillRevision(value => value + 1); setSkillSource(skill.repositoryId ? 'linked' : 'hub'); if (skill.repositoryId) setSelectedSkillRepositoryId(skill.repositoryId); navigate(skill.path.replace(/[\\/][^\\/]+$/, '')) }} />}
-      {panel === 'skills' && <><div className="skill-navigation"><div className="skill-agent-tabs" role="group" aria-label="Skill agent"><button aria-pressed={skillAgent === 'codex'} onClick={() => { setSkillAgent('codex'); navigate(skillSource === 'linked' && selectedProject ? `${skillRoot}/.agents/skills` : `${repo}/.agents/skills`) }}>Codex</button><button aria-pressed={skillAgent === 'claude'} onClick={() => { setSkillAgent('claude'); navigate(skillSource === 'linked' && selectedProject ? `${skillRoot}/.claude/skills` : `${repo}/.claude/skills`) }}>Claude</button><button aria-pressed={skillAgent === 'opencode'} onClick={() => { setSkillAgent('opencode'); navigate(skillSource === 'linked' && selectedProject ? `${skillRoot}/.opencode/skills` : `${repo}/.agents/skills`) }}>OpenCode</button></div><div className="skill-source-tabs" role="group" aria-label="Skill location"><button aria-pressed={skillSource === 'hub' || !selectedProject} onClick={() => { setSkillSource('hub'); navigate(hubSkillFolder) }}>Hub</button><button aria-pressed={skillSource === 'linked' && !!selectedProject} disabled={!selectedProject?.repositories.some(item => item.available)} onClick={() => { setSkillSource('linked'); navigate(nativeSkillFolder) }}>Linked project</button></div></div>
-      {skillSource === 'hub' || !selectedProject ? <HubSkills key={`${skillAgent}:${skillRevision}`} agent={skillAgent} /> : <NativeSkills key={`${skillAgent}:${selectedProject.id}:${selectedSkillRepositoryId}:${skillRevision}`} agent={skillAgent} projectId={selectedProject.id} repositoryId={selectedSkillRepositoryId || selectedProject.repositories.find(repository => repository.available)?.id || selectedProject.repositories[0]?.id || ''} />}
+      {panel === 'skills' && skillCreateOpen && <SkillCreate agent={skillAgent} initialTarget={skillSource} preferredLinkedId={selectedSkillRepositoryId} onClose={() => setSkillCreateOpen(false)} onCreated={skill => { setSkillCreateOpen(false); setSkillRevision(value => value + 1); setSkillSource(skill.repositoryId ? 'linked' : 'hub'); if (skill.repositoryId) setSelectedSkillRepositoryId(skill.repositoryId); navigate(skill.path.replace(/[\\/][^\\/]+$/, '')); void api<Preview>(`/preview?path=${encodeURIComponent(skill.path)}`).then(setPreview).catch(reportError) }} />}
+      {panel === 'skills' && <>
+        <div className="skill-navigation"><div className="skill-agent-tabs" role="group" aria-label="Skill agent">{(['codex', 'claude', 'opencode'] as const).map(agent => <button key={agent} aria-pressed={skillAgent === agent} onClick={() => { setSkillAgent(agent); navigate(`${skillSource === 'linked' && selectedProject ? skillRoot : repo}/${agent === 'claude' ? '.claude' : agent === 'opencode' && skillSource === 'linked' ? '.opencode' : '.agents'}/skills`) }}><AgentLogo agent={agent} size={16} />{agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : 'OpenCode'}</button>)}</div>
+          <div className="skill-source-tabs" role="group" aria-label="Skill location"><button aria-pressed={skillSource === 'hub' || !selectedProject} onClick={() => { setSkillSource('hub'); navigate(hubSkillFolder) }}>Hub</button><button aria-pressed={skillSource === 'linked' && !!selectedProject} disabled={!selectedProject?.repositories.some(item => item.available)} onClick={() => { setSkillSource('linked'); navigate(nativeSkillFolder) }}>Linked projects</button></div>
+          {skillSource === 'linked' && selectedProject && (selectedProject.repositories.length > 1 ? <DarkSelect appearance="workspace" icon="" label="Native skill linked project" value={selectedSkillRepositoryId || selectedProject.repositories.find(item => item.available)?.id || selectedProject.repositories[0].id} options={selectedProject.repositories.map(repository => ({ value: repository.id, label: repository.name, disabled: !repository.available }))} onChange={value => { setSelectedSkillRepositoryId(value); const repository = selectedProject.repositories.find(item => item.id === value); if (repository?.repositoryPath) navigate(`${repository.repositoryPath}/${skillAgent === 'claude' ? '.claude' : skillAgent === 'opencode' ? '.opencode' : '.agents'}/skills`) }} /> : <div className="skill-single-project"><Icon name="folder" size={16} /><span>{selectedProject.repositories[0]?.name}</span></div>)}
+        </div>
+        <div className="skill-view-tabs" role="group" aria-label="Skill view"><button aria-pressed={skillView === 'skills'} onClick={() => setSkillView('skills')}>Skills</button><button aria-pressed={skillView === 'files'} onClick={() => setSkillView('files')}>Files</button></div>
+        {skillView === 'skills' && (skillSource === 'hub' || !selectedProject ? <HubSkills key={`${skillAgent}:${selectedProject?.id || ''}`} revision={revision + skillRevision} agent={skillAgent} folder={hubSkillFolder} onOpen={path => { void api<Preview>(`/preview?path=${encodeURIComponent(path)}`).then(setPreview).catch(reportError) }} /> : <NativeSkills key={`${skillAgent}:${selectedProject.id}:${selectedSkillRepositoryId}`} revision={revision + skillRevision} agent={skillAgent} projectId={selectedProject.id} repositoryId={selectedSkillRepositoryId || selectedProject.repositories.find(repository => repository.available)?.id || selectedProject.repositories[0]?.id || ''} onOpen={path => { void api<Preview>(`/preview?path=${encodeURIComponent(path)}`).then(setPreview).catch(reportError) }} />)}
       </>}
-      {panel === 'files' ? <><div className="file-mode"><button className={mode === 'main' ? 'selected' : ''} onClick={() => { setMode('main'); navigate(repo) }}>Main folders</button><button className={mode === 'all' ? 'selected' : ''} onClick={() => setMode('all')}>Browse files</button></div>{mode === 'all' && <div className="file-root-choice"><span>ROOT</span><DarkSelect label="File browser root" value={currentRepository ? currentRepository.projectId + ':' + currentRepository.id : ''} options={[{ value: '', label: 'Mr. Mik Hub / custom path' }, ...repositories.map(repository => ({ value: repository.projectId + ':' + repository.id, label: repository.projectName + ' · ' + repository.name, disabled: !repository.available }))]} onChange={value => { const repository = repositories.find(item => item.projectId + ':' + item.id === value); navigate(repository?.repositoryPath || repo) }} /></div>}</> : <div className="skill-locations"><strong>{skillSource === 'linked' && selectedProject ? 'Linked-project' : 'Hub'} {skillAgent === 'codex' ? 'Codex' : skillAgent === 'claude' ? 'Claude' : 'OpenCode'} skill files</strong>{skillSource === 'linked' && selectedProject && selectedProject.repositories.length > 1 && <label>Linked project<select aria-label="Native skill linked project" value={selectedSkillRepositoryId || selectedProject.repositories.find(item => item.available)?.id || selectedProject.repositories[0].id} onChange={event => { setSelectedSkillRepositoryId(event.target.value); const repository = selectedProject.repositories.find(item => item.id === event.target.value); if (repository?.repositoryPath) navigate(`${repository.repositoryPath}/${skillAgent === 'claude' ? '.claude' : skillAgent === 'opencode' && skillSource === 'linked' ? '.opencode' : '.agents'}/skills`) }}>{selectedProject.repositories.map(repository => <option key={repository.id} value={repository.id} disabled={!repository.available}>{repository.name}</option>)}</select></label>}<p>{skillSource === 'linked' && selectedProject ? `Browse the selected folder below. Native skill availability is decided by ${skillAgent === 'codex' ? 'Codex' : skillAgent === 'claude' ? 'Claude' : 'OpenCode'} when its chat starts.` : 'Browse Hub skill files below. Workspace availability is managed above.'}</p></div>}
-      {(panel === 'skills' || mode === 'all') && <>
-      <form className="file-path" onSubmit={event => { event.preventDefault(); setMode('all'); navigate(typedPath) }}><button type="button" title="Parent folder" onClick={() => { setMode('all'); navigate(rootFolder?.parent || repo) }}><Icon name="up" size={15} /></button><input value={typedPath} onChange={event => setTypedPath(event.target.value)} spellCheck={false} aria-label="Folder path" /><button type="submit" title="Open folder"><Icon name="arrow" size={14} /></button></form>
+      {panel === 'files' ? <><div className="file-mode"><button className={mode === 'main' ? 'selected' : ''} onClick={() => { setMode('main'); navigate(repo) }}>Main folders</button><button className={mode === 'all' ? 'selected' : ''} onClick={() => setMode('all')}>Browse files</button></div>{mode === 'main' && <div className="file-collection-choice"><DarkSelect appearance="workspace" label="Filter collections" icon="" value={collection} options={[{ value: 'all', label: 'All collections' }, { value: 'cards', label: 'Cards' }, { value: 'knowledge', label: 'Knowledge' }, { value: 'process', label: 'Processes' }, { value: 'inbox', label: 'Inbox' }]} onChange={value => setCollection(value as typeof collection)} /></div>}{mode === 'all' && <div className="file-root-choice"><button className="desk-icon" aria-label="Parent folder" disabled={!rootFolder?.parent} onClick={() => navigate(rootFolder?.parent || repo)}><Icon name="up" size={15} /></button><DarkSelect appearance="workspace" label="File browser root" placeholder={fileName(root)} value={currentRepository ? currentRepository.projectId + ':' + currentRepository.id : pathKey(root) === pathKey(repo) ? '' : 'current-path'} options={[{ value: '', label: 'Mr. Mik Hub' }, ...repositories.map(repository => ({ value: repository.projectId + ':' + repository.id, label: repository.projectName + ' · ' + repository.name, disabled: !repository.available })), ...(pathKey(root) !== pathKey(repo) && !currentRepository ? [{ value: 'current-path', label: fileName(root) }] : []), { value: 'custom-path', label: 'Go to folder…' }]} onChange={value => { if (value === 'custom-path') { setTypedPath(root); setPathOpen(true); return } if (value === 'current-path') return; const repository = repositories.find(item => item.projectId + ':' + item.id === value); navigate(repository?.repositoryPath || repo) }} /></div>}</> : null}
+      {(panel === 'skills' ? skillView === 'files' : mode === 'all') && <>
+
+      {panel === 'skills' && <form className="file-path" onSubmit={event => { event.preventDefault(); setMode('all'); navigate(typedPath) }}><button type="button" title="Parent folder" onClick={() => { setMode('all'); navigate(rootFolder?.parent || repo) }}><Icon name="up" size={15} /></button><input value={typedPath} onChange={event => setTypedPath(event.target.value)} spellCheck={false} aria-label="Folder path" /><button type="submit" title="Open folder"><Icon name="arrow" size={14} /></button></form>}
       <div className="file-filter"><Icon name="search" size={14} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Filter file names…" aria-label="Filter file names in expanded folders" /></div>
       <div className={`file-list ${dropTarget === pathKey(destination) ? 'drop-area' : ''}`} role="tree" aria-label="Folder tree" onKeyDown={deleteKey} {...dropProps(destination)}>
-        <div role="none" className="file-entry has-reveal" {...dropProps(root)}><button role="treeitem" aria-level={1} aria-expanded="true" aria-selected={pathKey(selected) === pathKey(root)} className={`file-row file-root-row ${dropTarget === pathKey(root) ? 'drop-target' : ''}`} onClick={() => { setSelected(root); setDestination(root) }} onContextMenu={event => tree.contextMenu(event, root, true)} {...dropProps(root)} title={root}><Icon name="arrow" size={11} style={{ transform: 'rotate(90deg)' }} /><Icon name="folder" size={15} /><span>{pathKey(root) === pathKey(repo) ? 'MR-MAK' : fileName(root)}</span></button><RevealFolder path={root} name={pathKey(root) === pathKey(repo) ? 'MR-MAK' : fileName(root)} /></div>
+        <div role="none" className="file-entry has-reveal" {...dropProps(root)}><button role="treeitem" aria-level={1} aria-expanded="true" aria-selected={pathKey(selected) === pathKey(root)} className={`file-row file-root-row ${dropTarget === pathKey(root) ? 'drop-target' : ''}`} onClick={() => { setSelected(root); setDestination(root) }} onContextMenu={event => tree.contextMenu(event, root, true)} {...dropProps(root)} title={root}><Icon name="arrow" size={11} style={{ transform: 'rotate(90deg)' }} /><Icon name="folder" size={15} /><span>{pathKey(root) === pathKey(repo) ? 'MR-MAK' : fileName(root)}</span></button><button className="file-row-actions desk-icon" aria-label="Root folder actions" onClick={event => tree.contextMenu(event, root, true)}><Icon name="more" size={14} /></button></div>
         <FolderBranch key={`${root}:${mode}`} path={root} mode={mode} tree={tree} onLoad={loaded} />
       </div>
-      <div className="file-transfer-status" aria-live="polite">{error && <p className="desk-error-inline">{error}</p>}{status && <p>{status}</p>}<small title={destination}>{copying ? 'Transferring files…' : 'Drag to move · Delete to Recycle Bin'}</small></div>
-      {panel === 'files' && <footer><button onClick={() => navigate(repo)}>MR-MAK root</button></footer>}
+      <div className="file-transfer-status" aria-live="polite">{panel !== 'files' && error && <p className="desk-error-inline" role="alert">{error}</p>}{status && <p>{status}</p>}<small title={destination}>{copying ? 'Transferring files…' : 'Drag to move · Delete to Recycle Bin'}</small></div>
       </>}
-      {panel === 'files' && mode === 'main' && <HubTree fileRevision={revision} onFileContextMenu={hubFileContextMenu} />}
+      {panel === 'files' && mode === 'main' && <HubTree key={settings.selectedProjectId || 'global'} section={collection} fileRevision={revision} onFileContextMenu={hubFileContextMenu} />}
     </div>}
     </div>}
-    {contextMenu && <div className="file-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={event => event.stopPropagation()}>
-      <button role="menuitem" onClick={() => { const item = contextMenu; setContextMenu(null); if (item.resource) void api<{ path: string }>(`/resources/location?kind=${encodeURIComponent(item.resource.kind)}&id=${encodeURIComponent(item.resource.id)}`).then(result => api('/reveal', { path: result.path })).catch(reportError); else void api('/reveal', { path: item.path }).catch(reportError) }}>Open in Explorer</button>
-      {contextMenu.resource?.repositoryProjectId ? <button role="menuitem" className="danger" onClick={() => { setUnlinkTarget(contextMenu.resource || null); setContextMenu(null) }}>Remove link from Hub</button> : pathKey(contextMenu.path) !== pathKey(root) && <button role="menuitem" className="danger" onClick={() => { setRecycleTarget(contextMenu.path); setContextMenu(null) }}>Move to Recycle Bin</button>}
+    {contextMenu && <div className="file-context-menu workspace-file-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={event => event.stopPropagation()}>
+      <button role="menuitem" onClick={() => { const item = contextMenu; setContextMenu(null); if (item.resource) void api<{ path: string }>(`/resources/location?kind=${encodeURIComponent(item.resource.kind)}&id=${encodeURIComponent(item.resource.id)}`).then(result => api('/reveal', { path: result.path })).catch(reportError); else void api('/reveal', { path: item.path }).catch(reportError) }}><Icon name="external" size={16} />Open in Explorer</button>
+      {contextMenu.resource?.repositoryProjectId ? <button role="menuitem" className="danger" onClick={() => { setUnlinkTarget(contextMenu.resource || null); setContextMenu(null) }}><Icon name="unlink" size={16} />Remove link from Hub</button> : pathKey(contextMenu.path) !== pathKey(root) && <button role="menuitem" className="danger" onClick={() => { setRecycleTarget(contextMenu.path); setContextMenu(null) }}><Icon name="trash" size={16} />Move to Recycle Bin</button>}
     </div>}
-    {recycleTarget && <div className="file-confirm-backdrop" role="presentation"><div className="file-confirm" role="alertdialog" aria-modal="true" aria-labelledby="file-confirm-title" aria-describedby="file-confirm-text">
+    {recycleTarget && <WorkspaceDialog label="Move to Recycle Bin?" role="alertdialog" close={() => setRecycleTarget(null)}>
       <h3 id="file-confirm-title">Move to Recycle Bin?</h3><p id="file-confirm-text">{fileName(recycleTarget)} will be removed from {pathKey(recycleTarget).startsWith(pathKey(repo) + '/') ? 'the Mr. Mik Hub' : 'the linked folder'}. You can restore it from Windows Recycle Bin.</p>
-      <div><button onClick={() => setRecycleTarget(null)}>Cancel</button><button className="danger" onClick={() => recycle(recycleTarget)}>Move to Recycle Bin</button></div>
-    </div></div>}
-    {unlinkTarget && <div className="file-confirm-backdrop" role="presentation"><div className="file-confirm" role="alertdialog" aria-modal="true" aria-labelledby="unlink-confirm-title" aria-describedby="unlink-confirm-text">
+      <footer><button onClick={() => setRecycleTarget(null)}>Cancel</button><button className="danger" onClick={() => recycle(recycleTarget)}>Move to Recycle Bin</button></footer>
+    </WorkspaceDialog>}
+    {unlinkTarget && <WorkspaceDialog label="Remove link from Hub?" role="alertdialog" close={() => setUnlinkTarget(null)}>
       <h3 id="unlink-confirm-title">Remove link from Hub?</h3><p id="unlink-confirm-text">{unlinkTarget.title} will disappear from the Mr. Mik library. Its original file in the linked project will not be changed.</p>
-      <div><button onClick={() => setUnlinkTarget(null)}>Cancel</button><button className="danger" onClick={() => { const item = unlinkTarget; setUnlinkTarget(null); void api('/resources/unlink', { kind: item.kind, id: item.id }).then(refresh).catch(cause => setError(message(cause))) }}>Remove link</button></div>
-    </div></div>}
-<div className="files-rail">{(['projects', 'files', 'knowledge', 'process', 'inbox', 'skills', 'mcp', 'settings'] as const).map(name => <button key={name} className={`rail-tool ${open && panel === name ? 'active' : ''}`} onClick={() => showPanel(name)} title={name === 'mcp' ? 'Tools' : name === 'process' ? 'Processes' : name === 'projects' ? 'Workspaces' : name[0].toUpperCase() + name.slice(1)} aria-label={`Toggle ${name}`} aria-pressed={open && panel === name}><Icon name={name} size={18} /><span>{name === 'process' ? 'Processes' : name === 'mcp' ? 'Tools' : name === 'projects' ? 'Workspaces' : name}</span></button>)}<button className="rail-tool" title="Workspace help" aria-label="Open Workspace help" onClick={() => setHelpOpen(true)}><Icon name="help" size={18} /><span>Help</span></button><div className="rail-spacer" /><button className="desk-icon" aria-label="Restore default window layout" title="Restore default window layout" onClick={() => windowAction('workspace', 'layout')}><Icon name="layout" size={18} /></button><button className="desk-icon" title="Show Chats" onClick={() => windowAction('chats')}><Icon name="chats" size={18} /></button></div>
+      <footer><button onClick={() => setUnlinkTarget(null)}>Cancel</button><button className="danger" onClick={() => { const item = unlinkTarget; setUnlinkTarget(null); setError(''); void api('/resources/unlink', { kind: item.kind, id: item.id }).then(refresh).catch(cause => setError(message(cause))) }}>Remove link</button></footer>
+    </WorkspaceDialog>}
+<div className="files-rail">{(['projects', 'files', 'skills', 'mcp', 'settings'] as const).map(name => <button key={name} className={`rail-tool ${open && panel === name ? 'active' : ''}`} onClick={() => showPanel(name)} title={name === 'mcp' ? 'Tools' : name === 'projects' ? 'Workspaces' : name[0].toUpperCase() + name.slice(1)} aria-label={`Toggle ${name}`} aria-pressed={open && panel === name}><Icon name={name} size={18} /><span>{name === 'mcp' ? 'Tools' : name === 'projects' ? 'Workspaces' : name}</span></button>)}<button className="rail-tool" title="Workspace help" aria-label="Open Workspace help" onClick={() => setHelpOpen(true)}><Icon name="help" size={18} /><span>Help</span></button><div className="rail-spacer" /><button className="desk-icon" aria-label="Restore default window layout" title="Restore default window layout" onClick={() => windowAction('workspace', 'layout')}><Icon name="layout" size={18} /></button><button className="desk-icon" title="Show Chats" onClick={() => windowAction('chats')}><Icon name="chats" size={18} /></button></div>
+    {pathOpen && <WorkspaceDialog label="Go to folder" close={() => setPathOpen(false)}><form onSubmit={event => { event.preventDefault(); navigate(typedPath); setPathOpen(false) }}><h3>Go to folder</h3><label className="hub-form">Folder path<input autoFocus required aria-label="Folder path" value={typedPath} onChange={event => setTypedPath(event.target.value)} /></label><footer><button type="button" onClick={() => setPathOpen(false)}>Cancel</button><button>Open folder</button></footer></form></WorkspaceDialog>}
     {helpOpen && <HelpSite onClose={() => setHelpOpen(false)} />}
   </aside>
 }

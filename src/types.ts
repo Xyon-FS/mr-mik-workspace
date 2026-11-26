@@ -1,4 +1,6 @@
+export interface ChatOutputSource { agent: string; sessionId: string; itemId: string; savedAt: string; revision: string; mode: 'live' | 'snapshot'; saveId?: string }
 export interface WorkspaceStep {
+  source?: ChatOutputSource
   name: string
   path: string
   /**
@@ -20,12 +22,12 @@ export interface WorkspaceEntity {
   type: 'standalone' | 'group'
   category: string
   created: string
-  /** Last day an agent touched this entity; dashboard sorts/archives by it. */
+  /** Last day an agent touched this entity; used for dashboard sorting. */
   updated?: string
   folder: string
   steps: WorkspaceStep[]
   /** Existing project-repository files linked to this card without copying. */
-  artifacts?: { projectId: string; repositoryId?: string; path: string; title: string }[]
+  artifacts?: { projectId: string | null; repositoryId?: string; scope?: 'hub'; path: string; title: string; source?: ChatOutputSource }[]
   /** Tab to open for a card link without an explicit step; otherwise use latest. */
   defaultStep?: number
   status: 'active' | 'done' | 'archived'

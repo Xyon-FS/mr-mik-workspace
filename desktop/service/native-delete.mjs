@@ -9,6 +9,7 @@ import { codexBinary } from './agents.mjs';
 import { within } from './util.mjs';
 import { OpenCodeTransfer, openCodeHash, openCodeMembers } from './opencode-transfer.mjs';
 import { validSessionId } from './opencode.mjs';
+import { leaseConversation } from './conversation-lease.mjs';
 
 const execute = promisify(execFile);
 const uuid = /^[a-f0-9-]{36}$/i;
@@ -30,7 +31,7 @@ export class NativeDeletion {
       this.plans.set(plan.token, plan);
       return { token: plan.token, agent: plan.agent, chatName: plan.chatName, nativeId: plan.nativeId, bytes: plan.bytes, files: [], nativeSessions, warning: `This main OpenCode conversation and all ${nativeSessions.length - 1} child sessions listed below will be deleted recursively. Independent forks are not child sessions. Close other OpenCode instances first. Unrelated sessions, external files, authentication and configuration remain. This cannot be undone.` };
     }
-    const transcript = session.agent === 'codex' ? await codexTranscript(session.nativeId) : await claudeTranscript(session.cwd, session.nativeId, { search: true });
+    const transcript = session.agent === 'codex' ? await (this.sessions.codexFile ? this.sessions.codexFile(session) : codexTranscript(session.nativeId)) : await (this.sessions.claudeFile ? this.sessions.claudeFile(session, session.nativeId, { search: true }) : claudeTranscript(session.cwd, session.nativeId, { search: true }));
     const info = transcript && await stat(transcript).catch(() => null);
     if (!info?.isFile()) throw new Error('The native transcript is not present. Only the Mr. Mik record can be removed.');
     const token = randomUUID();
@@ -38,7 +39,7 @@ export class NativeDeletion {
     const sidecarExists = sidecar && (await stat(sidecar).catch(() => null))?.isDirectory() && within(await realpath(path.dirname(transcript)), await realpath(sidecar));
     const auxiliary = [];
     if (session.agent === 'claude') {
-      const root = await realpath(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
+      const root = await realpath((await this.sessions.accountContext?.(session))?.directory || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
       for (const kind of ['tasks', 'file-history', 'uploads', 'image-cache']) {
         const parent = path.join(root, kind), folder = path.join(parent, session.nativeId);
         const parentInfo = await lstat(parent).catch(() => null), folderInfo = await lstat(folder).catch(() => null);
@@ -69,7 +70,7 @@ export class NativeDeletion {
     if (JSON.stringify(current.files) !== JSON.stringify(plan.files)) throw new Error('Native session files changed; review the deletion again.');
     this.plans.delete(current.token);
     if (plan.agent === 'claude') {
-      const configRoot = await realpath(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'));
+      const configRoot = await realpath(path.join((await this.sessions.accountContext?.(session))?.directory || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'));
       const transcript = await realpath(plan.files[0]);
       if (!within(configRoot, transcript) || path.basename(transcript) !== `${plan.nativeId}.jsonl`) throw new Error('Claude transcript location changed; review the deletion again.');
       const profile = await realpath(path.dirname(configRoot));
@@ -79,11 +80,15 @@ export class NativeDeletion {
       }
     }
     if (plan.agent === 'codex') {
-      const binary = codexBinary();
-      await execute(binary.file, [...binary.args, 'delete', plan.nativeId, '--force'], { windowsHide: true, timeout: 60000, maxBuffer: 1024 * 1024 });
+      const context = await this.sessions.accountContext?.(session);
+      const binary = codexBinary(context?.env);
+      const release = context ? await leaseConversation(context, plan.nativeId) : null;
+      try { await execute(binary.file, [...binary.args, 'delete', plan.nativeId, '--force'], { windowsHide: true, timeout: 60000, maxBuffer: 1024 * 1024, ...(context ? { env: context.env } : {}) }); }
+      finally { await release?.(); }
     } else {
-      await rm(plan.files[0]);
-      for (const file of plan.files.slice(1)) await rm(file, { recursive: true });
+      const context = await this.sessions.accountContext?.(session), release = context ? await leaseConversation(context, plan.nativeId) : null;
+      try { await rm(plan.files[0]); for (const file of plan.files.slice(1)) await rm(file, { recursive: true }); }
+      finally { await release?.(); }
     }
     await this.sessions.forget(id);
     return { deleted: true, agent: plan.agent };

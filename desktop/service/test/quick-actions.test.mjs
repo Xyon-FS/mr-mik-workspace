@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 import { requestDate } from '../quick-actions.mjs';
 import { taskEffort } from '../effort.mjs';
 import { terminalCommand, inventory } from '../agents.mjs';

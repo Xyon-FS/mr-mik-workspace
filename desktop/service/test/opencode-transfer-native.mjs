@@ -1,17 +1,20 @@
 // Explicit native transfer test: two isolated profiles; no provider or account.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, cleanupFixtures } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { OpenCodeTransfer, openCodeHash, openCodeRelation } from '../opencode-transfer.mjs';
 
 const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'mik-oc-transfer-native-')));
 const agents = [];
+try {
 for (const name of ['pc1', 'pc2']) {
   const cwd = path.join(base, name); await mkdir(cwd);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(?:PATH|SystemRoot|WINDIR|TEMP|TMP|COMSPEC)$/i.test(key)));
   for (const key of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME']) { env[key] = path.join(cwd, key); await mkdir(env[key]); }
-  agents.push(new OpenCodeTransfer(cwd, { env, binary: { file: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe', args: [] } }));
+  agents.push(new OpenCodeTransfer(cwd, { env, binary: { file: process.env.MRMIK_OPENCODE_BINARY || fileURLToPath(new URL('../../../.cache/opencode-v1-phase0/node_modules/opencode-windows-x64/bin/opencode.exe', import.meta.url)), args: [] } }));
 }
 const [source, target] = agents, id = 'ses_miktransferfixture';
 const message = suffix => ({ info: { id: `msg_mik${suffix}`, sessionID: id, role: 'user', time: { created: suffix === 'first' ? 1 : 2 }, agent: 'build', model: { providerID: 'fixture', modelID: 'unused' } }, parts: [{ id: `prt_mik${suffix}`, sessionID: id, messageID: `msg_mik${suffix}`, type: 'text', text: `Offline ${suffix}` }] });
@@ -50,3 +53,5 @@ assert.equal(await readFile(auth, 'utf8'), '{}'); assert.equal(await readFile(co
 // No auth files have been supplied or copied; only session JSON enters transfers.
 assert.ok(!(await readFile(file, 'utf8')).includes('auth'));
 console.log('PASS: OpenCode native two-profile import, continuation, conflict refusal, stale guard and native selective deletion. No account or paid calls.');
+
+} finally { await cleanupFixtures(); }

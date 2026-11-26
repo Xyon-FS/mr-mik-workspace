@@ -35,9 +35,9 @@ The portable contains **App/** (program and bundled runtime) and **MyHub/** (con
 
 Download the `windows-x64_setup.exe` asset, install it and launch **Mr. Mik**. It bundles the local runtime and can install WebView2 when needed; it does not install the agent CLIs.
 
-On first launch, choose **Create a new Hub** or **Open an existing Hub**. Creation prepares `Documents/Mr. Mik/MyHub` with starter examples and skills; you can choose another parent folder instead. Existing folders are never overwritten. Opening uses a prepared Mr. Mik/Mr. Mak Hub containing `workspace/workspace.json`, without importing or copying it. Your selection is remembered. An ordinary Unity/Blender/code folder is a *linked project*, not the Hub to select here. To restore an exported archive, create/open a Hub first, then use **Settings → Transfer Hub → Import**.
+On first launch, an existing valid `Documents/Mr. Mik/MyHub` is reused automatically if no Hub selection is saved. Otherwise choose **Create a new Hub** or **Open an existing Hub**. Creation prepares the default MyHub with starter examples and skills, or uses another location. If the destination already contains a valid Hub, it opens unchanged; other existing folders are never overwritten. You can select the Hub itself or its parent containing `MyHub` (or legacy `Hub`). Opening is not an import or a copy. Your selection is remembered; a missing saved Hub prompts again rather than silently switching your data. An ordinary Unity/Blender/code folder is a *linked project*, not the Hub to select here. To restore an exported archive, create/open a Hub first, then use **Settings → Transfer Hub → Import**.
 
-**Beta 0.2.10:** keep backups, especially before transfers and removal actions. Not every clean Windows installation or provider setup has been validated.
+**Beta 0.3.0:** keep backups, especially before transfers and removal actions. Not every clean Windows installation or provider setup has been validated.
 
 ## Connect your agent
 
@@ -86,6 +86,13 @@ The Bridge supplies compact orientation and retrieves relevant content on demand
 
 In **Tools**, inspect/configure supported MCPs for the agent and linked project. Requested native configuration changes can write to that project's settings. **Configured is not the same as connected in this chat.** Supported changes refresh affected chats; busy chats, drafts or native dialogs may require a manual action or safe resume. Host-managed tools/plugin controls differ by platform. See [Help](docs/user-guide.md) for exact scopes and limits.
 
+In development source, **Tools → Browser · Playwright** optionally provides Playwright
+MCP to Codex, Claude and OpenCode worker chats. Choose an installed Edge or Chrome.
+CLI workers get an isolated browser session on the next start or resume. Managed
+graphical chats can reuse their dedicated website profile or use temporary mode.
+Browser access defaults to Off. See the [worker browser guide](docs/user-guide.md#optional-worker-browser)
+for configuration, profile isolation and website data controls.
+
 ## Keep your work when updating or changing PCs
 
 **Portable update on the same PC:** back up your Hub, close Mr. Mik and replace only **App** and **Start Mr. Mik.cmd**. Keep your existing **MyHub**, including hidden folders. Never overwrite it with the example MyHub from a new ZIP. The launcher also supports older `Hub/` folders and an external Hub path as its first argument.
@@ -95,9 +102,12 @@ In **Tools**, inspect/configure supported MCPs for the agent and linked project.
 **Another PC or recovery after formatting:** use **Settings → Transfer Hub**:
 
 - **Full export** includes Hub files/configuration, managed History and supported native conversation contexts. Review unavailable contexts and external attachments explicitly; excluding an unavailable context does not discard healthy ones.
+- Additional supported local conversation files are optional and start Off, with size/missing-file review and content deduplication. Hub content remains included. Native embedded media and OpenCode's required attachment review are retained; archives with relocated file bindings require the updated version-2 reader. Unsent drafts are excluded.
 - **Light export** keeps Hub content and Mr. Mik History/screens without native transcripts. It cannot restore the original model conversation by itself.
 
 Import previews show conflicts and folder relinking. Newer/divergent local contexts are protected; unavailable incoming copies do not overwrite healthy local chats. Native authentication, agent-global configuration and external project folders are **not included**: restore those folders and configure/sign in to agents separately on the destination PC. Full archives can contain private conversations/files; do not publish them in public Git repositories.
+
+Skill activation choices merge individually: local global/project flags remain the default, new entries are added, and each conflicting imported flag can be selected explicitly. Skill file contents use separate file conflict choices. See [conversation files and media](docs/user-guide.md#conversation-files-and-media) and [import conflicts and recovery](docs/user-guide.md#import-conflicts-and-recovery).
 
 For content-only Git sharing, use **Workspace snapshot · Git**. Snapshots preserve workspace content/associations, not native chats or authentication; Mr. Mik does not automatically commit or push. See [transfer documentation](docs/workspace-snapshots.md).
 

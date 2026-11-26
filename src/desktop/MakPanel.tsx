@@ -4,22 +4,24 @@ import type { MakScope, Operation, ReasoningEffort } from './types'
 import { Icon, Nose } from './Icons'
 import DarkSelect from './DarkSelect'
 import ReasoningSelect from './ReasoningSelect'
+import AccountProfileSelect from './AccountProfileSelect'
 import { useReasoningCapabilities } from './useReasoningCapabilities'
 import ReactMarkdown from 'react-markdown'
 import './mak.css'
 import './mak-targets.css'
 
 interface Confirmation { id: string; operationId: string; label: string; details: string; scope: MakScope }
-interface MakState { history: Operation[]; state: string; confirmations: Confirmation[]; active: string | null; selected: string | null; effort?: ReasoningEffort; model?: string | null; conversations: { id: string; title: string; canFork: boolean; nativeUnavailable?: string | null }[] }
+interface MakState { accountProfileId?: string; history: Operation[]; state: string; confirmations: Confirmation[]; active: string | null; selected: string | null; effort?: ReasoningEffort; model?: string | null; conversations: { id: string; title: string; canFork: boolean; nativeUnavailable?: string | null }[] }
 export default function MakPanel({ onClose }: { onClose: () => void }) {
   const { settings, projects, sessions, selectedId, notices } = useDesktop()
   const projectId = settings.selectedProjectId || null
   const project = projects.find(item => item.id === projectId)
   const [data, setData] = useState<MakState>({ history: [], state: 'idle', confirmations: [], active: null, selected: null, conversations: [] })
   const [showHistory, setShowHistory] = useState(false)
-  const reasoning = useReasoningCapabilities(data.model)
+  const reasoning = useReasoningCapabilities(data.model, data.accountProfileId || 'system')
   const [text, setText] = useState('')
   const [error, setError] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState('')
   const [sending, setSending] = useState(false)
   const [tab, setTab] = useState<'conversation' | 'activity'>('conversation')
   const [repositoryId, setRepositoryId] = useState('card')
@@ -71,7 +73,7 @@ export default function MakPanel({ onClose }: { onClose: () => void }) {
   }
   const changeConversation = async (action: 'new' | 'fork' | 'select' | 'retry', id?: string) => {
     setSending(true); setError('')
-    try { await api('/coordinator/conversation', { projectId, action, id }); await load() }
+    try { await api('/coordinator/conversation', { projectId, action, id }); if (action === 'retry') setConnectionStatus('Agent connection is ready. No previous request or action was resent.'); else setConnectionStatus(''); await load() }
     catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { if (mounted.current) setSending(false) }
   }
@@ -92,6 +94,7 @@ export default function MakPanel({ onClose }: { onClose: () => void }) {
     <div className="voice-tabs"><button className={tab === 'conversation' ? 'selected' : ''} onClick={() => setTab('conversation')}>Conversation</button><button className={tab === 'activity' ? 'selected' : ''} onClick={() => setTab('activity')}>Activity</button></div>
     <div className="mak-orientation"><strong>{project?.name || 'Global Hub'}</strong><small>Codex coordinator · {data.state}</small><p>Manage the Hub or coordinate visible worker chats. Requests keep their original workspace when you navigate.</p></div>
     {data.conversations.find(item => item.id === data.selected)?.nativeUnavailable && <p className="desk-error-inline">Native context not transferred. Visible History is retained; restore the native context before retrying, or explicitly start a new conversation.</p>}
+    {tab === 'conversation' && <AccountProfileSelect compact value={data.accountProfileId || 'system'} disabled={sending || !!pending || !!data.active || !!text.trim() || data.selected === 'legacy'} onChange={profileId => { if (sending || pending || data.active || text.trim() || data.selected === 'legacy') return; if (!window.confirm('Continue Mik with this account? Existing conversation context is shared with it. No message or action is replayed.')) return; setSending(true); setError(''); void api('/coordinator/conversation', { projectId, action: 'account', id: data.selected, profileId }).then(load).catch(cause => setError(String(cause.message || cause))).finally(() => setSending(false)) }} />}
     {tab === 'conversation' && showHistory && <div className="mak-targets"><DarkSelect label="Mik saved conversations" value={data.selected || ''} options={[{ value: '', label: 'No conversation yet', disabled: true }, ...data.conversations.map(item => ({ value: item.id, label: item.title }))]} onChange={id => { if (!sending && !data.active) void changeConversation('select', id) }} /></div>}
     {tab === 'conversation' && (cards.length > 0 || project) && <div className="mak-targets">
       {cards.length > 0 && <DarkSelect label="Mik card" value={currentCard?.id || ''} options={[{ value: '', label: 'No selected card' }, ...cards.map(card => ({ value: card.id, label: card.title }))]} onChange={id => { setCardId(id); setRepositoryId(cards.find(card => card.id === id)?.repositoryId || '') }} />}
@@ -99,10 +102,11 @@ export default function MakPanel({ onClose }: { onClose: () => void }) {
     </div>}
     <div className="mak-conversation voice-messages" ref={scroll} aria-label="Mik conversation" aria-live="polite">
       {tab === 'conversation' ? <>{!data.history.length && <div className="voice-welcome"><p>One conversation.<br />Your whole workspace.</p><span>Ask Mik to organize cards, save a lesson, inspect a chat or prepare a task.</span></div>}
-      {data.history.map(operation => <article className="mak-operation mak-exchange" key={operation.id}><p className="caption user"><span>You</span>{operation.text}</p><small>{operation.status} · {new Date(operation.at).toLocaleString()}</small>{operation.result && <div className="mak-answer caption assistant"><span>Mr. Mik</span><ReactMarkdown>{operation.result}</ReactMarkdown></div>}</article>)}</> : <>{notices.filter(notice => sessions.some(session => session.id === notice.sessionId && (session.projectId || null) === projectId)).length === 0 && <p className="desk-muted">Terminal attention requests and exits for this workspace appear here.</p>}{[...notices].reverse().filter(notice => sessions.some(session => session.id === notice.sessionId && (session.projectId || null) === projectId)).map(notice => <button className="activity-item" key={notice.id} onClick={() => void api(`/sessions/${notice.sessionId}/focus`, {}).catch(cause => setError(String(cause)))}><Icon name="bell" size={16} /><span><strong>{notice.name}</strong><small>{notice.text}</small></span><time>{new Date(notice.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></button>)}</>}
+      {data.history.map(operation => <article className="mak-operation mak-exchange" key={operation.id}><p className="caption user"><span>You</span>{operation.text}</p><small>{operation.status} · {new Date(operation.at).toLocaleString()}</small>{operation.result && <div className="mak-answer caption assistant"><span>Mr. Mik</span><ReactMarkdown>{operation.connectionIssue && operation.connectionIssue.category !== 'unknown' ? operation.connectionIssue.message : operation.result}</ReactMarkdown>{operation.connectionIssue?.details && <small>{operation.connectionIssue.details}</small>}</div>}</article>)}</> : <>{notices.filter(notice => sessions.some(session => session.id === notice.sessionId && (session.projectId || null) === projectId)).length === 0 && <p className="desk-muted">Terminal attention requests and exits for this workspace appear here.</p>}{[...notices].reverse().filter(notice => sessions.some(session => session.id === notice.sessionId && (session.projectId || null) === projectId)).map(notice => <button className="activity-item" key={notice.id} onClick={() => void api(`/sessions/${notice.sessionId}/focus`, {}).catch(cause => setError(String(cause)))}><Icon name="bell" size={16} /><span><strong>{notice.name}</strong><small>{notice.text}</small></span><time>{new Date(notice.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></button>)}</>}
     </div>
     {data.confirmations.filter(item => item.scope.projectId === projectId).map(item => <div className="mak-confirmation" key={item.id} role="group" aria-label="Mik confirmation"><strong>{item.label}</strong><small>{project?.name || 'Global Hub'}</small><pre>{item.details}</pre><div><button className="history-action" onClick={() => void respond(item.id, false)}>Decline</button><button className="history-action" onClick={() => void respond(item.id, true)}>Approve</button></div></div>)}
     {error && <p role="alert" className="mak-error">{error}</p>}
+    {connectionStatus && <p role="status" className="desk-muted">{connectionStatus}</p>}
     {tab === 'conversation' && <div className="mak-reasoning"><DarkSelect label="Mik model" compact title="Model for the next Mik request" value={data.model || reasoning.data?.codex.model || ''} options={reasoning.data?.codex.models?.map(item => ({ value: item.model, label: item.label })) || [{ value: '', label: 'Model · loading…' }]} disabled={sending || !!pending || !!data.active || data.selected === 'legacy' || !reasoning.data?.codex.models?.length} onChange={value => void changeModel(value)} /><ReasoningSelect label="Mik reasoning" compact value={data.effort || settings.coordinatorEffort || 'medium'} efforts={reasoning.data?.codex.efforts} disabled={sending || !!pending || !!data.active || data.selected === 'legacy'} onChange={value => void changeEffort(value)} />{reasoning.error && <span title={reasoning.error}>Unavailable</span>}</div>}
     {tab === 'conversation' && data.history.some(item => item.status === 'failed') && <button className="history-action mak-retry" disabled={sending || !!data.active || data.selected === 'legacy'} onClick={() => void changeConversation('retry')}>Retry connection</button>}
     {tab === 'conversation' && <form className="mak-composer" onSubmit={event => { event.preventDefault(); if (!pending) void submit() }}><textarea aria-label="Message Mik" placeholder={data.selected === 'legacy' ? 'Previous History is view-only · start a new conversation' : 'Ask Mik…'} disabled={data.selected === 'legacy'} value={text} maxLength={30000} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!pending) void submit() } }} />{pending ? <button type="button" className="desk-icon" title="Stop Mik request · worker chats continue" aria-label="Stop Mik request" disabled={stopping} onClick={() => void stop()}><Icon name="stop" size={18} /></button> : <button className="desk-icon" title="Send to Mik" aria-label="Send to Mik" disabled={sending || !text.trim() || data.selected === 'legacy'}><Icon name="send" size={18} /></button>}</form>}

@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, lstat } from 'node:fs/promises';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
+import { finished } from 'node:stream/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Zip, ZipDeflate, Unzip, UnzipInflate, UnzipPassThrough } from 'fflate';
@@ -15,6 +16,12 @@ import { workerEfforts, claudeEfforts } from './effort.mjs';
 import { OpenCodeTransfer, validateOpenCode, parseOpenCode, openCodeHash, openCodeRelation, openCodeMembers, openCodeIdentities as transferIdentities } from './opencode-transfer.mjs';
 import { reviewAttachments, embedAttachments } from './opencode-attachments.mjs';
 import { validSessionId } from './opencode.mjs';
+import { leaseConversation } from './conversation-lease.mjs';
+import { ImportTransaction, transferTarget } from './import-transaction.mjs';
+import { transferContract, validateTransferContract, validateTransferredSessions, sessionDestinationIds, relocatedOrigin, unsupportedNativeReason, transferCoverage } from './portable-contract.mjs';
+import { skillFiles, effectiveSkillScopes, mergeSkillScopes } from './portable-skills.mjs';
+import { reviewConversationMedia, prepareConversationMedia, validateMediaManifest, readMediaIndex, mergeMediaIndexes } from './conversation-media.mjs';
+import { portableClaudeState, relocateClaudeState } from './claude-portable-state.mjs';
 
 const included = ['context', 'knowledge', 'processes', 'inbox', 'workspace', 'projects', '.agents/skills', '.claude/skills'];
 const uuid = /^[a-f0-9-]{36}$/i;
@@ -25,6 +32,12 @@ const safeArchivePath = name => {
 };
 const privateName = value => /(^|\/)(?:\.env(?:\.|$)|auth|credentials?|tokens?|runtime|node_modules|target|cache)(?:[.\/-]|$)/i.test(value);
 const digest = async file => { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); };
+// Older Hubs may have persisted an empty Inbox as {} after workspace removal.
+// Only an absent resources field means empty; malformed present values stay fatal.
+const inboxRegistry = value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.hasOwn(value, 'resources') && !Array.isArray(value.resources)) throw new Error('Archive contains invalid state/inbox.json.');
+  return Object.hasOwn(value, 'resources') ? value : { ...value, resources: [] };
+};
 const nativeKey = session => `${session.agent}:${session.nativeId || `history-${session.id}`}`;
 const nativeIssue = (session, reason) => ({ key: nativeKey(session), agent: session.agent, id: session.nativeId || null, sessionId: session.id || null, name: String(session.name || session.nativeId || session.id || 'Unnamed chat').replace(/[\x00-\x1f]/g, ' ').slice(0, 160), reason });
 const nativeSkippedFile = (name, skipped) => [...skipped].some(key => { const [agent, id] = key.split(':'); return name === `native/${agent}/${id}.${agent === 'opencode' ? 'json' : 'jsonl'}` || agent === 'claude' && name.startsWith(`native/claude/${id}/`); });
@@ -67,8 +80,8 @@ async function transcriptRelation(local, incoming) {
     return a.size < b.size ? 'update' : 'local-newer';
   } finally { await left.close(); await right.close(); }
 }
-const accepted = name => safeArchivePath(name) && !privateName(name) && (included.some(folder => name.startsWith(`${folder}/`)) || /^state\/(?:sessions|settings|inbox|mak-history|mak-conversations|screen-[a-f0-9-]{36})\.json$/i.test(name) || /^native\/(?:codex|claude)\/[a-f0-9-]{36}\.jsonl$/i.test(name) || /^native\/opencode\/ses[a-zA-Z0-9_-]{1,160}\.json$/.test(name) || /^native\/claude\/[a-f0-9-]{36}\/.+/i.test(name));
-const claudeRoot = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+const accepted = name => safeArchivePath(name) && !privateName(name) && (included.some(folder => name.startsWith(`${folder}/`)) || /^state\/(?:sessions|settings|inbox|mak-history|mak-conversations|(?:screen|claude-chat)-[a-f0-9-]{36})\.json$/i.test(name) || /^native\/(?:codex|claude)\/[a-f0-9-]{36}\.jsonl$/i.test(name) || /^native\/opencode\/ses[a-zA-Z0-9_-]{1,160}\.json$/.test(name) || /^native\/claude\/[a-f0-9-]{36}\/.+/i.test(name));
+const claudeRoot = home => path.join(home || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
 const claudeStateKinds = ['tasks', 'file-history', 'uploads', 'image-cache'];
 async function claudeCompanionTarget(transcript, id, name) {
   const relative = name.slice(`native/claude/${id}/`.length);
@@ -76,11 +89,11 @@ async function claudeCompanionTarget(transcript, id, name) {
   if (relative.startsWith('_mrmak-state/')) {
     const [, kind, ...parts] = relative.split('/');
     if (!claudeStateKinds.includes(kind) || !parts.length) throw new Error('Invalid Claude companion state entry.');
-    target = path.join(path.dirname(claudeRoot()), kind, id, ...parts);
+    target = path.join(path.dirname(path.dirname(path.dirname(transcript))), kind, id, ...parts);
   } else {
     target = path.join(path.dirname(transcript), id, ...relative.split('/'));
   }
-  const root = path.dirname(claudeRoot());
+  const root = path.dirname(path.dirname(path.dirname(transcript)));
   if (!within(root, target)) throw new Error('Claude companion data leaves its profile.');
   let current = root;
   for (const part of path.relative(root, target).split(path.sep)) {
@@ -90,11 +103,11 @@ async function claudeCompanionTarget(transcript, id, name) {
   }
   return target;
 }
-async function findClaudeNative(id) {
+async function findClaudeNative(id, home) {
   const matches = [];
-  for (const folder of await readdir(claudeRoot(), { withFileTypes: true }).catch(() => [])) {
+  for (const folder of await readdir(claudeRoot(home), { withFileTypes: true }).catch(() => [])) {
     if (!folder.isDirectory()) continue;
-    const file = path.join(claudeRoot(), folder.name, `${id}.jsonl`);
+    const file = path.join(claudeRoot(home), folder.name, `${id}.jsonl`);
     if ((await stat(file).catch(() => null))?.isFile()) matches.push(file);
   }
   if (matches.length > 1) throw new Error('Multiple native Claude files share this conversation ID. Resolve the duplicate before transferring it.');
@@ -104,7 +117,7 @@ async function claudeExportEntries(file, id) {
   const entries = [], sidecar = path.join(path.dirname(file), id);
   if (await stat(path.join(sidecar, '_mrmak-state')).catch(() => null)) throw new Error('Claude companion data uses a reserved transfer folder name.');
   if ((await stat(sidecar).catch(() => null))?.isDirectory() && within(await realpath(path.dirname(file)), await realpath(sidecar))) await walkNative(sidecar, `native/claude/${id}`, entries);
-  const root = await realpath(path.dirname(claudeRoot()));
+  const root = await realpath(path.dirname(path.dirname(path.dirname(file))));
   for (const kind of claudeStateKinds) {
     const folder = path.join(root, kind, id), actual = await realpath(folder).catch(() => null);
     if (actual && within(root, actual) && actual === folder && (await stat(folder)).isDirectory()) await walkNative(folder, `native/claude/${id}/_mrmak-state/${kind}`, entries);
@@ -114,7 +127,8 @@ async function claudeExportEntries(file, id) {
 
 async function walk(root, relative, found) {
   const folder = path.join(root, relative);
-  for (const item of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
+  await transferTarget(root, folder, true);
+  for (const item of await readdir(folder, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) {
     const name = `${relative}/${item.name}`.replaceAll('\\', '/');
     if (item.isSymbolicLink() || !accepted(name)) continue;
     if (item.isDirectory()) await walk(root, name, found);
@@ -132,6 +146,9 @@ async function walkNative(folder, prefix, found) {
 
 async function writeZip(target, entries) {
   const stream = createWriteStream(target, { flags: 'wx' });
+  let created = false;
+  stream.once('open', () => { created = true; });
+  const completion = finished(stream); completion.catch(() => {});
   let failure = null;
   const zip = new Zip((error, chunk, final) => {
     if (error) { failure = error; stream.destroy(error); return; }
@@ -145,12 +162,17 @@ async function writeZip(target, entries) {
       const item = new ZipDeflate(entry.name, { level: 6 });
       zip.add(item);
       if (entry.data) item.push(Buffer.from(entry.data), true);
-      else { for await (const chunk of createReadStream(entry.source, { highWaterMark: 64 * 1024 })) { if (failure) throw failure; item.push(chunk); } item.push(new Uint8Array(), true); }
+      else {
+        const hash = createHash('sha256');
+        for await (const chunk of createReadStream(entry.source, { highWaterMark: 64 * 1024 })) { if (failure) throw failure; hash.update(chunk); item.push(chunk); }
+        if (entry.expectedHash && hash.digest('hex') !== entry.expectedHash) throw new Error('Export source changed while writing the archive. Review export again.');
+        item.push(new Uint8Array(), true);
+      }
     }
     zip.end();
-    await once(stream, 'finish');
+    await completion;
     if (failure) throw failure;
-  } catch (error) { zip.terminate(); stream.destroy(); throw error; }
+  } catch (error) { zip.terminate(); stream.destroy(); await completion.catch(() => {}); if (created) await rm(target, { force: true }); throw error; }
 }
 
 async function extractZip(archive, destination) {
@@ -190,11 +212,45 @@ async function extractZip(archive, destination) {
 
 export class PortableArchive {
   constructor(repo, stateDir, sessions, projects) { Object.assign(this, { repo, stateDir, sessions, projects }); this.openCode = new OpenCodeTransfer(repo); this.attachmentPlans = new Map(); }
+  async claudeHome(session) {
+    if (!session) throw new Error('Claude native conversation has no associated profile.');
+    const context = await this.sessions.accountContext?.(session);
+    if (!context && session.accountProfileId && session.accountProfileId !== 'system') throw new Error('Connect the original Claude profile before transferring this conversation.');
+    return context?.directory || path.dirname(claudeRoot());
+  }
+  async claudeFile(session, nativeId = session.nativeId, options = {}) { return claudeTranscript(session.cwd, nativeId, { ...options, home: await this.claudeHome(session) }); }
+
+  async mediaTranscripts(sessions, mak, excluded = new Set()) {
+    const records = [], seen = new Set();
+    for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', nativeId: item.threadId, accountProfileId: item.accountProfileId, cwd: this.repo, purpose: 'mak' }))]) {
+      if (!['codex', 'claude'].includes(session.agent) || !uuid.test(session.nativeId || '') || excluded.has(nativeKey(session)) || seen.has(nativeKey(session)) || session.hasConversation === false && !session.lastInputAt && !session.preview && !session.purpose) continue;
+      seen.add(nativeKey(session));
+      const file = session.agent === 'codex' ? await this.sessions.codexFile(session, session.nativeId, { strict: true }) : await this.claudeFile(session, session.nativeId, { search: true });
+      if (file) records.push({ agent: session.agent, id: session.nativeId, path: file, sha256: await digest(file) });
+    }
+    return records;
+  }
+
+  async skillPlan(extracted, choices = []) {
+    if (!Array.isArray(choices)) throw new Error('Invalid skill conflict choices.');
+    if (!skillFiles.some(name => extracted.has(name))) {
+      if (choices.length) throw new Error('Skill conflict choices changed. Review import again.');
+      return { scopes: {}, conflicts: [] };
+    }
+    const local = [], incoming = [];
+    for (const name of [skillFiles[1], skillFiles[0]]) {
+      const target = path.join(this.repo, name); await transferTarget(this.repo, target);
+      const text = await readFile(target, 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      local.push(text === null ? {} : JSON.parse(text));
+      incoming.push(extracted.has(name) ? JSON.parse(await readFile(extracted.get(name), 'utf8')) : {});
+    }
+    return mergeSkillScopes(effectiveSkillScopes(...local), effectiveSkillScopes(...incoming), choices);
+  }
 
   async verifyNativeTranscripts(sessions = this.sessions.list(), mak, reportOnly = false) {
     mak ??= makConversations(await readJson(path.join(this.stateDir, 'mak-conversations.json'), { conversations: [], selected: {} }));
     const missing = [], checked = new Set();
-    for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', nativeId: item.threadId, name: `Mik · ${item.title || item.id}`, purpose: 'mak' }))]) {
+    for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', accountProfileId: item.accountProfileId, nativeId: item.threadId, name: `Mik · ${item.title || item.id}`, purpose: 'mak' }))]) {
       if (!['codex', 'claude'].includes(session.agent)) continue;
       // An explicit empty tab is not a missing conversation. Older metadata can
       // have a false flag even with user activity; never skip that activity.
@@ -205,7 +261,7 @@ export class PortableArchive {
       checked.add(key);
       if (!uuid.test(session.nativeId || '')) { missing.push(nativeIssue(session, 'Native ID missing')); continue; }
       try {
-        const file = session.agent === 'codex' ? await codexTranscript(session.nativeId, { strict: true }) : await claudeTranscript(session.cwd, session.nativeId, { search: true });
+        const file = session.agent === 'codex' ? await (this.sessions.codexFile ? this.sessions.codexFile(session, session.nativeId, { strict: true }) : codexTranscript(session.nativeId, { strict: true })) : await this.claudeFile(session, session.nativeId, { search: true });
         if (!file || !(await stat(file)).isFile()) throw new Error('Missing transcript');
         const handle = await open(file, 'r'); await handle.close();
         await verifyJsonl(file);
@@ -240,16 +296,22 @@ export class PortableArchive {
       families.push(data); hashes[session.nativeId] = openCodeHash(data);
     }
     const files = await reviewAttachments(families), token = randomUUID();
+    const mak = makConversations(await readJson(path.join(this.stateDir, 'mak-conversations.json'), { conversations: [], selected: {} }));
+    const transcripts = await this.mediaTranscripts(this.sessions.list(), mak, new Set(issues.map(item => item.key)));
+    const mediaPlan = await reviewConversationMedia(this.repo, this.stateDir, transcripts);
+    for (const item of transcripts) if (await digest(item.path) !== item.sha256) throw new Error('Conversation changed during media review. Review export again.');
+    mediaPlan.transcripts = transcripts;
     for (const [key, plan] of this.attachmentPlans) if (plan.expires < Date.now()) this.attachmentPlans.delete(key);
     if (this.attachmentPlans.size >= 16) this.attachmentPlans.clear();
-    this.attachmentPlans.set(token, { destination, files, hashes, issues, history: JSON.stringify(this.sessions.list()), expires: Date.now() + 5 * 60000 });
-    return { token, issues, files: files.map(({ path, bytes }) => ({ path, bytes })) };
+    this.attachmentPlans.set(token, { destination, files, hashes, issues, mediaPlan, history: JSON.stringify(this.sessions.list()), expires: Date.now() + 5 * 60000 });
+    return { token, issues, media: { files: mediaPlan.files.filter(item => !item.hub).map(({ path, bytes }) => ({ path, bytes })), hubFiles: mediaPlan.files.filter(item => item.hub).length, totalBytes: mediaPlan.totalBytes, omissions: mediaPlan.omissions }, notices: transferCoverage(this.sessions.list(), { chats: 'full', native: [] }).filter(item => item.reason), files: files.map(({ path, bytes }) => ({ path, bytes })) };
   }
 
-  async exportTo(folder, { chats = 'full', attachmentToken, approveAttachments = false, skipNative = [] } = {}) {
+  async exportTo(folder, { chats = 'full', attachmentToken, approveAttachments = false, includeMedia = false, approveMedia = false, skipNative = [] } = {}) {
     if (!['full', 'light'].includes(chats)) throw new Error('Choose full or light chat export.');
     const destination = await realpath(folder);
     const plan = attachmentToken ? this.attachmentPlans.get(attachmentToken) : null;
+    if (typeof includeMedia !== 'boolean' || includeMedia && (chats !== 'full' || !plan || !approveMedia)) throw new Error('Review and confirm external conversation media before including it.');
     if (attachmentToken) {
       this.attachmentPlans.delete(attachmentToken);
       if (!plan || plan.expires < Date.now() || plan.destination !== destination || plan.history !== JSON.stringify(this.sessions.list()) || (plan.files.length && approveAttachments !== true)) throw new Error('Attachment review expired, changed or was not confirmed. Review export again.');
@@ -261,10 +323,10 @@ export class PortableArchive {
     if (this.sessions.list().some(item => item.open)) throw new Error('Close all chat tabs before exporting a consistent workspace snapshot.');
     const entries = [];
     for (const relative of included) await walk(this.repo, relative, entries);
-    const sessions = this.sessions.list().map(({ toolRefresh, ...saved }) => { void toolRefresh; return saved; });
+    const sessions = this.sessions.list().map(({ toolRefresh, accountProfileLabel, conversationStoreId, ...saved }) => { void toolRefresh; void accountProfileLabel; void conversationStoreId; return saved; });
     const settings = await readJson(path.join(this.stateDir, 'settings.json'), {});
-    const portableSettings = Object.fromEntries(['defaultAgent', 'defaultBypass', 'defaultCodexPermissions', 'defaultWorkerEffort', 'defaultClaudeWorkerEffort', 'terminalFontSize', 'terminalAppearance', 'accentTheme', 'coordinatorEffort', 'voiceName', 'selectedProjectId'].filter(key => key in settings).map(key => [key, settings[key]]));
-    const stateFiles = { 'state/sessions.json': sessions, 'state/settings.json': portableSettings, 'state/inbox.json': await readJson(path.join(this.stateDir, 'inbox.json'), { resources: [] }) };
+    const portableSettings = Object.fromEntries(['defaultAgent', 'defaultBypass', 'defaultCodexPermissions', 'defaultClaudePermissions', 'defaultWorkerEffort', 'defaultClaudeWorkerEffort', 'terminalFontSize', 'completionNotifications', 'terminalAppearance', 'accentTheme', 'coordinatorEffort', 'voiceName', 'selectedProjectId'].filter(key => key in settings).map(key => [key, settings[key]]));
+    const stateFiles = { 'state/sessions.json': sessions, 'state/settings.json': portableSettings, 'state/inbox.json': inboxRegistry(await readJson(path.join(this.stateDir, 'inbox.json'), { resources: [] })) };
     stateFiles['state/mak-history.json'] = makHistory(await readJson(path.join(this.stateDir, 'mak-history.json'), { operations: [] }));
     const mak = makConversations(await readJson(path.join(this.stateDir, 'mak-conversations.json'), { conversations: [], selected: {} }));
     if (chats === 'full') {
@@ -287,16 +349,33 @@ export class PortableArchive {
       if (issue) conversation.nativeUnavailable = issue.reason;
     }
     stateFiles['state/sessions.json'] = sessions;
-    stateFiles['state/mak-conversations.json'] = mak;
+    stateFiles['state/mak-conversations.json'] = { ...mak, conversations: mak.conversations.map(({ conversationStoreId, ...item }) => { void conversationStoreId; return item; }) };
     for (const [name, value] of Object.entries(stateFiles)) entries.push({ name, data: JSON.stringify(value) });
     for (const session of sessions) {
       const file = path.join(this.stateDir, `screen-${session.id}.json`);
       if (await stat(file).catch(() => null)) entries.push({ name: `state/screen-${session.id}.json`, source: file });
+      if (session.agent === 'claude') {
+        // Queues remain local until a dedicated portable queue contract exists.
+        // Refuse a transfer that would silently discard unsent user work.
+        const queueFile = path.join(this.stateDir, `claude-queue-${session.id}.json`), queueInfo = await lstat(queueFile).catch(error => { if (error.code !== 'ENOENT') throw error; });
+        if (queueInfo) {
+          if (!queueInfo.isFile() || queueInfo.isSymbolicLink() || queueInfo.size > 3_000_000) throw new Error('Claude queue cannot be inspected safely before export.');
+          const pending = JSON.parse(await readFile(queueFile, 'utf8'));
+          if (!Array.isArray(pending.queue) || pending.queue.length || ['sending', 'accepted', 'uncertain'].includes(pending.steering?.operation?.status)) throw new Error('Finish or remove pending Claude queue entries before exporting this Hub, and review uncertain guidance. Queues currently remain local.');
+        }
+        const display = path.join(this.stateDir, `claude-chat-${session.id}.json`), info = await lstat(display).catch(error => { if (error.code !== 'ENOENT') throw error; });
+        if (info) {
+          if (!info.isFile() || info.isSymbolicLink() || info.size > 12000000) throw new Error('Claude display state is unavailable or too large.');
+          const saved = JSON.parse(await readFile(display, 'utf8'));
+          if (saved.repo !== this.stateDir) throw new Error('Claude display state belongs to another Hub.');
+          entries.push({ name: `state/claude-chat-${session.id}.json`, data: JSON.stringify(portableClaudeState(saved, session)) });
+        }
+      }
     }
     const locations = await readJson(path.join(this.stateDir, 'project-locations.json'), {});
     const native = [];
     const openCodeExportIds = new Set();
-    if (chats === 'full') for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', nativeId: item.threadId, cwd: this.repo, purpose: 'mak' }))]) {
+    if (chats === 'full') for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', accountProfileId: item.accountProfileId, nativeId: item.threadId, cwd: this.repo, purpose: 'mak' }))]) {
       if (skipped.has(nativeKey(session))) continue;
       if (session.agent === 'opencode') {
         if (!session.nativeId && !session.hasConversation) continue;
@@ -324,14 +403,14 @@ export class PortableArchive {
       if (session.hasConversation === false && !session.lastInputAt && !session.preview && !session.purpose) continue;
       if (!uuid.test(session.nativeId || '') || !['codex', 'claude'].includes(session.agent)) continue;
       if (native.some(item => item.agent === session.agent && item.id === session.nativeId)) continue;
-      const file = session.agent === 'codex' ? await codexTranscript(session.nativeId, { strict: true }) : await claudeTranscript(session.cwd, session.nativeId, { search: true });
+      const file = session.agent === 'codex' ? await (this.sessions.codexFile ? this.sessions.codexFile(session, session.nativeId, { strict: true }) : codexTranscript(session.nativeId, { strict: true })) : await this.claudeFile(session, session.nativeId, { search: true });
       if (!file || !(await stat(file).catch(() => null))?.isFile()) throw new Error('Native transcript disappeared during full export. No incomplete archive was created; retry or choose light export.');
       const name = `native/${session.agent}/${session.nativeId}.jsonl`;
       entries.push({ name, source: file });
       if (session.agent === 'claude') {
         entries.push(...await claudeExportEntries(file, session.nativeId));
       }
-      const codexRoot = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+      const codexRoot = (await this.sessions.accountContext?.(session))?.sharedHome || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
       native.push({ agent: session.agent, id: session.nativeId, ...(session.purpose ? { purpose: session.purpose } : {}), name, sha256: await digest(file), cwd: session.cwd,
         relative: session.agent === 'codex' ? path.relative(path.join(codexRoot, 'sessions'), file).replaceAll('\\', '/') : null });
     }
@@ -339,15 +418,30 @@ export class PortableArchive {
     const projectRegistry = await readJson(path.join(this.repo, 'projects', 'registry.json'), { projects: [] });
     const projectNames = Object.fromEntries((projectRegistry.projects || []).map(item => [item.id, item.name]));
     const projectDefinitions = Object.fromEntries((projectRegistry.projects || []).map(item => [item.id, { name: item.name, repositories: item.repositories }]));
-    const manifest = { format: 'mrmak-workspace', version: 1, createdAt: new Date().toISOString(), chats, sourceHub: this.repo, projectPaths, projectNames, projectDefinitions, native, nativeOmissions: plan?.issues || [], files: [] };
+    let media = { version: 1, refs: [], omissions: [] };
+    if (chats === 'full') {
+      const transcripts = native.filter(item => ['codex', 'claude'].includes(item.agent)).map(item => ({ agent: item.agent, id: item.id, path: entries.find(entry => entry.name === item.name).source, sha256: item.sha256 }));
+      if (plan) for (const item of transcripts) if (!plan.mediaPlan.transcripts.some(before => before.agent === item.agent && before.id === item.id && before.sha256 === item.sha256)) throw new Error('Conversation changed after media review. Review export again.');
+      const mediaPlan = plan?.mediaPlan || await reviewConversationMedia(this.repo, this.stateDir, transcripts);
+      const active = new Set(transcripts.map(item => `${item.agent}:${item.id}`));
+      const prepared = await prepareConversationMedia({ ...mediaPlan, refs: mediaPlan.refs.filter(item => active.has(`${item.agent}:${item.threadId}`)), omissions: mediaPlan.omissions.filter(item => active.has(`${item.agent}:${item.threadId}`)) }, includeMedia, new Set(entries.map(item => item.name)));
+      media = prepared.media;
+      for (const entry of prepared.entries) if (!entries.some(item => item.name === entry.name)) entries.push(entry);
+    }
+    const manifest = { format: 'mrmak-workspace', version: media.refs.length ? 2 : 1, transfer: { ...transferContract(), required: [...(sessions.some(session => session.agent === 'claude' && session.accountProfileId && session.accountProfileId !== 'system') ? ['claude-profiles-v1'] : []), ...(media.refs.length ? ['conversation-media-v1'] : []), ...(entries.some(entry => /^state\/claude-chat-/.test(entry.name)) ? ['claude-display-v1', 'claude-composer-v1'] : [])] }, media, createdAt: new Date().toISOString(), chats, sourceHub: this.repo, projectPaths, projectNames, projectDefinitions, native, nativeOmissions: plan?.issues || [], files: [] };
     for (const entry of entries) {
       if (!accepted(entry.name) && !entry.name.startsWith('native/')) throw new Error('Unexpected export entry.');
-      manifest.files.push({ name: entry.name, size: entry.source ? (await stat(entry.source)).size : Buffer.byteLength(entry.data), sha256: entry.source ? await digest(entry.source) : createHash('sha256').update(entry.data).digest('hex') });
+      const sha256 = entry.source ? await digest(entry.source) : createHash('sha256').update(entry.data).digest('hex');
+      if (entry.expectedHash && sha256 !== entry.expectedHash) throw new Error('Conversation media changed before export. Review export again.');
+      entry.expectedHash = sha256;
+      manifest.files.push({ name: entry.name, size: entry.source ? (await stat(entry.source)).size : Buffer.byteLength(entry.data), sha256 });
     }
-    const name = `MrMak-Workspace-${new Date().toISOString().replace(/[:.]/g, '-')}.mrmak.zip`;
+    validateMediaManifest(media, manifest);
+    if (native.some(item => manifest.files.find(file => file.name === item.name)?.sha256 !== item.sha256)) throw new Error('Native conversation changed during export. Review export again.');
+    const name = `MrMik-Workspace-${new Date().toISOString().replace(/[:.]/g, '-')}.mrmak.zip`;
     const target = path.join(destination, name);
     await writeZip(target, [{ name: 'manifest.json', data: JSON.stringify(manifest) }, ...entries]);
-    return { path: target, files: entries.length, chats: native.length, omitted: skipped.size, bytes: (await stat(target)).size };
+    return { path: target, files: entries.length, chats: native.length, omitted: skipped.size, coverage: transferCoverage(sessions, manifest), bytes: (await stat(target)).size };
   }
 
   async preview(source) {
@@ -361,7 +455,10 @@ export class PortableArchive {
       if (extracted.has('state/mak-history.json')) makHistory(JSON.parse(await readFile(extracted.get('state/mak-history.json'), 'utf8')));
       const mak = extracted.has('state/mak-conversations.json') ? makConversations(JSON.parse(await readFile(extracted.get('state/mak-conversations.json'), 'utf8'))) : { conversations: [], selected: {} };
       mergeMakConversations(await readJson(path.join(this.stateDir, 'mak-conversations.json'), { conversations: [], selected: {} }), mak);
-      if (manifest.format !== 'mrmak-workspace' || manifest.version !== 1 || !Array.isArray(manifest.files) || !Array.isArray(manifest.native)) throw new Error('Unsupported workspace archive.');
+      if (manifest.format !== 'mrmak-workspace' || ![1, 2].includes(manifest.version) || !Array.isArray(manifest.files) || !Array.isArray(manifest.native)) throw new Error('Unsupported workspace archive.');
+      validateTransferContract(manifest);
+      if (manifest.media) validateMediaManifest(manifest.media, manifest);
+      if (manifest.version === 1 && manifest.media?.refs.length) throw new Error('Conversation media bindings require archive version 2.');
       if (new Set(manifest.files.map(file => file.name)).size !== manifest.files.length || manifest.files.some(file => !accepted(file.name) || !Number.isSafeInteger(file.size) || file.size < 0 || !/^[a-f0-9]{64}$/i.test(file.sha256))) throw new Error('Archive file inventory is invalid or unsafe.');
       if ([...extracted.keys()].some(name => name !== 'manifest.json' && !manifest.files.some(file => file.name === name))) throw new Error('Archive file inventory does not match its manifest.');
       const missingFiles = new Set();
@@ -378,10 +475,19 @@ export class PortableArchive {
         return field ? value[field] : value;
       };
       const sessions = await jsonArray('state/sessions.json');
+      validateTransferredSessions(sessions);
+      for (const entry of manifest.files.filter(item => /^state\/claude-chat-/.test(item.name))) {
+        const session = sessions.find(item => item.agent === 'claude' && entry.name === `state/claude-chat-${item.id}.json`);
+        if (!session || entry.size > 12000000 || !manifest.transfer?.required?.includes('claude-display-v1')) throw new Error('Unassociated Claude display state.');
+        const display = portableClaudeState(JSON.parse(await readFile(extracted.get(entry.name), 'utf8')), session);
+        if ((display.composerContext.length || display.state.items.some(item => item.composerContext?.length) || display.historyMetadata.some(item => item.composerContext?.length)) && !manifest.transfer.required.includes('claude-composer-v1')) throw new Error('Missing Claude composer transfer feature.');
+      }
       for (const session of sessions) if (session?.agent === 'codex') codexPermissionMode(session.codexPermissions, session.bypass);
       await jsonArray('projects/registry.json', 'projects');
       await jsonArray('workspace/workspace.json', 'entities');
-      await jsonArray('state/inbox.json', 'resources');
+      const inboxFile = extracted.get('state/inbox.json');
+      if (!inboxFile) throw new Error('Archive is missing state/inbox.json.');
+      inboxRegistry(JSON.parse(await readFile(inboxFile, 'utf8')));
       for (const session of sessions) if (!session || !uuid.test(session.id) || !['codex', 'claude', 'opencode', 'kimi', 'shell'].includes(session.agent) || session.nativeUnavailable != null && (typeof session.nativeUnavailable !== 'string' || session.nativeUnavailable.length > 200)) throw new Error('Archive contains invalid chat metadata.');
       if (!manifest.projectPaths || typeof manifest.projectPaths !== 'object' || Array.isArray(manifest.projectPaths)) throw new Error('Archive has no project location map.');
       for (const [projectId, repositories] of Object.entries(manifest.projectPaths)) {
@@ -421,7 +527,7 @@ export class PortableArchive {
           if (item.agent === 'codex' && (!safePath(item.relative) || !item.relative.endsWith(`-${item.id}.jsonl`))) throw new Error('Invalid Codex transcript location.');
           if (manifest.files.find(file => file.name === item.name)?.sha256 !== item.sha256) throw new Error('Native session checksum does not match the archive.');
           await verifyJsonl(extracted.get(item.name));
-          const local = item.agent === 'codex' ? await codexTranscript(item.id, { strict: true }) : await findClaudeNative(item.id);
+          const local = item.agent === 'codex' ? await codexTranscript(item.id, { strict: true }) : await findClaudeNative(item.id, await this.claudeHome(sessions.find(session => session.agent === 'claude' && session.nativeId === item.id)));
           const localHash = local && await stat(local).catch(() => null) ? await digest(local) : null;
           let status = !localHash ? 'new' : localHash === item.sha256 ? 'identical' : await transcriptRelation(local, extracted.get(item.name));
           // Claude subagent logs are part of the same conversation. A changed
@@ -430,7 +536,7 @@ export class PortableArchive {
           if (item.agent === 'claude') {
             for (const entry of manifest.files.filter(file => file.name.startsWith(`native/claude/${item.id}/`))) {
               if (entry.name.endsWith('.jsonl')) await verifyJsonl(extracted.get(entry.name));
-              const transcript = local || await claudeTranscript(item.cwd, item.id);
+              const transcript = local || await this.claudeFile(sessions.find(session => session.agent === 'claude' && session.nativeId === item.id), item.id);
               const target = await claudeCompanionTarget(transcript, item.id, entry.name);
               const hash = await stat(target).catch(() => null) ? await digest(target) : null;
               sidecars.push({ name: entry.name, localHash: hash });
@@ -446,27 +552,39 @@ export class PortableArchive {
       }
       if (manifest.nativeOmissions != null && (!Array.isArray(manifest.nativeOmissions) || manifest.nativeOmissions.length > 10000)) throw new Error('Invalid omitted conversation inventory.');
       for (const issue of manifest.nativeOmissions || []) {
-        const session = sessions.find(session => nativeKey(session) === issue.key) || mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', nativeId: item.threadId, name: `Mik · ${item.title}` })).find(session => nativeKey(session) === issue.key);
+        const session = sessions.find(session => nativeKey(session) === issue.key) || mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', accountProfileId: item.accountProfileId, nativeId: item.threadId, name: `Mik · ${item.title}` })).find(session => nativeKey(session) === issue.key);
         if (!session || !['codex', 'claude', 'opencode'].includes(session.agent) || typeof issue.reason !== 'string' || issue.reason.length > 200 || manifest.native.some(item => `${item.agent}:${item.id}` === issue.key)) throw new Error('Invalid omitted conversation association.');
         if (!native.some(item => (item.key || `${item.agent}:${item.id}`) === issue.key)) native.push({ ...nativeIssue(session, issue.reason), status: 'unavailable', localHash: null, local: null, sidecars: [] });
       }
-      if (manifest.chats === 'full') for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', nativeId: item.threadId, name: `Mik · ${item.title}` }))]) {
+      if (manifest.chats === 'full') for (const session of [...sessions, ...mak.conversations.filter(item => item.threadId).map(item => ({ agent: 'codex', accountProfileId: item.accountProfileId, nativeId: item.threadId, name: `Mik · ${item.title}` }))]) {
         if (!['codex', 'claude', 'opencode'].includes(session.agent) || !session.nativeId && !session.hasConversation && !session.lastInputAt && !session.preview || session.hasConversation === false && !session.lastInputAt && !session.preview) continue;
         if (!native.some(item => (item.key || `${item.agent}:${item.id}`) === nativeKey(session))) native.push({ ...nativeIssue(session, 'No native conversation included in this full archive'), status: 'unavailable', localHash: null, local: null, sidecars: [] });
       }
       const hubConflicts = [];
-      for (const file of manifest.files.filter(item => !item.name.startsWith('native/') && !/^state\/(?:sessions|mak-history|mak-conversations|screen-.*)\.json$/.test(item.name))) {
+      const skills = await this.skillPlan(extracted);
+      for (const file of manifest.files.filter(item => !skillFiles.includes(item.name) && !item.name.startsWith('native/') && !/^state\/(?:sessions|mak-history|mak-conversations|screen-.*|claude-chat-.*)\.json$/.test(item.name))) {
         const target = file.name.startsWith('state/') ? path.join(this.stateDir, file.name.slice(6)) : path.join(this.repo, ...file.name.split('/'));
+        await transferTarget(this.repo, target);
         if (await stat(target).catch(() => null)) hubConflicts.push({ name: file.name, identical: await digest(target) === file.sha256 });
       }
       const localLocations = await readJson(path.join(this.stateDir, 'project-locations.json'), {});
       const suggestedRelinks = Object.fromEntries(Object.entries(manifest.projectPaths).map(([id, repositories]) => [id, Object.fromEntries(Object.entries(repositories).map(([key, value]) => [key, localLocations[id]?.repositories?.[key] || (key === 'primary' && localLocations[id]?.repositoryPath) || value]))]));
       if (await digest(archive) !== reviewHash) throw new Error('Archive changed during review. Choose it again.');
-      return { manifest, native, hubConflicts, suggestedRelinks, reviewHash };
+      return { manifest, native, hubConflicts, skillConflicts: skills.conflicts, suggestedRelinks, reviewHash, coverage: transferCoverage(sessions, manifest) };
     } finally { await rm(temp, { recursive: true, force: true }); }
   }
 
-  async importFrom(source, { relinks = {}, replaceNative = [], replaceHub = [], restoreSettings = false, skipNative = [], reviewHash } = {}) {
+  async importFrom(...args) {
+    if (this.importing) throw new Error('Wait for the current workspace import to finish.');
+    this.importing = true;
+    let releasePersistence;
+    try {
+      releasePersistence = await this.sessions.holdPersistence?.();
+      return await this.performImport(...args);
+    } finally { releasePersistence?.(); this.importing = false; }
+  }
+
+  async performImport(source, { relinks = {}, replaceNative = [], replaceHub = [], replaceSkills = [], restoreSettings = false, skipNative = [], reviewHash } = {}) {
     if (this.sessions.list().some(item => item.open)) throw new Error('Close all chat tabs before importing.');
     const preview = await this.preview(source);
     const { manifest } = preview;
@@ -496,14 +614,27 @@ export class PortableArchive {
         mapped[projectId][repositoryId] = root;
       }
     }
+    const nativeLeases = [];
     const temp = await mkdtemp(path.join(os.tmpdir(), 'mrmak-import-'));
-    const backup = path.join(this.stateDir, 'import-backups', new Date().toISOString().replace(/[:.]/g, '-'));
+    const backup = path.join(this.stateDir, 'import-backups', `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}`);
+    const transaction = new ImportTransaction(this.repo, this.stateDir, backup);
+    const originalItems = new Map(this.sessions.items);
+    const pendingItems = new Map();
+    const notifications = [];
+    let importFailure;
     const result = { imported: 0, skipped: 0, nativeImported: 0, nativeUpdated: 0, nativeSkipped: unavailable.filter(item => !manifest.native.some(entry => `${entry.agent}:${entry.id}` === item.key)).length, sessionsUpdated: 0, backup };
     try {
       const extracted = await extractZip(await realpath(source), temp);
+      const codexTarget = manifest.native.some(item => item.agent === 'codex') ? await this.sessions.accountContext?.({ agent: 'codex', accountProfileId: 'system' }) : null;
+      if (codexTarget) for (const item of preview.native) if (item.agent === 'codex' && !['identical', 'local-newer', 'unavailable'].includes(item.status) && !skippedNative.has(`codex:${item.id}`)) nativeLeases.push(await leaseConversation(codexTarget, item.id));
       const importedSessions = JSON.parse(await readFile(extracted.get('state/sessions.json'), 'utf8'));
       if (!Array.isArray(importedSessions)) throw new Error('Archive History is invalid.');
+      for (const item of preview.native) if (item.agent === 'claude' && !['identical', 'local-newer', 'unavailable'].includes(item.status) && !skippedNative.has(`claude:${item.id}`)) {
+        const session = importedSessions.find(session => session.agent === 'claude' && session.nativeId === item.id), context = await this.sessions.accountContext?.(session);
+        if (context) nativeLeases.push(await leaseConversation(context, item.id));
+      }
       const currentSessions = this.sessions.list();
+      const skills = await this.skillPlan(extracted, replaceSkills);
       if (await digest(await realpath(source)) !== preview.reviewHash) throw new Error('Archive changed during import. Choose the archive again.');
       for (const entry of manifest.files) {
         if (!extracted.has(entry.name) && nativeSkippedFile(entry.name, skippedNative)) continue;
@@ -513,13 +644,48 @@ export class PortableArchive {
         const existing = currentSessions.find(item => item.id === session.id);
         if (existing && (existing.agent !== session.agent || existing.nativeId !== session.nativeId)) throw new Error('A History ID belongs to a different conversation. Import into a fresh Hub.');
       }
+      const nativeDestinations = new Map();
+      const nativeRoots = [];
+      for (const native of manifest.native) {
+        const conflict = preview.native.find(item => item.agent === native.agent && item.id === native.id);
+        if (native.agent === 'opencode' || ['unavailable', 'local-newer'].includes(conflict.status) || conflict.status === 'conflict' && !allowedNative.has(`${native.agent}:${native.id}`)) continue;
+        let target, root;
+        if (native.agent === 'codex') {
+          if (!safePath(native.relative) || !native.relative.endsWith(`-${native.id}.jsonl`)) throw new Error('Invalid Codex transcript location.');
+          root = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+          target = conflict.local || path.join(root, 'sessions', ...native.relative.split('/'));
+        } else {
+          const session = importedSessions.find(item => item.agent === 'claude' && item.nativeId === native.id);
+          if (!session) throw new Error('Claude transcript has no matching chat.');
+          root = await this.claudeHome(session);
+          target = conflict.local || await this.claudeFile({ ...session, cwd: this.relocatedCwd(session, manifest, mapped) }, native.id);
+        }
+        // Validate the configured native root, then use its nearest existing
+        // ancestor only for creating a previously absent profile directory.
+        let anchor = root;
+        while (!await lstat(anchor).catch(error => { if (error.code === 'ENOENT') return null; throw error; })) anchor = path.dirname(anchor);
+        await transferTarget(anchor, root, true);
+        await transferTarget(anchor, target);
+        nativeRoots.push(anchor); nativeDestinations.set(`${native.agent}:${native.id}`, target);
+        if (native.agent === 'claude') for (const entry of manifest.files.filter(item => item.name.startsWith(`native/claude/${native.id}/`))) await transferTarget(anchor, await claudeCompanionTarget(target, native.id, entry.name));
+      }
+      await transaction.initialize(nativeRoots);
+      if (this.sessions.list().some(item => item.open)) throw new Error('Close all chat tabs before importing.');
+      await this.sessions.saveChain;
+      for (const entry of manifest.files.filter(item => !item.name.startsWith('native/'))) {
+        const file = entry.name.startsWith('state/') ? path.join(this.stateDir, entry.name.slice(6)) : path.join(this.repo, ...entry.name.split('/'));
+        await transaction.check(file);
+      }
+      for (const name of ['sessions.json', 'sessions.json.previous', 'settings.json', 'project-locations.json', 'mak-history.json', 'mak-conversations.json', 'conversation-media.json']) await transaction.check(path.join(this.stateDir, name));
+      await transaction.check(path.join(this.repo, skillFiles[0]));
+      for (const session of [...currentSessions, ...importedSessions]) await transaction.check(path.join(this.stateDir, `screen-${session.id}.json`));
       for (const item of preview.native) {
         if (item.status === 'unavailable') continue;
         if (item.agent === 'opencode') { if (openCodeHash(await this.openCode.read(item.id)) !== item.localHash) throw new Error('OpenCode conversation changed during import. Close its CLI and preview again.'); continue; }
-        const local = item.agent === 'codex' ? await codexTranscript(item.id, { strict: true }) : await findClaudeNative(item.id);
+        const local = item.agent === 'codex' ? await codexTranscript(item.id, { strict: true }) : await findClaudeNative(item.id, await this.claudeHome(importedSessions.find(session => session.agent === 'claude' && session.nativeId === item.id)));
         if ((local ? await digest(local) : null) !== item.localHash) throw new Error('A native conversation changed during import. Close its CLI and preview again.');
         for (const entry of item.sidecars) {
-          const file = await claudeCompanionTarget(local || await claudeTranscript(item.cwd, item.id), item.id, entry.name);
+          const file = await claudeCompanionTarget(local || await this.claudeFile(importedSessions.find(session => session.agent === 'claude' && session.nativeId === item.id), item.id), item.id, entry.name);
           const hash = await stat(file).catch(() => null) ? await digest(file) : null;
           if (hash !== entry.localHash) throw new Error('Claude companion data changed during import. Close its CLI and preview again.');
         }
@@ -537,26 +703,31 @@ export class PortableArchive {
         return output;
       };
       const incomingMak = extracted.has('state/mak-history.json') ? makHistory(JSON.parse(await readFile(extracted.get('state/mak-history.json'), 'utf8'))) : null;
-      const special = new Set(['projects/registry.json', 'workspace/workspace.json', 'state/sessions.json', 'state/settings.json', 'state/inbox.json', 'state/mak-history.json', 'state/mak-conversations.json']);
-      for (const entry of manifest.files.filter(item => !item.name.startsWith('native/') && !special.has(item.name) && !/^state\/screen-/.test(item.name))) {
+      const special = new Set(['projects/registry.json', 'workspace/workspace.json', ...skillFiles, 'state/sessions.json', 'state/settings.json', 'state/inbox.json', 'state/mak-history.json', 'state/mak-conversations.json']);
+      for (const entry of manifest.files.filter(item => !item.name.startsWith('native/') && !special.has(item.name) && !/^state\/(?:screen|claude-chat)-/.test(item.name))) {
         const target = entry.name.startsWith('state/') ? path.join(this.stateDir, entry.name.slice(6)) : path.join(this.repo, ...entry.name.split('/'));
         const current = await stat(target).catch(() => null);
         if (current && await digest(target) === entry.sha256) { result.skipped++; continue; }
         if (current && !allowedHub.has(entry.name)) { result.skipped++; continue; }
-        await mkdir(path.dirname(target), { recursive: true });
         if (current) { await mkdir(path.dirname(path.join(backup, entry.name)), { recursive: true }); await copyFile(target, path.join(backup, entry.name)); }
-        const staged = `${target}.${randomUUID()}.tmp`;
-        await copyFile(extracted.get(entry.name), staged); await rename(staged, target); result.imported++;
+        await transaction.copy(extracted.get(entry.name), target); result.imported++;
+      }
+      if (skillFiles.some(name => extracted.has(name))) {
+        if (extracted.has(skillFiles[1]) && !await stat(path.join(this.repo, skillFiles[1])).catch(() => null)) await transaction.copy(extracted.get(skillFiles[1]), path.join(this.repo, skillFiles[1]));
+        await transaction.json(path.join(this.repo, skillFiles[0]), skills.scopes);
+        result.skillConflictsKept = skills.conflicts.filter(item => !replaceSkills.includes(item.id)).length;
       }
       for (const [name, field, fallback] of [['projects/registry.json', 'projects', { projects: [] }], ['workspace/workspace.json', 'entities', { entities: [], resources: [] }], ['state/inbox.json', 'resources', { resources: [] }]]) {
         if (!extracted.has(name)) continue;
         const target = name.startsWith('state/') ? path.join(this.stateDir, name.slice(6)) : path.join(this.repo, name);
-        const original = await readJson(target, fallback), incoming = JSON.parse(await readFile(extracted.get(name), 'utf8'));
+        const localData = await readJson(target, fallback), archiveData = JSON.parse(await readFile(extracted.get(name), 'utf8'));
+        const original = name === 'state/inbox.json' ? inboxRegistry(localData) : localData;
+        const incoming = name === 'state/inbox.json' ? inboxRegistry(archiveData) : archiveData;
         const preferIncoming = allowedHub.has(name);
         if (preferIncoming && await stat(target).catch(() => null)) { const saved = path.join(backup, name); await mkdir(path.dirname(saved), { recursive: true }); await copyFile(target, saved); }
         let merged = mergeById(original, incoming, field, preferIncoming);
         if (name === 'workspace/workspace.json') merged = mergeById(merged, incoming, 'resources', preferIncoming);
-        await saveJson(target, merged);
+        await transaction.json(target, merged);
       }
       if (restoreSettings) {
         const file = extracted.get('state/settings.json');
@@ -567,9 +738,12 @@ export class PortableArchive {
         if (['codex', 'claude', 'opencode', 'kimi', 'shell'].includes(incoming.defaultAgent)) portable.defaultAgent = incoming.defaultAgent;
         if (typeof incoming.defaultBypass === 'boolean') portable.defaultBypass = incoming.defaultBypass;
         if (incoming.defaultCodexPermissions != null || typeof incoming.defaultBypass === 'boolean') portable.defaultCodexPermissions = codexPermissionMode(incoming.defaultCodexPermissions, incoming.defaultBypass);
+        if (['ask', 'bypass'].includes(incoming.defaultClaudePermissions)) portable.defaultClaudePermissions = incoming.defaultClaudePermissions;
+        else if (typeof incoming.defaultBypass === 'boolean') portable.defaultClaudePermissions = incoming.defaultBypass ? 'bypass' : 'ask';
         if (workerEfforts.includes(incoming.defaultWorkerEffort)) portable.defaultWorkerEffort = incoming.defaultWorkerEffort;
         if (claudeEfforts.includes(incoming.defaultClaudeWorkerEffort)) portable.defaultClaudeWorkerEffort = incoming.defaultClaudeWorkerEffort;
         if (Number.isInteger(incoming.terminalFontSize) && incoming.terminalFontSize >= 10 && incoming.terminalFontSize <= 24) portable.terminalFontSize = incoming.terminalFontSize;
+        if (typeof incoming.completionNotifications === 'boolean') portable.completionNotifications = incoming.completionNotifications;
         if (['focus', 'original'].includes(incoming.terminalAppearance)) portable.terminalAppearance = incoming.terminalAppearance;
         if (['rose', 'violet', 'blue', 'teal'].includes(incoming.accentTheme)) portable.accentTheme = incoming.accentTheme;
         if (workerEfforts.includes(incoming.coordinatorEffort)) portable.coordinatorEffort = incoming.coordinatorEffort;
@@ -578,7 +752,7 @@ export class PortableArchive {
         const settingsPath = path.join(this.stateDir, 'settings.json');
         const current = await readJson(settingsPath, {});
         if (await stat(settingsPath).catch(() => null)) { const saved = path.join(backup, 'state', 'settings.json'); await mkdir(path.dirname(saved), { recursive: true }); await copyFile(settingsPath, saved); }
-        await saveJson(settingsPath, { ...current, ...portable });
+        await transaction.json(settingsPath, { ...current, ...portable });
         result.restoredSettings = portable;
       }
       const locationsPath = path.join(this.stateDir, 'project-locations.json');
@@ -588,7 +762,7 @@ export class PortableArchive {
         const merged = { ...(current.repositories || {}), ...repositories };
         locations[id] = { ...current, repositories: merged, repositoryPath: merged.primary || Object.values(merged)[0] };
       }
-      await saveJson(locationsPath, locations);
+      await transaction.json(locationsPath, locations);
       for (const native of manifest.native) {
         const conflict = preview.native.find(item => item.agent === native.agent && item.id === native.id);
         if (conflict.status === 'unavailable') { result.nativeSkipped++; continue; }
@@ -600,28 +774,18 @@ export class PortableArchive {
           if (local) { await mkdir(path.join(backup, 'native', 'opencode'), { recursive: true }); await saveJson(path.join(backup, 'native', 'opencode', `${native.id}.json`), local); }
           const session = importedSessions.find(item => item.agent === 'opencode' && item.nativeId === native.id);
           const cwd = this.relocatedCwd(session, manifest, mapped);
-          if (session.projectId && session.repositoryId === null) await mkdir(cwd, { recursive: true });
+          if (session.projectId && session.repositoryId === null) await transaction.directory(cwd);
+          await transaction.externalWrite({ agent: 'opencode', id: native.id, backup: path.join(backup, 'native', 'opencode'), status: 'attempted' });
           await this.openCode.write(validateOpenCode(parseOpenCode(await readFile(extracted.get(native.name), 'utf8')), native.id), cwd, conflict.localHash, { backupDirectory: path.join(backup, 'native', 'opencode') });
           if (local) result.nativeUpdated++; else result.nativeImported++;
           continue;
         }
-        let target;
-        if (native.agent === 'codex') {
-          if (!safePath(native.relative) || !native.relative.endsWith(`-${native.id}.jsonl`)) throw new Error('Invalid Codex transcript location.');
-          target = conflict.local || path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions', ...native.relative.split('/'));
-        } else {
-          const session = importedSessions.find(item => item.agent === 'claude' && item.nativeId === native.id);
-          if (!session) throw new Error('Claude transcript has no matching chat.');
-          const cwd = this.relocatedCwd(session, manifest, mapped);
-          target = conflict.local || await claudeTranscript(cwd, native.id);
-        }
+        const target = nativeDestinations.get(`${native.agent}:${native.id}`);
         const current = await stat(target).catch(() => null);
         if ((current ? await digest(target) : null) !== conflict.localHash) throw new Error('A native conversation changed during import. Close its CLI and preview again.');
         if (conflict.status !== 'identical') {
           if (current) { const saved = path.join(backup, 'native', native.agent, `${native.id}.jsonl`); await mkdir(path.dirname(saved), { recursive: true }); await copyFile(target, saved); }
-          await mkdir(path.dirname(target), { recursive: true });
-          const staged = `${target}.${randomUUID()}.tmp`;
-          await copyFile(extracted.get(native.name), staged); await rename(staged, target);
+          await transaction.copy(extracted.get(native.name), target);
           if (current) result.nativeUpdated++; else result.nativeImported++;
         } else result.nativeSkipped++;
         if (native.agent === 'claude') for (const entry of manifest.files.filter(item => item.name.startsWith(`native/claude/${native.id}/`))) {
@@ -634,12 +798,11 @@ export class PortableArchive {
             const saved = path.join(backup, entry.name);
             await mkdir(path.dirname(saved), { recursive: true }); await copyFile(sidecarTarget, saved);
           }
-          await mkdir(path.dirname(sidecarTarget), { recursive: true });
-          const stagedSidecar = `${sidecarTarget}.${randomUUID()}.tmp`;
-          await copyFile(extracted.get(entry.name), stagedSidecar); await rename(stagedSidecar, sidecarTarget);
+          await transaction.copy(extracted.get(entry.name), sidecarTarget);
         }
       }
       const targetSessions = [...currentSessions];
+      const destinationIds = sessionDestinationIds(importedSessions, currentSessions);
       let historyBackedUp = false;
       for (const session of importedSessions) {
         if (!session || !uuid.test(session.id) || !['codex', 'claude', 'opencode', 'kimi', 'shell'].includes(session.agent)) throw new Error('Archive contains invalid chat metadata.');
@@ -649,6 +812,7 @@ export class PortableArchive {
         // Never attach an incoming screen to a divergent/unimported native chat,
         // even when the destination has no Mr. Mik History entry yet.
         if (native?.agent === 'opencode' && ['conflict', 'local-newer'].includes(native.status)) { result.skipped++; continue; }
+        if (native?.agent === 'claude' && (native.status === 'local-newer' || native.status === 'conflict' && !allowedNative.has(`claude:${native.id}`))) { result.skipped++; continue; }
         const accepted = native && (['new', 'update'].includes(native.status) || native.status === 'conflict' && allowedNative.has(`${native.agent}:${native.id}`) || native.status === 'identical' && Date.parse(session.updatedAt) > Date.parse(existing?.updatedAt || '1970-01-01'));
         if (existing && !accepted) { result.skipped++; continue; }
         if (existing && !historyBackedUp) {
@@ -657,8 +821,8 @@ export class PortableArchive {
           historyBackedUp = true;
         }
         const cwd = this.relocatedCwd(session, manifest, mapped);
-        if (session.projectId && session.repositoryId === null && within(path.join(this.repo, 'workspace', 'planning'), cwd)) await mkdir(cwd, { recursive: true });
-        const item = { ...session, id: existing?.id || session.id, cwd, open: false, status: 'stopped', restoreError: null, nativeUnavailable: native?.status === 'unavailable' ? native.reason : native ? null : session.nativeUnavailable || null };
+        if (session.projectId && session.repositoryId === null && within(path.join(this.repo, 'workspace', 'planning'), cwd)) await transaction.directory(cwd);
+        const item = { ...session, ...(session.accountProfileId && session.accountProfileId !== 'system' ? { accountProfileId: existing?.accountProfileId || `unmapped-${session.accountProfileId}`, accountProfileLabel: 'Choose a local account', conversationStoreId: existing?.conversationStoreId || null } : {}), id: existing?.id || session.id, cwd, open: false, status: 'stopped', restoreError: null, nativeUnavailable: native?.status === 'unavailable' ? native.reason : native ? null : unsupportedNativeReason(session) || session.nativeUnavailable || null };
         const screen = path.join(this.stateDir, `screen-${item.id}.json`);
         const incomingScreen = extracted.get(`state/screen-${session.id}.json`);
         if (existing && await stat(screen).catch(() => null)) {
@@ -666,23 +830,49 @@ export class PortableArchive {
           await copyFile(screen, path.join(backup, 'state', `screen-${item.id}.json`));
         }
         // Never combine a newer transcript with an older saved terminal screen.
-        if (incomingScreen) { await mkdir(this.stateDir, { recursive: true }); await copyFile(incomingScreen, screen); }
-        else if (existing) await rm(screen, { force: true });
-        if (existing) { targetSessions[position] = item; result.sessionsUpdated++; this.sessions.get(item.id).terminal?.dispose(); }
+        if (incomingScreen) await transaction.copy(incomingScreen, screen);
+        else if (existing) await transaction.remove(screen);
+        if (item.agent === 'claude') {
+          const display = path.join(this.stateDir, `claude-chat-${item.id}.json`), incomingDisplay = extracted.get(`state/claude-chat-${session.id}.json`);
+          if (incomingDisplay) {
+            const value = relocateClaudeState(JSON.parse(await readFile(incomingDisplay, 'utf8')), session, { sourceHub: manifest.sourceHub, destinationHub: this.repo, sourceCwd: session.cwd, destinationCwd: cwd, stateDir: this.stateDir });
+            await transaction.json(display, value);
+          }
+        }
+        if (existing) { targetSessions[position] = item; result.sessionsUpdated++; }
         else { targetSessions.push(item); result.imported++; }
-        this.sessions.items.set(item.id, this.sessions.make(item));
-        if (incomingScreen) await this.sessions.hydrate(this.sessions.get(item.id));
-        this.sessions.changed(this.sessions.get(item.id));
+        pendingItems.set(item.id, this.sessions.make(item));
+        if (incomingScreen) await this.sessions.hydrate(pendingItems.get(item.id));
+        notifications.push(item.id);
+      }
+      // Resolve after all adoption decisions: parents can follow children in the
+      // archive, or already exist under a different destination History ID.
+      const associatedIds = new Set(destinationIds.values());
+      for (const [index, item] of targetSessions.entries()) if (item.messageOrigin && (pendingItems.has(item.id) || associatedIds.has(item.id) || item.messageOrigin.unavailable === true)) {
+        const origin = relocatedOrigin(item, destinationIds, targetSessions);
+        if (JSON.stringify(origin) === JSON.stringify(item.messageOrigin)) continue;
+        const updated = { ...item, messageOrigin: origin };
+        targetSessions[index] = updated;
+        if (!pendingItems.has(item.id)) {
+          pendingItems.set(item.id, this.sessions.make(updated));
+          notifications.push(item.id); result.sessionsUpdated++;
+        } else pendingItems.get(item.id).messageOrigin = origin;
       }
       if (targetSessions.length) {
-        await saveJson(path.join(this.stateDir, 'sessions.json'), targetSessions);
-        await this.sessions.persist();
+        const index = path.join(this.stateDir, 'sessions.json');
+        if (await stat(index).catch(() => null)) await transaction.copy(index, index + '.previous');
+        await transaction.json(index, targetSessions);
       }
       if (extracted.has('state/mak-conversations.json')) {
         const target = path.join(this.stateDir, 'mak-conversations.json');
         const incoming = JSON.parse(await readFile(extracted.get('state/mak-conversations.json'), 'utf8'));
         const local = await readJson(target, { conversations: [], selected: {} });
         for (const conversation of incoming.conversations) {
+          if (conversation.accountProfileId && conversation.accountProfileId !== 'system') {
+            const existingProfile = local.conversations.find(item => item.id === conversation.id)?.accountProfileId;
+            conversation.accountProfileId = existingProfile || `unmapped-${conversation.accountProfileId}`;
+            delete conversation.conversationStoreId;
+          }
           const missing = unavailable.find(item => item.key === `codex:${conversation.threadId}`);
           if (missing) conversation.nativeUnavailable = missing.reason;
         }
@@ -691,19 +881,46 @@ export class PortableArchive {
         incoming.conversations = incoming.conversations.filter(item => !item.nativeUnavailable || !local.conversations.some(old => old.id === item.id));
         const merged = mergeMakConversations(local, incoming);
         if (await stat(target).catch(() => null)) { await mkdir(path.join(backup, 'state'), { recursive: true }); await copyFile(target, path.join(backup, 'state', 'mak-conversations.json')); }
-        await saveJson(target, merged);
+        await transaction.json(target, merged);
       }
       if (incomingMak) {
         const target = path.join(this.stateDir, 'mak-history.json');
         const current = await readJson(target, { operations: [] });
         const merged = mergeMakHistory(current, incomingMak);
         if (await stat(target).catch(() => null)) { await mkdir(path.join(backup, 'state'), { recursive: true }); await copyFile(target, path.join(backup, 'state', 'mak-history.json')); }
-        await saveJson(target, merged);
+        await transaction.json(target, merged);
         result.makOperations = merged.operations.length;
       }
       result.nativeUnavailable = unavailable.length;
+      if (manifest.media?.refs.length) {
+        const accepted = new Set(preview.native.filter(item => ['new', 'update', 'identical', 'local-newer'].includes(item.status) || item.status === 'conflict' && allowedNative.has(`${item.agent}:${item.id}`)).map(item => `${item.agent}:${item.id}`));
+        const replace = new Set(preview.native.filter(item => ['new', 'update'].includes(item.status) || item.status === 'conflict' && allowedNative.has(`${item.agent}:${item.id}`)).map(item => `${item.agent}:${item.id}`));
+        const mergedMedia = mergeMediaIndexes(await readMediaIndex(this.stateDir), manifest.media, accepted, replace);
+        await transaction.json(path.join(this.stateDir, 'conversation-media.json'), mergedMedia);
+      }
+      await transaction.commit();
+      for (const [id, item] of pendingItems) this.sessions.items.set(id, item);
+      for (const id of notifications) {
+        originalItems.get(id)?.terminal?.dispose();
+        this.sessions.changed(this.sessions.get(id));
+      }
       return result;
-    } finally { await rm(temp, { recursive: true, force: true }); }
+    } catch (error) {
+      importFailure = error;
+      if (transaction.status === 'committed') throw error;
+      for (const item of pendingItems.values()) item.terminal?.dispose();
+      if (transaction.started && transaction.status !== 'committed') {
+        try { await transaction.rollback(); }
+        catch (recovery) { importFailure = new AggregateError([error, recovery], `${error.message} ${recovery.message}`); throw importFailure; }
+      }
+      throw error;
+    } finally {
+      const released = await Promise.allSettled(nativeLeases.map(release => release()));
+      const errors = released.filter(item => item.status === 'rejected').map(item => item.reason);
+      try { await rm(temp, { recursive: true, force: true }); }
+      catch (error) { errors.push(new Error(`Import temporary files could not be removed: ${temp}. ${error.message}`)); }
+      if (errors.length) throw new AggregateError([importFailure, ...errors].filter(Boolean), `${importFailure ? importFailure.message + ' ' : ''}Import cleanup requires review: ${errors.map(error => error.message).join('; ')}`);
+    }
   }
 
   relocatedCwd(session, manifest, mapped) {

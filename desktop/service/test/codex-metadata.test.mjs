@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { codexMetadata } from '../codex-metadata.mjs';

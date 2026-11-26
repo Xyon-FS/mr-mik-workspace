@@ -1,10 +1,11 @@
+import { testBrowserEnvironment } from './fixtures.mjs';
 // Isolated Hub and mocked native recycling: never operate on personal cards.
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 await cp(path.join(root, 'public/assets'), path.join(root, 'dist/assets'), { recursive: true });
@@ -21,7 +22,7 @@ try {
   const other = await service.projects.createCard({ title: 'Overview', projectId: project.id });
   const request = (route, data) => fetch(`${service.origin}/api${route}`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   await request('/settings', { selectedProjectId: project.id, accentTheme: 'blue' });
-  browser = await chromium.launch({ headless: true, channel: 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } }); page.setDefaultTimeout(12000); page.setDefaultNavigationTimeout(30000);
   await page.route('https://fonts.googleapis.com/**', route => route.abort());
   await page.route('https://fonts.gstatic.com/**', route => route.abort());
@@ -49,8 +50,8 @@ try {
   await page.locator(`[data-entity="${card.id}"]`).waitFor({ state: 'hidden' });
   assert.ok(JSON.parse(await readFile(service.projects.workspacePath, 'utf8')).entities.some(item => item.id === other.id));
   await page.getByRole('button', { name: 'Toggle projects', exact: true }).click();
-  await page.getByRole('button', { name: 'Edit Game X', exact: true }).click();
-  await page.getByRole('button', { name: 'Remove registration', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace actions', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Workspace actions', exact: true }).getByRole('button', { name: 'Remove workspace', exact: true }).click();
   await dialog.getByText('1 affected card', { exact: true }).waitFor();
   await dialog.getByText('Overview', { exact: true }).waitFor();
   await page.screenshot({ path: path.join(base, 'remove-workspace.png'), fullPage: true });
@@ -58,5 +59,5 @@ try {
   await page.getByRole('button', { name: 'Workspace · Global Hub', exact: true }).waitFor();
   assert.equal(JSON.parse(await readFile(service.projects.workspacePath, 'utf8')).entities[0].projectId, null);
   assert.deepEqual(errors, []);
-  console.log(`Card actions, themed confirmations and workspace breadcrumb passed; screenshots: ${base}`);
+  console.log('Card actions, themed confirmations and workspace breadcrumb passed; temporary screenshots are cleaned with the fixture.');
 } finally { await browser?.close(); await service.close(); }

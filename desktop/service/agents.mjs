@@ -19,7 +19,7 @@ export const AGENTS = [
   { id: 'codex', label: 'Codex', color: '#88d8bf', command: 'codex', subscription: true },
   { id: 'claude', label: 'Claude Code', color: '#dba68c', command: 'claude', subscription: true },
   { id: 'opencode', label: 'OpenCode', color: '#b9c9db', command: 'opencode', subscription: false },
-  { id: 'kimi', label: 'Kimi', color: '#b3a3f7', command: 'kimi', subscription: true },
+  { id: 'kimi', label: 'Kimi', color: '#b3a3f7', command: 'kimi', subscription: true, legacy: true },
   { id: 'shell', label: 'PowerShell', color: '#89b7ed', command: 'powershell.exe', subscription: false },
 ];
 
@@ -38,7 +38,7 @@ export function commandPath(name, env = process.env) {
 }
 
 export function inventory(env = process.env) {
-  return AGENTS.map(agent => ({ ...agent, available: !!commandPath(agent.command, env) }));
+  return AGENTS.filter(agent => !agent.legacy).map(agent => ({ ...agent, available: !!commandPath(agent.command, env) }));
 }
 
 // Resolve the real Codex binary when available so JSON-RPC does not pass through a shell.
@@ -82,19 +82,23 @@ export function codexBridgeArgs(script) {
     '-c', 'mcp_servers.mrmak_workspace.env_vars=["MRMAK_BRIDGE_URL","MRMAK_BRIDGE_TOKEN"]',
     '-c', 'mcp_servers.mrmak_workspace.enabled=true'];
 }
+export function linkedCodexMcpArgs(servers = {}) {
+  const value = item => Array.isArray(item) ? `[${item.map(value).join(',')}]` : JSON.stringify(item);
+  return Object.entries(servers).flatMap(([name, config]) => ['-c', `mcp_servers.${name}={${Object.entries(config).map(([key, item]) => `${key}=${value(item)}`).join(',')}}`]);
+}
 
-export function claudeBridgeArgs(script) {
+export function claudeBridgeArgs(script, browser, linked = {}) {
   // Keep the scoped grant in environment variables, never in command-line arguments.
-  const config = { mcpServers: { mrmak_workspace: {
+  const config = { mcpServers: { ...Object.fromEntries(Object.entries(linked).map(([name, { enabled: _, ...config }]) => [name, { type: 'stdio', ...config }])), ...(script ? { mrmak_workspace: {
     type: 'stdio', command: process.execPath, args: [script],
     env: { MRMAK_BRIDGE_URL: '${MRMAK_BRIDGE_URL}', MRMAK_BRIDGE_TOKEN: '${MRMAK_BRIDGE_TOKEN}' },
-  } } };
+  } } : {}), ...(browser ? { [browser.serverName]: { type: 'stdio', command: browser.command, args: browser.args, ...(browser.shared ? { env: { MRMIK_BROWSER_ENDPOINT: '${MRMIK_BROWSER_ENDPOINT}', MRMIK_BROWSER_TOKEN: '${MRMIK_BROWSER_TOKEN}' } } : {}) } } : {}) } };
   return ['--mcp-config', JSON.stringify(config)];
 }
 
-export function terminalCommand(agent, { bypass = false, codexPermissions, resumeId, resumePath, nativeId, effort, bridge, cwd, fork = false, env = process.env, openCodeFamily = 1 } = {}) {
+export function terminalCommand(agent, { bypass = false, codexPermissions, claudePermissionMode, resumeId, resumePath, nativeId, effort, bridge, browser, cwd, fork = false, env = process.env, openCodeFamily = 1, isolatedAccount = false, openCodeActionAgent } = {}) {
   if (!AGENTS.some(item => item.id === agent)) throw new Error('Unknown agent');
-  const binary = agent === 'codex' ? codexBinary() : agent === 'claude' ? claudeBinary() : agent === 'opencode' ? openCodeBinary(env) : { file: commandPath(AGENTS.find(item => item.id === agent).command), args: [] };
+  const binary = agent === 'codex' ? codexBinary(env) : agent === 'claude' ? claudeBinary(env) : agent === 'opencode' ? openCodeBinary(env) : { file: commandPath(AGENTS.find(item => item.id === agent).command, env), args: [] };
   if (!binary.file) throw new Error(`${agent} is not installed on this computer`);
   const args = [];
   if (agent === 'codex') {
@@ -102,12 +106,21 @@ export function terminalCommand(agent, { bypass = false, codexPermissions, resum
     if (resumeId && cwd) args.push('--cd', cwd);
     // Inline mode retains xterm scrollback for new and resumed conversations.
     args.push('--no-alt-screen');
+    if (isolatedAccount) args.push('--no-daemon');
     const permissions = codexPermissionMode(codexPermissions, bypass);
     if (permissions === 'bypass') args.push('--dangerously-bypass-approvals-and-sandbox');
     if (permissions === 'full-access') args.push('--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"');
+    if (permissions === 'ask') args.push('--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"');
+    if (permissions === 'auto-review') args.push('--approve-for-me');
     if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
+    if (browser) args.push('-c', `mcp_servers.${browser.serverName}={command=${JSON.stringify(browser.command)},args=${JSON.stringify(browser.args)},enabled=true}`);
     if (bridge) {
-      if (permissions === 'native' && bridge.codexWritableRoots === true) for (const folder of bridge.contentDirectories || []) args.push('--add-dir', folder);
+      args.push(...linkedCodexMcpArgs(bridge.linkedMcps));
+      // Selecting a reviewed mode does not prove that the effective native
+      // profile supports legacy additional roots. Keep the config preflight;
+      // otherwise Codex can exit before showing the prompt. Native approvals
+      // remain responsible for access when these roots cannot be pre-granted.
+      if (permissions !== 'bypass' && bridge.codexWritableRoots === true) for (const folder of bridge.contentDirectories || []) args.push('--add-dir', folder);
       args.push(...codexBridgeArgs(bridge.script));
       if (bridge.instructions) args.push('-c', `developer_instructions=${JSON.stringify(bridge.instructions)}`);
     }
@@ -116,18 +129,22 @@ export function terminalCommand(agent, { bypass = false, codexPermissions, resum
     else if (nativeId) args.push('--session-id', nativeId);
     if (fork) args.push('--fork-session', '--session-id', nativeId);
     if (bypass) args.push('--dangerously-skip-permissions');
+    else if (['default', 'auto', 'acceptEdits', 'plan'].includes(claudePermissionMode)) args.push('--permission-mode', claudePermissionMode);
     if (effort) args.push('--effort', effort);
     if (bridge) {
       for (const folder of bridge.contentDirectories || []) args.push('--add-dir', folder);
-      args.push(...claudeBridgeArgs(bridge.script));
+      const mcp = claudeBridgeArgs(bridge.script, browser, bridge.linkedMcps);
+      if (bridge.claudeMcpFile) { args.push('--strict-mcp-config'); mcp.splice(1, 0, bridge.claudeMcpFile); }
+      args.push(...mcp);
       if (bridge.orientation) args.push('--append-system-prompt', bridge.orientation);
       if (bridge.settings && Object.keys(bridge.settings).length) args.push('--settings', JSON.stringify(bridge.settings));
       if (resumeId && bridge.orientation && claudePromptRefreshSupported(binary)) args.push('--system-prompt-snapshot', 'off');
-    }
+    } else if (browser) args.push(...claudeBridgeArgs(null, browser));
   } else if (agent === 'kimi') {
     if (resumeId) args.push('--session', resumeId);
     if (bypass) args.push('--yolo');
   } else if (agent === 'opencode') {
+    if (openCodeActionAgent && openCodeFamily !== 2) { if (!['build', 'plan'].includes(openCodeActionAgent)) throw new Error('Choose a supported native agent.'); args.push('--agent', openCodeActionAgent); }
     if (openCodeFamily === 2) args.push('--standalone');
     if (resumeId) args.push('--session', resumeId);
     if (fork) args.push('--fork');
@@ -146,8 +163,18 @@ export function terminalCommand(agent, { bypass = false, codexPermissions, resum
   return { file: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')] };
 }
 
-export function childEnvironment(repo) {
-  const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+export function terminalEnvironment(agent, env) {
+  // Request fullscreen explicitly so native auto-disable state cannot silently
+  // change this terminal's layout. Full repaint is Claude's documented ConPTY
+  // compatibility mode. Both are invocation-only; account settings stay intact.
+  // An explicit inherited DISABLE_ALTERNATE_SCREEN still takes precedence.
+  return agent === 'claude' && process.platform === 'win32'
+    ? { ...env, CLAUDE_CODE_NO_FLICKER: '1', CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT: '1' }
+    : env;
+}
+
+export function childEnvironment(repo, base = process.env) {
+  const env = { ...base, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
   // Forward only explicitly named MCP credentials. Voice and unrelated API keys
   // stay private to the service; CLI subscription authentication is unchanged.
   if (repo) {
@@ -156,8 +183,15 @@ export function childEnvironment(repo) {
   }
   // Drop host-agent identity from the parent so every terminal is an independent CLI.
   for (const key of Object.keys(env)) {
+    // A Codex-launched service can inherit its bundled PSReadLine modules.
+    // Native PowerShell then asks to trust that publisher before accepting any
+    // terminal input. Keep personal/system modules and the execution policy.
+    if (/^PSModulePath$/i.test(key)) {
+      const modules = String(env[key]).split(path.delimiter).filter(folder => !/[\\/]codex-runtimes[\\/].*[\\/]dependencies[\\/]native[\\/]powershell[\\/]Modules(?:[\\/]|$)/i.test(folder));
+      if (modules.some(Boolean)) env[key] = modules.join(path.delimiter); else delete env[key];
+    }
     if (key.startsWith('MRMAK_OPENCODE_')) { delete env[key]; continue; }
-    if (/^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CODEX_THREAD_ID|CODEX_TURN_ID|CODEX_SHELL|MRMAK_TOKEN|MRMAK_PARENT_PID|MRMAK_BRIDGE_URL|MRMAK_BRIDGE_TOKEN)$/.test(key)) delete env[key];
+    if (/^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CODEX_THREAD_ID|CODEX_TURN_ID|CODEX_SHELL|CODEX_WINDOWS_REGISTERED_CORE|CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY|MRMAK_TOKEN|MRMAK_PARENT_PID|MRMAK_BRIDGE_URL|MRMAK_BRIDGE_TOKEN)$/i.test(key)) delete env[key];
   }
   return env;
 }

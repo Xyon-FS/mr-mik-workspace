@@ -1,0 +1,223 @@
+// Compiled UI acceptance with isolated synthetic provider transports.
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
+import { mkdtemp, createService, cleanupFixtures, testBrowserEnvironment } from './fixtures.mjs';
+import { graphicalFixture } from './codex-chat-fixture.mjs';
+import { claudeFixture } from './claude-chat-fixture.mjs';
+import { CodexChat } from '../codex-chat.mjs';
+import { ClaudeChat } from '../claude-chat.mjs';
+
+function pdfFixture() {
+ const stream='BT /F1 14 Tf 20 100 Td (Synthetic PDF reference) Tj ET', objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`];
+ let value='%PDF-1.4\n', offsets=[0]; for(const [index,object] of objects.entries()){offsets.push(Buffer.byteLength(value));value+=`${index+1} 0 obj\n${object}\nendobj\n`;}const xref=Buffer.byteLength(value);value+=`xref\n0 6\n0000000000 65535 f \n`+offsets.slice(1).map(offset=>String(offset).padStart(10,'0')+' 00000 n \n').join('')+`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;return value;
+}
+let service, browser; const wires = [], observations = [];
+const evidence = path.resolve(process.argv[3] || '.cache/chat-content-ux-integration');
+try {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'mik-content-survey-')), repo = path.join(base,'hub'), home = path.join(base,'home');
+  await mkdir(path.join(repo,'workspace'), {recursive:true}); await mkdir(home); await mkdir(evidence,{recursive:true});
+  await writeFile(path.join(repo,'workspace/workspace.json'), '{"entities":[],"resources":[]}');
+  service = await createService({repo,uiDir:path.resolve(process.argv[2] || 'dist'),mcpOptions:{home,env:{CODEX_HOME:path.join(home,'.codex'),CLAUDE_CONFIG_DIR:path.join(home,'.claude')}},profileOptions:{root:path.join(base,'accounts')}});
+  service.sessions.verifyAccount=async()=>{};service.sessions.verifyIdentity=async()=>{};service.sessions.captureTools=async()=>({});
+  const profile=await service.profiles.create('Synthetic content survey'),codex=graphicalFixture();
+  service.sessions.createGraphicalRuntime=options=>{if(options.session.agent==='codex')return new CodexChat({...options,spawnChild:codex.spawnChild});const wire=claudeFixture(options.session.nativeId);wires.push(wire);return new ClaudeChat({...options,transportFactory:wire.factory});};
+  browser=await chromium.launch({headless:true,channel:'chrome',env:testBrowserEnvironment()});
+  const context=await browser.newContext({viewport:{width:700,height:1000}}),errors=[];
+  const page=await context.newPage(), workspace=await context.newPage();
+  for (const tab of [page,workspace]) tab.on('pageerror',error=>errors.push(error.message));
+  await workspace.goto(service.urls.workspace);
+  for(const agent of ['codex','claude']){
+    const directory=path.join(repo,agent);await mkdir(directory);
+    const document=path.join(directory,'Pending_Actions_Architecture_and_Implementation_Guide_for_the_Synthetic_Review.pdf'),folder=path.join(directory,'Referenced_project');
+    const image=path.join(directory,'Reference_image.png');await mkdir(folder);
+    // Minimal valid PDF; no local files or external resources embedded.
+    const textFile=path.join(directory,'Supplied_notes.txt');await writeFile(textFile,'Local source contents');
+    await writeFile(document,pdfFixture());
+    await writeFile(image,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64'));
+    const session=await service.sessions.create({agent,chatInterface:'chat',cwd:repo,accountProfileId:agent==='codex'?profile.id:undefined}),runtime=service.sessions.get(session.id).graphical;
+    const headers={Authorization:`Bearer ${service.token}`,'Content-Type':'application/json'};
+    await fetch(`${service.origin}/api/sessions/${session.id}/focus`,{method:'POST',headers,body:'{}'});await page.goto(service.urls.chats);await page.bringToFront();
+    const chat=page.getByRole('region',{name:`${agent==='codex'?'Codex':'Claude'} graphical chat`,exact:true}),draft=chat.getByRole('textbox',{name:agent==='codex'?'Message Codex':'Message Claude',exact:true});
+    await page.setViewportSize({width:390,height:850});
+    const openPicker = async () => {
+      await chat.getByLabel('Add context', { exact: true }).click();
+      await chat.getByRole('button', { name: 'File or folder reference', exact: true }).click();
+    };
+    const picker = page.getByRole('dialog', { name: 'Attach files and folders', exact: true });
+    await openPicker();
+    await picker.getByRole('checkbox', { name: agent, exact: true }).check();
+    await page.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0);
+    assert.equal(runtime.attachments.length, 0);
+    await openPicker();
+    await picker.getByRole('button', { name: `Open folder ${agent}`, exact: true }).click();
+    await picker.getByRole('checkbox', { name: path.basename(document), exact: true }).check();
+    await picker.getByRole('checkbox', { name: path.basename(image), exact: true }).check();
+    await picker.getByRole('button', { name: `Open folder ${path.basename(folder)}`, exact: true }).click();
+    await picker.getByRole('checkbox', { name: 'Attach this folder', exact: true }).check();
+    await picker.getByRole('button', { name: 'Parent folder', exact: true }).click();
+    await picker.getByRole('textbox', { name: 'Filter folder contents', exact: true }).fill('Supplied');
+    await picker.getByRole('checkbox', { name: path.basename(textFile), exact: true }).check();
+    await expect(picker.getByText('4 selected', { exact: true })).toBeVisible();
+    assert.ok(await picker.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Picker fits a narrow window');
+    await picker.screenshot({path:path.join(evidence,`${agent}-attachment-picker.png`)});
+    const labels = await picker.getByRole('group', { name: 'Folder contents' }).locator('.chat-picker-row').evaluateAll(rows => rows.map(row => {
+      const label = row.querySelector('span'), {top, width} = label.getBoundingClientRect();
+      return { text: label.textContent, top, width, row: getComputedStyle(row).display, container: getComputedStyle(row.parentElement).display };
+    }));
+    assert.ok(labels.length === 2 && labels[0].top < labels[1].top && labels.every(label => label.width > 60), `The current folder and matching filename have readable labels on separate rows: ${JSON.stringify(labels)}`);
+    await picker.getByRole('button', { name: 'Attach selected', exact: true }).click();
+    await expect(picker).toHaveCount(0);
+    await expect(draft).toBeFocused();
+    assert.deepEqual(runtime.attachments.map(value => path.normalize(value)), [document,image,folder,textFile].map(value => path.normalize(value)));
+    const draftAttachments = chat.getByLabel('Draft attachments', { exact: true });
+    await expect(draftAttachments.locator('[data-attachment-type="document"] .chat-attachment-inspect')).toHaveAttribute('title', /PDF · Document/);
+    await expect(draftAttachments.locator('[data-attachment-type="image"] .chat-attachment-inspect')).toHaveAttribute('title', /PNG · Image/);
+    await expect(draftAttachments.locator('[data-attachment-type="folder"] .chat-attachment-inspect')).toHaveAttribute('title', /Folder reference/);
+    await expect(draftAttachments.locator('[data-attachment-type] .chat-attachment-inspect small')).toHaveCount(0);
+    await expect(chat.getByRole('button',{name:`Remove ${path.basename(document)}`,exact:true})).toBeVisible();
+    await chat.getByRole('button',{name:'+1 reference',exact:true}).click();
+    await chat.getByRole('button',{name:'Inspect Supplied_notes.txt',exact:true}).click();
+    const draftPreview=page.getByRole('dialog',{name:'Attachment preview',exact:true});
+    await expect.poll(() => draftPreview.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return Math.abs(rect.left + rect.width / 2 - innerWidth / 2) < 2 && Math.abs(rect.top + rect.height / 2 - innerHeight / 2) < 2;
+    })).toBe(true);
+    await expect(draftPreview).toContainText('Local source contents');
+    await draftPreview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+    await chat.getByRole('button',{name:`Inspect ${path.basename(document)}`,exact:true}).click();
+    await expect(draftPreview.locator('iframe[title="Attached document"]')).toBeVisible();
+    const pdfUrl=await draftPreview.locator('iframe').getAttribute('src');assert.match(pdfUrl,/\/view\//);
+    assert.ok((await fetch(pdfUrl)).ok);assert.equal((await fetch(new URL('Supplied_notes.txt',pdfUrl))).ok,false,'PDF capability must not grant sibling files');
+
+    await page.waitForTimeout(300);await draftPreview.screenshot({path:path.join(evidence,`${agent}-pdf-preview.png`)});
+    await draftPreview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+
+    await expect(chat.getByRole('button',{name:`Inspect ${path.basename(document)}`,exact:true})).toBeFocused();
+    assert.equal(runtime.attachments.length,4,'Inspect must not remove a reference');
+    await chat.getByRole('button',{name:'Show fewer references',exact:true}).click();
+    await chat.screenshot({path:path.join(evidence,`${agent}-draft.png`)});
+    const draftButtons=await chat.getByLabel('Draft attachments',{exact:true}).getByRole('button').evaluateAll(nodes=>nodes.map(node=>({label:node.getAttribute('aria-label'),text:node.textContent})));
+    await draft.fill('Please review these supplied references.');await chat.getByRole('button',{name:'Send message',exact:true}).click();
+    const sent=chat.locator('.graphical-message.userMessage:not(.graphical-send-receipt)');await expect(sent).toHaveCount(1);
+    await expect(sent.locator('.graphical-sent-attachments')).toBeVisible();
+    const sentImage=sent.getByRole('button',{name:'Inspect Reference_image.png',exact:true});
+    await expect.poll(() => sentImage.locator('img').evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+    await sentImage.click();
+    const gallery=page.getByRole('dialog',{name:'Image viewer',exact:true});
+    await expect(gallery.locator('img')).toBeVisible();
+    await expect(gallery.getByRole('region',{name:'Image canvas'})).toHaveAttribute('tabindex','0');
+    await expect(gallery.locator('img')).toHaveAttribute('src', /\/view\//);
+    await gallery.getByLabel('Image details').click();
+    await expect(gallery.locator('.preview-options-content')).toContainText('PNG');
+    await page.keyboard.press('Escape');
+    await expect(gallery).toBeVisible();
+    await gallery.getByRole('button',{name:'Open in Workspace',exact:true}).click();
+    const linkedImage=workspace.locator('.workspace-preview-slot:not([hidden]) .file-preview-body.image img');
+    await expect(linkedImage).toBeVisible();
+    await expect.poll(() => linkedImage.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+    await expect(gallery).toHaveCount(0);
+    await page.bringToFront();
+    for(const width of [390,700]){await page.setViewportSize({width,height:1000});await sent.scrollIntoViewIfNeeded();await sent.screenshot({path:path.join(evidence,`${agent}-sent-${width}.png`)});}
+    const user=runtime.snapshot().items.find(item=>item.type==='userMessage');
+    const documentIndex=user.attachments.findIndex(item=>item.path===document),folderIndex=user.attachments.findIndex(item=>item.path===folder);
+    const read=async index=>{const response=await fetch(`${service.origin}/api/sessions/${session.id}/chatfile?item=${encodeURIComponent(user.id)}&attachment=${index}`,{headers});return {status:response.status,body:await response.json()};};
+    const before=await read(documentIndex);await writeFile(document,'Synthetic document reference, revision two.');const after=await read(documentIndex);
+    const folderRead=await read(folderIndex);
+    const entry={agent,draftButtons,rawTransportSuffixShown:(await sent.innerText()).includes('Attached paths:'),sentButtons:await sent.getByRole('button').evaluateAll(nodes=>nodes.map(node=>({label:node.getAttribute('aria-label'),text:node.textContent}))),folderKind:user.attachments[folderIndex]?.kind,folderRead:{status:folderRead.status,error:folderRead.body.error},documentIsLiveReference:before.status===200&&after.status===200&&before.body.url!==after.body.url};
+    await unlink(document);const missing=await read(documentIndex);entry.missing={status:missing.status,error:missing.body.error};
+    assert.equal(entry.rawTransportSuffixShown,false);
+    assert.equal(entry.folderKind,'folder');
+    await expect(sent.getByRole('button',{name:/^Save |Open output|Add output/})).toHaveCount(0);
+    await sent.getByRole('button',{name:'+1 reference',exact:true}).click();
+    await sent.getByRole('button',{name:'Inspect Supplied_notes.txt',exact:true}).click();
+    const textPreview=page.getByRole('dialog',{name:'Attachment preview',exact:true});await expect(textPreview).toContainText('Local source contents');await textPreview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+    await sent.getByRole('button',{name:`Inspect ${path.basename(folder)}`,exact:true}).click();
+    const preview=page.getByRole('dialog',{name:'Attachment preview',exact:true});
+    await expect(preview).toContainText('Folder reference');await preview.screenshot({path:path.join(evidence,`${agent}-folder-preview.png`)});
+    await preview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+    await sent.getByRole('button',{name:`Inspect ${path.basename(document)}`,exact:true}).click();
+    await expect(preview.getByRole('alert')).toContainText('no longer available');
+    await expect(preview.locator('iframe')).toHaveCount(0);
+    await expect(preview).not.toContainText('ENOENT');await preview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+    const secondImage=path.join(directory,'Second_image.png');
+    const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+    const largeImage=await page.evaluate(() => {
+      const canvas=document.createElement('canvas'); canvas.width=2400; canvas.height=1600;
+      const ctx=canvas.getContext('2d'); ctx.fillStyle='#435c82'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      return canvas.toDataURL().split(',')[1];
+    });
+    await writeFile(secondImage,Buffer.from(largeImage,'base64'));
+    const attached=await fetch(`${service.origin}/api/sessions/${session.id}/attach`,{method:'POST',headers,body:JSON.stringify({paths:[image,secondImage],runtimeId:runtime.runtimeId})});
+    assert.ok(attached.ok,await attached.text());
+    await draftAttachments.getByRole('button',{name:'Inspect Reference_image.png',exact:true}).click();
+    await expect(gallery.locator('img')).toHaveAttribute('alt','Reference_image.png');
+    await page.keyboard.press('ArrowRight');
+    await expect(gallery.locator('img')).toHaveAttribute('alt','Second_image.png');
+    await gallery.getByRole('button',{name:'Zoom in',exact:true}).click();
+    await expect(gallery.getByRole('status',{name:'Image zoom'})).toHaveText(/^[1-9][0-9]?%$/);
+    await gallery.getByRole('button',{name:'Fit image',exact:true}).click();
+    await gallery.getByRole('button',{name:'Previous image',exact:true}).click();
+    await expect(gallery.locator('img')).toHaveAttribute('alt','Reference_image.png');
+    await page.keyboard.press('Escape');
+    await unlink(image);
+    await draftAttachments.getByRole('button',{name:'Inspect Reference_image.png',exact:true}).click();
+    await expect(preview.getByRole('alert')).toContainText('no longer available');
+    await expect(gallery).toHaveCount(0);
+    await expect(preview.getByRole('button',{name:'Retry preview',exact:true})).toBeVisible();
+    await preview.getByRole('button',{name:'Close attachment preview',exact:true}).click();
+    await writeFile(image,bytes);
+    observations.push(entry);
+    // A separate, previously unexamined flow: user-provided code versus output.
+    const html='<section><h2>Supplied HTML sample</h2><input type="range" aria-label="Supplied slider"></section>';
+    const userCode={id:'provided-code',turnId:'code-survey',type:'userMessage',status:'completed',details:'',text:'Please inspect this supplied code.\n\n```html\n'+html+'\n```\n\n```typescript\nconst provided = 1;\n```'};
+    const rawCode={...userCode,id:'provided-raw',text:html};
+    const suppliedDiagram={...userCode,id:'supplied-diagram',text:'```mermaid\ngraph TD; A-->B\n```'};
+    const agentCode={id:'result-code',turnId:'code-survey',type:'agentMessage',phase:'final_answer',status:'completed',details:'',text:'A generated example.\n\n```html\n'+html+'\n```\n\n```typescript\nconst produced = 2;\n```'};
+    const codeTurn={id:'code-survey',status:'completed',startedAt:null,completedAt:null,durationMs:null};
+    if(agent==='codex'){runtime.items=new Map([[userCode.id,userCode],[rawCode.id,rawCode],[suppliedDiagram.id,suppliedDiagram],[agentCode.id,agentCode]]);runtime.turns=new Map([[codeTurn.id,codeTurn]]);runtime.turnId=null;}else Object.assign(runtime.protocol.state,{items:[userCode,rawCode,suppliedDiagram,agentCode],turns:[codeTurn],status:'ready'});
+    runtime.changed();await page.reload();
+    const provided=chat.locator('[data-chat-item="provided-code"]');await expect(provided).toBeVisible();
+    await provided.locator('.chat-rich-block').first().scrollIntoViewIfNeeded();
+    await expect(provided.locator('iframe')).toHaveCount(0); await expect(provided.getByRole('button',{name:'Open code in Workspace',exact:true})).toHaveCount(0); await expect(provided.getByLabel('Output options',{exact:true})).toHaveCount(0);
+    entry.inputCode={automaticInteractivePreview:false,workspaceOpenActions:await provided.getByRole('button',{name:'Open code in Workspace',exact:true}).count(),outputOptions:await provided.getByLabel('Output options',{exact:true}).count()};
+    await provided.screenshot({path:path.join(evidence,`${agent}-supplied-code.png`)});
+    const raw=chat.locator('[data-chat-item="provided-raw"]');await expect(raw.locator('iframe')).toHaveCount(0);await expect(raw).toContainText('Supplied slider');
+    const diagramInput=chat.locator('[data-chat-item="supplied-diagram"]');await expect(diagramInput.locator('[data-streamdown="mermaid"] svg')).toHaveCount(0);await expect(diagramInput).toContainText('graph TD; A-->B');
+    const output=chat.locator('[data-chat-item="result-code"]');
+    await output.locator('.chat-rich-block').first().scrollIntoViewIfNeeded();
+    await expect(output.frameLocator('iframe[title="Inline interactive HTML"]').getByRole('slider')).toBeVisible();
+    await output.screenshot({path:path.join(evidence,`${agent}-produced-html.png`)});
+    if(agent==='codex') {
+      runtime.upsert({id:'native-image',type:'imageGeneration',status:'completed',savedPath:image});
+      runtime.upsert({id:'native-resource',type:'mcpToolCall',status:'completed',tool:'synthetic',result:{content:[{type:'resource',resource:{uri:'tool://report',name:'Produced report',mimeType:'text/plain',text:'Native report contents'}}]}});
+      runtime.changed();
+      await chat.getByLabel('Chat details',{exact:true}).click();
+      await chat.getByRole('button',{name:'Conversation outputs',exact:true}).click();
+      const outputs=page.getByRole('dialog',{name:'Conversation outputs',exact:true});
+      await expect(outputs.getByRole('button',{name:'Open Reference_image.png',exact:true})).toBeVisible();
+      await outputs.getByRole('button',{name:'Open Reference_image.png',exact:true}).click();
+      const selectedOutput=outputs.getByRole('region',{name:'Selected output',exact:true});await expect(selectedOutput.locator('img')).toBeVisible();
+      await selectedOutput.getByRole('button',{name:'Artifact actions',exact:true}).click();
+      const artifactMenu=outputs.getByRole('dialog',{name:'Artifact actions',exact:true});await expect(artifactMenu.getByRole('button',{name:'Add output to card',exact:true})).toBeVisible();
+      await artifactMenu.getByRole('button',{name:'Add output to card',exact:true}).click();
+      const cardDialog=page.getByRole('dialog',{name:'Add to card',exact:true});await expect(cardDialog.getByRole('textbox',{name:'Output title',exact:true})).toBeVisible();await cardDialog.getByRole('button',{name:'Close card dialog',exact:true}).click();
+      await expect(selectedOutput.getByRole('button',{name:'Artifact actions',exact:true})).toBeFocused();
+      await selectedOutput.getByRole('button',{name:'Artifact actions',exact:true}).click();await page.keyboard.press('Escape');await expect(artifactMenu).toHaveCount(0);await expect(outputs).toBeVisible();await expect(selectedOutput.getByRole('button',{name:'Artifact actions',exact:true})).toBeFocused();
+      await selectedOutput.getByRole('button',{name:'Artifact actions',exact:true}).click();await outputs.getByText('Conversation outputs',{exact:true}).click();await expect(artifactMenu).toHaveCount(0);
+
+      await outputs.getByRole('button',{name:'Open Produced report',exact:true}).click();
+      await expect(outputs.getByRole('region',{name:'Tool result: Produced report',exact:true})).toContainText('Native report contents');
+      await outputs.screenshot({path:path.join(evidence,'native-results.png')});
+      await outputs.getByRole('button',{name:'Close conversation outputs',exact:true}).click();
+    }
+
+    await writeFile(path.join(evidence,'observations.json'),JSON.stringify(observations,null,2));
+  }
+  assert.deepEqual(errors,[]);assert.equal(codex.calls.filter(call=>call.method==='turn/start').length,1);assert.equal(wires.flatMap(wire=>wire.calls).filter(call=>call.type==='user').length,1);
+  await writeFile(path.join(evidence,'observations.json'),JSON.stringify(observations,null,2));
+  console.log(JSON.stringify(observations.map(({agent,rawTransportSuffixShown,folderKind,folderRead,documentIsLiveReference,missing})=>({agent,rawTransportSuffixShown,folderKind,folderRead,documentIsLiveReference,missing}))));
+} finally {await browser?.close();await service?.close();for(const wire of wires)await wire.close();await cleanupFixtures();}

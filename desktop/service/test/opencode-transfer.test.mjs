@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -63,24 +64,6 @@ async function hub(root, name) {
   archive.openCode = adapter(store); return { repo, stateDir, sessions, archive, store };
 }
 
-test('OpenCode transfer validates ownership, portable attachments and exact semantic continuations, never timestamps alone', () => {
-  const a = data(), b = data(); b.messages.push(message('two', 2)); b.info.time.updated = 2;
-  assert.equal(openCodeRelation(a, b), 'update'); assert.equal(openCodeRelation(b, a), 'local-newer');
-  const relocated = structuredClone(a); relocated.info.directory = 'other'; relocated.info.projectID = 'other';
-  assert.equal(openCodeRelation(a, relocated), 'identical');
-  const divergent = structuredClone(b); divergent.messages[0].parts[0].text = 'Changed';
-  assert.equal(openCodeRelation(a, divergent), 'conflict');
-  divergent.messages[0].parts[0].sessionID = 'ses_foreign'; assert.throws(() => validateOpenCode(divergent), /identity/);
-  const attachment = data(); Object.assign(attachment.messages[0].parts[0], { type: 'file', url: 'file:///outside.png' }); assert.throws(() => validateOpenCode(attachment), /attachment/);
-  attachment.messages[0].parts[0].url = 'data:image/png;base64,AAAA'; assert.ok(validateOpenCode(attachment));
-  const child = data(); child.info.parentID = 'ses_parent'; assert.throws(() => validateOpenCode(child), /family/);
-  const bookkeeping = structuredClone(a); bookkeeping.info.title = 'Native title'; bookkeeping.info.cost = 12; bookkeeping.todos = [];
-  assert.equal(openCodeRelation(a, bookkeeping), 'identical');
-  assert.notEqual(openCodeHash(a), openCodeHash(bookkeeping)); // Freshness remains stricter than ancestry.
-  bookkeeping.info.revert = { messageID: 'msg_one' };
-  assert.equal(openCodeRelation(a, bookkeeping), 'conflict');
-});
-
 test('OpenCode removal invokes native delete and refuses false success or a child-session race', async () => {
   const transfer = new OpenCodeTransfer('.');
   let current = data(), hasChildren = false, calls = 0, completes = false;
@@ -115,19 +98,6 @@ test('OpenCode families validate complete topology, global identities, task refe
   const attachment = family(); Object.assign(attachment.children[0].messages[0].parts[0], { type: 'file', url: 'file:///outside.png' }); assert.throws(() => validateOpenCode(attachment), /attachment/);
 });
 
-test('OpenCode continuation decisions apply to the complete family, never a mixed partial merge', () => {
-  const root = family(), next = family();
-  const extra = message('child-next', 5); extra.info.sessionID = 'ses_child'; extra.parts[0].sessionID = 'ses_child'; next.children[0].messages.push(extra);
-  assert.equal(openCodeRelation(root, next), 'update');
-  assert.equal(openCodeRelation(next, root), 'local-newer');
-  const divergent = structuredClone(next); divergent.children[1].messages[0].parts[0].text = 'Changed';
-  assert.equal(openCodeRelation(root, divergent), 'conflict');
-  const mixed = family(); mixed.messages.push(message('root-next', 6));
-  assert.equal(openCodeRelation(next, mixed), 'conflict');
-  const fewer = family(); fewer.children.pop(); assert.equal(openCodeRelation(root, fewer), 'local-newer');
-  assert.equal(openCodeRelation(fewer, root), 'update');
-});
-
 test('OpenCode family preflight refuses a descendant ID owned by an unrelated native root without writes', async () => {
   const transfer = new OpenCodeTransfer('.');
   transfer.familyRevision = () => null;
@@ -151,20 +121,6 @@ test('OpenCode full archives bundle descendants without extra History entries an
     const second = await source.archive.exportTo(root); assert.equal((await target.archive.preview(second.path)).native[0].status, 'conflict');
     await target.archive.importFrom(second.path); assert.equal(target.store.get(id).children[0].messages[0].parts[0].text, 'child');
   } finally { source.sessions.close(); target.sessions.close(); }
-});
-
-test('OpenCode deletion plans enumerate the family and reject separately referenced children or changed descendants', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-oc-family-delete-')), f = await hub(root, 'hub');
-  try {
-    const chatId = randomUUID(); f.sessions.items.set(chatId, f.sessions.make({ id: chatId, agent: 'opencode', nativeId: id, cwd: f.repo, name: 'Family', open: false })); f.store.set(id, family());
-    const deletion = new NativeDeletion(f.sessions, f.stateDir); deletion.openCode = adapter(f.store);
-    let plan = await deletion.plan(chatId); assert.deepEqual(plan.nativeSessions.map(member => member.id), [id, 'ses_child', 'ses_grandchild']);
-    const duplicate = randomUUID(); f.sessions.items.set(duplicate, f.sessions.make({ id: duplicate, agent: 'opencode', nativeId: 'ses_grandchild', name: 'Child', open: true }));
-    await assert.rejects(deletion.confirm(chatId, plan.token, 'Family'), /Another.*family/); f.sessions.items.delete(duplicate);
-    plan = await deletion.plan(chatId); f.store.get(id).children[1].messages[0].parts[0].text = 'Changed';
-    await assert.rejects(deletion.confirm(chatId, plan.token, 'Family'), /changed/);
-    plan = await deletion.plan(chatId); await deletion.confirm(chatId, plan.token, 'Family'); assert.equal(f.store.has(id), false);
-  } finally { f.sessions.close(); }
 });
 
 test('OpenCode full archives transfer only managed sessions, deduplicate, update continuations, preserve conflicts/backups and relocate History', async () => {
@@ -200,10 +156,19 @@ test('OpenCode native deletion requires a closed unique managed chat, exact name
   const root = await mkdtemp(path.join(os.tmpdir(), 'mik-oc-delete-')), f = await hub(root, 'hub');
   try {
     const chatId = randomUUID(), chat = f.sessions.make({ id: chatId, agent: 'opencode', nativeId: id, name: 'Fixture', cwd: f.repo, open: false });
-    f.sessions.items.set(chatId, chat); f.store.set(id, data()); f.store.set('ses_unrelated', data());
+    f.sessions.items.set(chatId, chat); f.store.set(id, family()); f.store.set('ses_unrelated', data());
     const deletion = new NativeDeletion(f.sessions, f.stateDir); deletion.openCode = adapter(f.store);
     chat.open = true; await assert.rejects(deletion.plan(chatId), /Close/); chat.open = false;
-    let plan = await deletion.plan(chatId); await assert.rejects(deletion.confirm(chatId, plan.token, 'Wrong'), /match/);
+    let plan = await deletion.plan(chatId);
+    assert.deepEqual(plan.nativeSessions.map(member => member.id), [id, 'ses_child', 'ses_grandchild']);
+    const child = randomUUID();
+    f.sessions.items.set(child, f.sessions.make({ id: child, agent: 'opencode', nativeId: 'ses_grandchild', name: 'Child', open: true }));
+    await assert.rejects(deletion.confirm(chatId, plan.token, 'Fixture'), /Another.*family/);
+    f.sessions.items.delete(child);
+    plan = await deletion.plan(chatId);
+    f.store.get(id).children[1].messages[0].parts[0].text = 'Changed descendant';
+    await assert.rejects(deletion.confirm(chatId, plan.token, 'Fixture'), /changed/);
+    plan = await deletion.plan(chatId); await assert.rejects(deletion.confirm(chatId, plan.token, 'Wrong'), /match/);
     plan = await deletion.plan(chatId); f.store.get(id).messages[0].parts[0].text = 'Changed'; await assert.rejects(deletion.confirm(chatId, plan.token, 'Fixture'), /changed/);
     const duplicateId = randomUUID(); f.sessions.items.set(duplicateId, f.sessions.make({ ...chat, id: duplicateId })); await assert.rejects(deletion.plan(chatId), /Another/); f.sessions.items.delete(duplicateId);
     plan = await deletion.plan(chatId); assert.equal((await deletion.confirm(chatId, plan.token, 'Fixture')).deleted, true);

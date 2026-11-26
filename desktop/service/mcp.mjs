@@ -33,7 +33,9 @@ export class McpInventory {
   constructor(repo, { home = os.homedir(), env = process.env, probe = probeServer } = {}) {
     Object.assign(this, { repo, home, env, probe }); this.checks = new Map(); this.pending = new Map(); this.closed = false;
   }
-  async scan() {
+  async scan({ client } = {}) {
+    if (client != null && !['codex', 'claude', 'opencode'].includes(client)) throw new Error('Choose a supported MCP provider.');
+    const selected = name => client == null || client === name;
     const problems = [], sources = [], entries = [];
     const codexHome = this.env.CODEX_HOME || path.join(this.home, '.codex');
     const claudeHome = this.env.CLAUDE_CONFIG_DIR || path.join(this.home, '.claude');
@@ -59,11 +61,11 @@ export class McpInventory {
       claudeUser: this.env.CLAUDE_CONFIG_DIR ? path.join(claudeHome, '.claude.json') : path.join(this.home, '.claude.json'),
       claudeProject: path.join(this.repo, '.mcp.json'), claudeDisabled: path.join(claudeHome, 'mrmak-disabled-mcp.json'), claudeSettings: path.join(claudeHome, 'settings.json'),
       claudeProjectSettings: path.join(this.repo, '.claude/settings.json'), claudeLocalSettings: path.join(this.repo, '.claude/settings.local.json'),
-      kimiUser: path.join(this.env.KIMI_CODE_HOME || path.join(this.home, '.kimi-code'), 'mcp.json'), kimiProject: path.join(this.repo, '.kimi-code/mcp.json'),
-      cursorUser: path.join(this.home, '.cursor/mcp.json'), cursorProject: path.join(this.repo, '.cursor/mcp.json'),
     };
-    const values = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, await read(file)])));
-    try {
+    // Keep one parser/precedence path for Tools and launch reads. A provider
+    // launch must not inspect another provider's files or execute its CLI.
+    const values = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, file]) => [name, client == null || name.startsWith(client) ? await read(file) : {}])));
+    if (selected('opencode')) try {
       const openLayers = await openCodeLayers(this.repo, this);
       let openCodeFamily = openLayers.some(layer => hasV2Config(layer.value)) ? 2 : 1;
       if (openCodeFamily === 1) { try { if (Number(openCodeVersion(this.env).split('.')[0]) >= 2) openCodeFamily = 2; } catch { /* File inventory remains usable without an installed CLI. */ } }
@@ -89,11 +91,8 @@ export class McpInventory {
     const localProject = Object.entries(object(values.claudeUser.projects)).find(([folder]) => key(folder) === key(this.repo))?.[1] || {};
     add('claude', 'local', paths.claudeUser, localProject.mcpServers, 30);
     const claudeSettings = merge(merge(values.claudeSettings, values.claudeProjectSettings), values.claudeLocalSettings);
-    for (const client of ['kimi', 'cursor']) {
-      add(client, 'global', paths[`${client}User`], values[`${client}User`].mcpServers, 10);
-      add(client, 'project', paths[`${client}Project`], values[`${client}Project`].mcpServers, 20);
-    }
-    if (process.platform === 'win32') {
+
+    if (selected('claude') && process.platform === 'win32') {
       const managedPath = path.join(this.env.ProgramFiles || 'C:/Program Files', 'ClaudeCode/managed-mcp.json');
       const managed = await read(managedPath);
       if (managed.mcpServers) {
@@ -120,7 +119,7 @@ export class McpInventory {
       add('codex', 'plugin', configFile, Object.fromEntries(Object.entries(servers).map(([name, server]) => [name, merge(server, settings.mcp_servers?.[name])])), 5, { plugin: pluginId, pluginRoot: root, pluginEnabled: settings.enabled === true, managed: true });
     }
     const installedPath = path.join(claudeHome, 'plugins/installed_plugins.json');
-    const installed = await read(installedPath);
+    const installed = selected('claude') ? await read(installedPath) : {};
     for (const [pluginId, locations] of Object.entries(object(installed.plugins))) {
       const installation = (Array.isArray(locations) ? locations : []).find(item => !item.projectPath || key(item.projectPath) === key(this.repo));
       if (!installation?.installPath) continue;
@@ -164,7 +163,9 @@ export class McpInventory {
       let endpoint = ''; if (expanded.url) { try { endpoint = new URL(expanded.url).origin; } catch { endpoint = 'Invalid address'; } }
       const transport = config.type === 'sse' ? 'sse' : config.type === 'ws' ? 'ws' : config.url ? 'http' : 'stdio';
       const malformedClaude = winner.client === 'claude' && !!config.url && !['http', 'streamable-http', 'sse', 'ws'].includes(config.type);
-      const readiness = disabled ? 'disabled' : malformedClaude ? 'invalid-config' : transport === 'ws' ? 'unsupported-check' : hostManaged ? 'managed' : missing.size ? 'missing-env' : transport === 'stdio' && !executable ? 'missing-command' : approvalNeeded ? 'approval' : 'configured';
+      const mixedCodex = winner.client === 'codex' && Object.hasOwn(config, 'url') && ['command', 'args', 'env', 'env_vars', 'cwd'].some(field => Object.hasOwn(config, field));
+      const mixedOpenCode = winner.client === 'opencode' && (config.type === 'local' && Object.hasOwn(config, 'url') || config.type === 'http' && Object.hasOwn(config, 'command'));
+      const readiness = disabled ? 'disabled' : malformedClaude || mixedCodex || mixedOpenCode ? 'invalid-config' : transport === 'ws' ? 'unsupported-check' : hostManaged ? 'managed' : missing.size ? 'missing-env' : transport === 'stdio' && !executable ? 'missing-command' : approvalNeeded ? 'approval' : 'configured';
       const fingerprint = digest([config, [...missing], headers, expanded.env, expanded.url, cwd, executable]);
       const checked = this.checks.get(id);
       const connection = checked?.fingerprint === fingerprint ? { ...checked.result, stale: Date.now() - Date.parse(checked.result.checkedAt) > 5 * 60000 } : null;
@@ -173,7 +174,9 @@ export class McpInventory {
         endpoint, executable: config.command ? path.basename(expanded.command) : null, plugin: winner.plugin || null,
         sources: [...layers].reverse().map(item => ({ scope: item.scope, path: item.file, effective: item === winner })),
         missingEnv: [...missing], credentialNames: Object.keys(headers), connection,
-        canCheck: !disabled && !malformedClaude && transport !== 'ws' && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper && !config.nativeOAuth && !(winner.client === 'opencode' && JSON.stringify(config).includes('{file:')),
+        ...(mixedCodex ? { configurationIssue: 'Codex configuration mixes HTTP and local-process fields. Review the listed global/project sources.' } : {}),
+        ...(mixedOpenCode ? { configurationIssue: 'OpenCode configuration mixes remote and local-process fields. Review the listed global/project sources.' } : {}),
+        canCheck: !disabled && !malformedClaude && !mixedCodex && !mixedOpenCode && transport !== 'ws' && !hostManaged && !missing.size && (transport !== 'stdio' || !!executable) && !config.http_headers_helper && !config.nativeOAuth && !(winner.client === 'opencode' && JSON.stringify(config).includes('{file:')),
       };
       servers.push(data);
       const childEnv = { ...getDefaultEnvironment(), ...object(expanded.env) };

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { CodexScopes } from './codex-scopes.mjs';
+import { CodexScopes, codexSkillName } from './codex-scopes.mjs';
 import { ClaudeSettings } from './claude-settings.mjs';
 import { OpenCodeSettings } from './opencode-settings.mjs';
 import { within } from './util.mjs';
@@ -19,7 +19,8 @@ export async function nativeRefreshSnapshot(session, hubRoot, stateDir, options 
   const settings = session.agent === 'codex' ? new CodexScopes(projects, options)
     : session.agent === 'claude' ? new ClaudeSettings(projects, options)
       : new OpenCodeSettings(projects, stateDir, { ...options, family: session.openCodeFamily });
-  const inventory = await settings.list('chat', 'primary'), snapshot = {};
+  const lean = session.agent === 'codex' && session.chatInterface === 'chat';
+  const inventory = await settings.list('chat', 'primary', lean ? { presentation: false } : undefined), snapshot = {};
   const codexSkills = new Map();
   if (session.agent === 'codex') for (const config of [inventory.globalFile, inventory.file]) {
     const data = parseToml(await readFile(config, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; }));
@@ -39,17 +40,21 @@ export async function nativeRefreshSnapshot(session, hubRoot, stateDir, options 
     if (!['skill', 'plugin'].includes(row.kind)) continue;
     const file = row.kind === 'skill' ? row.path || row.location || row.source : null;
     if (file && ['.agents', '.claude', '.opencode'].some(prefix => within(path.join(hubRoot, prefix, 'skills'), file))) continue;
-    let content = null;
+    let content = null, name = row.name;
     if (file) {
       const info = await lstat(file);
       if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error('Native skill cannot be fingerprinted safely.');
-      content = hash(await readFile(file, 'utf8'));
+      const text = await readFile(file, 'utf8');
+      content = hash(text);
+      // Reuse the required, validated fingerprint read for native skill labels.
+      // Hub-only skill contents and plugin duplicate labels are not needed here.
+      if (lean && row.kind === 'skill') name = codexSkillName(text, file);
     }
     const nativeSkillState = file && codexSkills.get((await realpath(file)).toLowerCase());
     const enabled = session.agent === 'codex' && row.kind === 'skill' ? nativeSkillState ?? true
       : row.effective ?? (row.state ? row.state !== 'off' : row.projectOverride ?? row.globalEnabled);
     snapshot[`native:${row.kind}:${row.id}`] = {
-      kind: row.kind, name: row.name, enabled: !!enabled, plugin: row.kind === 'plugin',
+      kind: row.kind, name, enabled: !!enabled, plugin: row.kind === 'plugin',
       definition: hash([row.id, row.version ?? null, row.installed ?? null, row.permissionEffect ?? null, file, content]),
     };
   }

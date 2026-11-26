@@ -25,10 +25,23 @@ export default function MarkdownDocument({ file }: { file: Preview }) {
   const [saved, setSaved] = useState(file.text || '')
   const [draft, setDraft] = useState(() => restoreDraft(draftKey, file.text || ''))
   const [revision, setRevision] = useState(file.revision)
+  const [observedRevision, setObservedRevision] = useState(file.revision)
+  const [externallyChanged, setExternallyChanged] = useState(false)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const dirty = draft !== saved
+  const skillDocument = /[/\\]skills[/\\][^/\\]+[/\\]SKILL\.md$/i.test(file.path)
+  const metadata = skillDocument ? /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(draft) : null
+  const instructions = metadata ? draft.slice(metadata[0].length).replace(/^(?:\r?\n)+/, '') : draft
+  const firstHeading = skillDocument ? /^# ([^\r\n]+)(?:\r?\n|$)/.exec(instructions) : null
+  const skillName = firstHeading?.[1] || metadata?.[1].match(/^name:\s*["']?([^\r\n"']+)/m)?.[1] || file.path.split(/[/\\]/).slice(-2)[0]
+  const skillDescription = metadata?.[1].match(/^description:\s*["']?([^\r\n"']+)/m)?.[1]
+  if (file.revision !== observedRevision) {
+    setObservedRevision(file.revision); setStatus('')
+    setExternallyChanged(!!file.revision && file.revision !== revision && (dirty || editing || busy))
+    if (!dirty && !editing && !busy) { setSaved(file.text || ''); setDraft(file.text || ''); setRevision(file.revision) }
+  }
   useEffect(() => {
     if (dirty) drafts.set(draftKey, draft); else drafts.delete(draftKey)
     try { if (dirty) sessionStorage.setItem(draftKey, draft); else sessionStorage.removeItem(draftKey) } catch { /* In-memory drafts still survive file switching when browser storage is full. */ }
@@ -41,16 +54,16 @@ export default function MarkdownDocument({ file }: { file: Preview }) {
     setBusy(true); setStatus('Saving…')
     try {
       const result = await api<Preview>('/files/markdown', { path: file.path, text: draft, revision })
-      setSaved(result.text || ''); setDraft(result.text || ''); setRevision(result.revision); setStatus('Saved')
+      setSaved(result.text || ''); setDraft(result.text || ''); setRevision(result.revision); setExternallyChanged(false); setStatus('Saved')
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
     finally { setBusy(false) }
   }
-  return <section className="markdown-document">
+  return <section className={`markdown-document${skillDocument ? ' skill-document' : ''}`}>
     <div className="document-toolbar"><div className="document-modes" aria-label="Markdown mode"><button aria-pressed={!editing} onClick={() => setEditing(false)}>Preview</button><button aria-pressed={editing} onClick={() => setEditing(true)}>Edit</button></div>
-      <span className="document-status" role="status">{status || (dirty ? 'Unsaved draft' : 'Markdown')}</span>
+      <span className="document-status" role="status">{status || (externallyChanged && (dirty || editing) && !busy ? 'File changed externally · draft retained; saving checks conflicts' : dirty ? 'Unsaved draft' : 'Markdown')}</span>
       {dirty && <button disabled={busy} onClick={() => { setDraft(saved); setStatus('Draft discarded') }}>Discard</button>}
       <button className="document-save" disabled={!dirty || busy} onClick={() => void save()}>Save</button>
     </div>
-    {editing ? <textarea className="markdown-editor" aria-label={`Edit ${file.name}`} spellCheck={false} value={draft} onChange={event => { setDraft(event.target.value); setStatus('') }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save() } }} /> : <div className="markdown-reader"><MarkdownView text={draft} baseUrl={file.url} /></div>}
+    {editing ? <textarea className="markdown-editor" aria-label={`Edit ${file.name}`} spellCheck={false} value={draft} onChange={event => { setDraft(event.target.value); setStatus('') }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save() } }} /> : <div className="markdown-reader">{skillDocument && <header className="skill-document-heading"><h1>{skillName}</h1>{skillDescription && !/^[|>]/.test(skillDescription) && <p>{skillDescription}</p>}</header>}<MarkdownView text={skillDocument && firstHeading ? instructions.slice(firstHeading[0].length) : instructions} baseUrl={file.url} />{skillDocument && <p className="skill-document-path">{file.path}</p>}</div>}
   </section>
 }

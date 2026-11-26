@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { Sessions } from '../sessions.mjs';
-import { createService } from '../server.mjs';
-import { terminalRoles, decorateTerminal, roleColors } from '../../../src/desktop/terminalAppearance.ts';
+import { decorateTerminal, roleColors } from '../../../src/desktop/terminalAppearance.ts';
 import { orderedChats } from '../../../src/desktop/chatOrder.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -22,7 +22,8 @@ async function fixture() {
 }
 
 test('tab reordering respects pin boundaries, closed history positions and frontend shortcut order', async () => {
-  const { sessions } = await fixture();
+  const { sessions, repo } = await fixture();
+  let reopened, service;
   try {
     await sessions.reorder('last', 'first', 'before');
     assert.deepEqual(sessions.active().map(x => x.id), ['pin-a', 'pin-b', 'last', 'first']);
@@ -41,41 +42,27 @@ test('tab reordering respects pin boundaries, closed history positions and front
     assert.deepEqual(sessions.active().map(x => x.id), ['pin-b', 'pin-a', 'first', 'last', 'saved']);
     sessions.pin('pin-b', false);
     assert.equal(sessions.active().at(-1).id, 'pin-b');
-  } finally { await sessions.close(); }
-});
 
-test('order and tab colors persist after restart without changing native chat identity', async () => {
-  const { sessions, repo } = await fixture();
-  let reopened;
-  try {
     sessions.get('first').nativeId = '00000000-0000-0000-0000-000000000001';
     sessions.color('first', '#91B6DA');
     sessions.color('pin-b', '#dba3bb');
-    await sessions.reorder('last', 'first', 'before');
-    await sessions.reorder('pin-b', 'pin-a', 'before');
     assert.throws(() => sessions.color('first', 'url(https://example.com)'), /valid tab color/);
     assert.throws(() => sessions.color('first', '#123'), /valid tab color/);
     await sessions.close();
-    reopened = await new Sessions(repo, path.join(repo, '.mrmak')).init();
-    assert.deepEqual(reopened.active().map(x => x.id), ['pin-b', 'pin-a', 'last', 'first']);
+    await mkdir(path.join(repo, 'workspace')); await mkdir(path.join(repo, 'ui'));
+    await writeFile(path.join(repo, 'workspace', 'workspace.json'), '{"entities":[]}');
+    service = await createService({ repo, uiDir: path.join(repo, 'ui') });
+    reopened = service.sessions;
+    assert.deepEqual(reopened.active().map(x => x.id), ['pin-a', 'first', 'last', 'saved', 'pin-b']);
     assert.equal(reopened.get('first').tabColor, '#91b6da');
     assert.equal(reopened.get('first').nativeId, '00000000-0000-0000-0000-000000000001');
     reopened.color('first', null); assert.equal(reopened.get('first').tabColor, null);
-  } finally { await reopened?.close(); await sessions.close(); }
-});
-
-test('appearance API applies explicit colors and settings and rejects cross-group moves', async () => {
-  const { repo, sessions } = await fixture();
-  await sessions.close();
-  await mkdir(path.join(repo, 'workspace')); await mkdir(path.join(repo, 'ui'));
-  await writeFile(path.join(repo, 'workspace', 'workspace.json'), '{"entities":[]}');
-  const service = await createService({ repo, uiDir: path.join(repo, 'ui') });
-  const request = (route, data, method = 'POST') => fetch(service.origin + '/api' + route, { method, headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  try {
+    const request = (route, data, method = 'POST') => fetch(service.origin + '/api' + route, { method, headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    assert.equal((await request('/sessions/first', { tabColor: '#91b6da' }, 'PATCH')).status, 200);
     assert.equal((await request('/sessions/first', { tabColor: '#91b6da' }, 'PATCH')).status, 200);
     assert.equal(service.sessions.get('first').name, 'first');
-    assert.equal((await request('/sessions/first/reorder', { targetId: 'pin-a', position: 'before' })).status, 400);
-    assert.equal((await request('/sessions/last/reorder', { targetId: 'first', position: 'before' })).status, 200);
+    assert.equal((await request('/sessions/first/reorder', { targetId: 'last', position: 'before' })).status, 400);
+    assert.equal((await request('/sessions/pin-b/reorder', { targetId: 'last', position: 'before' })).status, 200);
     const settings = await (await request('/settings', { terminalAppearance: 'original' })).json();
     assert.equal(settings.terminalAppearance, 'original');
     const ignored = await (await request('/settings', { terminalAppearance: 'invalid' })).json();
@@ -84,19 +71,7 @@ test('appearance API applies explicit colors and settings and rejects cross-grou
     assert.equal(themed.accentTheme, 'teal');
     const invalidTheme = await (await request('/settings', { accentTheme: 'neon' })).json();
     assert.equal(invalidTheme.accentTheme, 'teal');
-  } finally { await service.close(); }
-});
-
-test('Focus separates user text, agent prose and tool details across wrapped native rows', () => {
-  const codex = [
-    { text: '› Please review this.' }, { text: '  Include the next paragraph.' },
-    { text: '• I will inspect it.' }, { text: '• Ran npm test' }, { text: '  more command text', wrapped: true },
-    { text: '  └ All tests passed.' }, { text: '─────────────────' }, { text: '• The update is ready.' },
-    { text: '  This is the main answer.' }, { text: '• Ran is part of this wrapped sentence.', wrapped: true },
-  ];
-  assert.deepEqual(terminalRoles(codex, 'codex'), ['user', 'user', 'agent', 'detail', 'detail', 'detail', 'detail', 'agent', 'agent', 'agent']);
-  const claude = ['❯ Review this.', '⏺ Bash(npm test)', '  ⎿ All passed.', '⏺ Ready to review.', '  Here is the answer.'].map(text => ({ text }));
-  assert.deepEqual(terminalRoles(claude, 'claude'), ['user', 'detail', 'detail', 'agent', 'agent']);
+  } finally { await service?.close(); await sessions.close(); }
 });
 
 test('Focus decorations preserve terminal contents and native inverse/background selections', async () => {

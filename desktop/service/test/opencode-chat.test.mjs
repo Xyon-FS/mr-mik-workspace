@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
-import { mkdtemp, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { OpenCodePicker } from '../opencode-picker.mjs';
 import { createObserver } from '../opencode/observer.mjs';
 import { tui } from '../opencode/tui-controls.mjs';
-import { createService } from '../server.mjs';
 
 test('OpenCode fork observation captures a fresh native root, not the source or unrelated child', () => {
   const states = [], directory = path.resolve('fixture');
@@ -27,18 +27,6 @@ test('provider errors return the observer to idle, while permissions/questions s
   event('permission.asked'); assert.equal(states.at(-1).activity, 'waiting');
   event('session.idle'); assert.equal(states.at(-1).activity, 'waiting');
   event('question.asked'); assert.equal(states.at(-1).activity, 'waiting');
-});
-
-test('model picker ignores old menus in scrollback and recovers after stale observer attention', async () => {
-  const terminal = new headless.Terminal({ cols: 110, rows: 12, allowProposedApi: true });
-  await new Promise(resolve => terminal.write('Select model\r\nOld option\r\n' + 'History line\r\n'.repeat(30) + 'Provider unavailable in this region\r\nReady', resolve));
-  const session = { agent: 'opencode', status: 'running', process: {}, terminal, openCodeLaunchId: 'launch', activity: 'waiting', attention: true };
-  const picker = new OpenCodePicker({ get: () => session });
-  assert.equal(picker.rows('fixture', 'model'), null);
-  assert.equal((await picker.screen('fixture')).includes('Select model'), false);
-  let called = false; picker.command = async (_id, action) => { if (action === 'catalog') return { models: [] }; assert.equal(action, 'model'); called = true; }; picker.until = async () => null;
-  await assert.rejects(picker.openMenu('fixture', 'model'), /read safely/); assert.equal(called, true);
-  assert.equal(picker.busy.size, 0); assert.equal(picker.openMenus.size, 0); terminal.dispose();
 });
 
 test('OpenCode picker recognizes colored native rows and refuses stale selections before sending keys', async () => {
@@ -75,11 +63,19 @@ test('OpenCode TUI control validates launch/scope, dispatches native commands an
     assert.match((await request('wrong', 'interrupt')).error, /Return/); assert.deepEqual(aborts, []);
     api.route.current.params.sessionID = 'ses_owned';
     const catalog = await request('catalog', 'catalog'); assert.equal(catalog.models[0].label, 'Fixture Alpha'); assert.deepEqual(catalog.models[0].variants, ['high']); assert.equal(JSON.stringify(catalog).includes('never-transfer'), false); assert.deepEqual(commands, []);
-    assert.equal((await request('ready', 'prepare')).accepted, true); assert.deepEqual(commands, []);
+    assert.match((await request('ready', 'prepare')).error, /empty native prompt/); assert.deepEqual(commands, []);
     assert.match((await request('no-focus', 'mcp-ready')).error, /empty native prompt/);
     api.renderer = { currentFocusedRenderable: { traits: { owner: 'opencode', role: 'prompt', capture: ['tab'] }, plainText: 'private draft' } };
     assert.match((await request('draft-mcp', 'mcp-ready')).error, /empty native prompt/);
     api.renderer.currentFocusedRenderable.plainText = '';
+    assert.equal((await request('ready-empty', 'prepare')).accepted, true);
+    api.state.session.status = () => undefined;
+    api.client.session.status = async () => ({ data: {} });
+    api.client.session.get = async () => ({ data: { id: 'ses_owned' } });
+    assert.equal((await request('uncached-idle', 'prepare')).accepted, true);
+    api.client.session.status = async () => ({ data: { ses_owned: { type: 'busy' } } });
+    assert.match((await request('uncached-busy', 'prepare')).error, /idle chat/);
+    api.state.session.status = () => ({ type: 'idle' });
     assert.equal((await request('empty-mcp', 'mcp-ready')).accepted, true);
     const mcpCalls = [], liveState = { unity: { status: 'connected' } };
     api.client.mcp = { connect: async ({ name }) => { mcpCalls.push(['on', name]); liveState[name] = { status: 'connected' }; return { data: true }; }, disconnect: async ({ name }) => { mcpCalls.push(['off', name]); liveState[name] = { status: 'disabled' }; return { data: true }; }, status: async () => ({ data: liveState }) };

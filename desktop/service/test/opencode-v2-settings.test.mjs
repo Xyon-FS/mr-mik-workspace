@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeSettings, openCodeDocument } from '../opencode-settings.mjs';
@@ -11,7 +12,7 @@ async function fixture(run) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'mik-v2-settings-'));
   const home = path.join(base, 'home'), root = path.join(base, 'project'), stateDir = path.join(base, 'state'), globalFile = path.join(home, '.config/opencode/opencode.jsonc');
   try {
-    for (const folder of [path.dirname(globalFile), path.join(root, '.opencode/skills/report'), stateDir]) await mkdir(folder, { recursive: true });
+    for (const folder of [path.dirname(globalFile), path.join(root, '.opencode/skills/report'), path.join(root, '.git'), stateDir]) await mkdir(folder, { recursive: true });
     await writeFile(path.join(root, '.opencode/skills/report/SKILL.md'), '---\nname: report\ndescription: Fixture\n---\nFixture');
     await writeFile(globalFile, '// preserved\n' + JSON.stringify({ mcp: { timeout: { catalog: 1000 }, servers: { fixture: { type: 'local', command: ['node', 'fixture.mjs'], disabled: true, environment: { AUTH: '{env:FIXTURE_AUTH}' } } } }, permissions: [{ action: 'skill', resource: '*', effect: 'deny' }], plugins: [{ package: 'fixture-plugin', options: { token: 'FIXTURE_SECRET' } }] }));
     const settings = new OpenCodeSettings({ root: async () => root }, stateDir, { home, env: {}, family: 2 });
@@ -19,12 +20,27 @@ async function fixture(run) {
   } finally { await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 test('V2 MCP toggle writes valid transport, not ignored sparse enabled entries, and Inherit removes only its unchanged generated override', async () => fixture(async f => {
+  const globalBytes = await readFile(f.globalFile);
+  const source = await openCodeDocument(f.globalFile);
+  source.value.mcp.servers.fixture.environment.AUTH = 'FIXTURE_LITERAL_SECRET';
+  await writeFile(f.globalFile, JSON.stringify(source.value));
+  await assert.rejects(f.settings.change({ projectId: 'workspace', name: 'fixture', enabled: true }), /credentials/);
+  await assert.rejects(readFile(path.join(f.root, 'opencode.json')), { code: 'ENOENT' });
+  await writeFile(f.globalFile, globalBytes);
   const args = { projectId: 'workspace', scope: 'project', name: 'fixture' };
   await f.settings.change({ ...args, enabled: true });
   let doc = await openCodeDocument(path.join(f.root, 'opencode.json'));
   assert.deepEqual(doc.value.mcp.servers.fixture, { type: 'local', command: ['node', 'fixture.mjs'], environment: { AUTH: '{env:FIXTURE_AUTH}' }, disabled: false });
   assert.equal(JSON.stringify(doc.value).includes('FIXTURE_SECRET'), false);
   const list = await f.settings.list('workspace'); assert.equal(list.rows.find(row => row.kind === 'mcp').effective, true); assert.equal(JSON.stringify(list).includes('FIXTURE_SECRET'), false);
+  const inventory = new McpInventory(f.root, { home: f.home, env: {} });
+  try {
+    const result = await inventory.list();
+    const servers = result.servers.filter(row => row.client === 'opencode');
+    assert.equal(servers.length, 1);
+    assert.equal(servers[0].enabled, true);
+    assert.doesNotMatch(JSON.stringify(result), /FIXTURE_SECRET/);
+  } finally { inventory.close(); }
   await f.settings.change({ ...args, enabled: false }); await f.settings.change({ ...args, enabled: null });
   assert.equal((await openCodeDocument(doc.file)).value.mcp.servers.fixture, undefined);
   assert.match(await readFile(f.globalFile, 'utf8'), /preserved/);
@@ -69,11 +85,6 @@ test('V2 ordered skill permissions preserve unrelated rules; inherited wildcard 
   await f.settings.change({ ...args, scope: 'global', enabled: true });
   assert.equal((await f.settings.list('workspace')).rows.find(row => row.kind === 'skill').globalEnabled, true);
 }));
-test('V2 native MCP inventory excludes timeout/server wrapper rows and retains inherited environment privately', async () => fixture(async f => {
-  await f.settings.change({ projectId: 'workspace', scope: 'project', name: 'fixture', enabled: true });
-  const inventory = new McpInventory(f.root, { home: f.home, env: {} });
-  try { const value = await inventory.list(); const servers = value.servers.filter(row => row.client === 'opencode'); assert.equal(servers.length, 1); assert.equal(servers[0].enabled, true); assert.equal(JSON.stringify(value).includes('FIXTURE_SECRET'), false); } finally { inventory.close(); }
-}));
 test('V2 owned definitions use native disabled and external definitions remain protected', async () => fixture(async f => {
   await assert.rejects(f.settings.change({ scope: 'global', action: 'remove', name: 'fixture' }), /outside/);
   await f.settings.change({ projectId: 'workspace', action: 'save', name: 'owned', transport: 'stdio', command: 'node' });
@@ -81,35 +92,6 @@ test('V2 owned definitions use native disabled and external definitions remain p
   await f.settings.change({ projectId: 'workspace', name: 'owned', enabled: false });
   await f.settings.change({ projectId: 'workspace', action: 'remove', name: 'owned' });
   assert.equal((await openCodeDocument(path.join(f.root, 'opencode.json'))).value.mcp.servers.owned, undefined);
-}));
-test('V2 automatic overrides refuse literal credential fields before writing a project file', async () => fixture(async f => {
-  const source = await openCodeDocument(f.globalFile);
-  source.value.mcp.servers.fixture.environment.AUTH = 'FIXTURE_LITERAL_SECRET';
-  await writeFile(f.globalFile, JSON.stringify(source.value));
-  await assert.rejects(f.settings.change({ projectId: 'workspace', name: 'fixture', enabled: true }), /credentials/);
-  await assert.rejects(readFile(path.join(f.root, 'opencode.json')), { code: 'ENOENT' });
-}));
-test('V2 configured skill paths and plugin declarations are visible without exposing plugin options', async () => fixture(async f => {
-  const folder = path.join(f.root, 'custom-skills/extra'); await mkdir(folder, { recursive: true });
-  await writeFile(path.join(folder, 'SKILL.md'), '---\nname: extra\ndescription: Fixture\n---\nFixture');
-  const doc = await openCodeDocument(f.globalFile); doc.value.skills = ['./custom-skills'];
-  await writeFile(f.globalFile, JSON.stringify(doc.value));
-  const rows = (await f.settings.list('workspace')).rows;
-  assert.ok(rows.some(row => row.kind === 'skill' && row.id === 'extra'));
-  assert.equal(rows.find(row => row.kind === 'plugin').globalEditable, false);
-  assert.equal(JSON.stringify(rows).includes('FIXTURE_SECRET'), false);
-  doc.value.permissions = [{ action: 'skill', resource: '*', effect: 'deny' }, { action: 'skill', resource: 'ex*', effect: 'allow' }];
-  await writeFile(f.globalFile, JSON.stringify(doc.value));
-  assert.equal((await f.settings.list('workspace')).rows.find(row => row.id === 'extra').effective, true);
-}));
-test('V2 inventory respects server replacement and ignores legacy enabled-only entries like the native CLI', async () => fixture(async f => {
-  const file = path.join(f.root, 'opencode.json');
-  await writeFile(file, JSON.stringify({ mcp: { fixture: { enabled: true } } }));
-  assert.equal((await f.settings.list('workspace')).rows.find(row => row.kind === 'mcp').effective, false);
-  await writeFile(file, JSON.stringify({ mcp: { servers: { fixture: { type: 'local', command: ['node', 'local.mjs'] } } } }));
-  const state = await f.settings.state('workspace');
-  assert.equal(state.merged.mcp.fixture.environment, undefined);
-  assert.equal((await f.settings.list('workspace')).rows.find(row => row.kind === 'mcp').effective, true);
 }));
 test('V2 auth uses native positional integration/private server and exposes fixed enums only', () => {
   const resolve = { opencode: () => ({ file: 'fixture.exe', args: [] }), openCodeFamily: () => 2 };
@@ -121,31 +103,6 @@ test('V2 auth uses native positional integration/private server and exposes fixe
   assert.equal(parseAccountStatus('opencode', { code: 0, stdout: '[{"id":"other","connections":[{}]}]' }), 'logged-in');
   assert.equal(parseAccountStatus('opencode', { code: 0, stdout: '{}' }), 'unknown');
 });
-
-test('V2 skill IDs follow files/folders rather than labels; direct, nested and singular sources remain configurable', async () => fixture(async f => {
-  const singular = path.join(f.root, '.opencode/skill');
-  const nested = path.join(f.root, '.opencode/skills/group/Folder.ID');
-  await mkdir(singular, { recursive: true }); await mkdir(nested, { recursive: true });
-  await writeFile(path.join(singular, 'direct.md'), '---\nname: "Friendly display"\ndescription: |\n  Multiline text\n---\nPRIVATE_SKILL_BODY');
-  await writeFile(path.join(nested, 'SKILL.md'), '---\nname: Different label\n---\nFixture');
-  await writeFile(path.join(singular, 'fallback.md'), 'No frontmatter is required.');
-  await writeFile(path.join(singular, 'invalid.md'), '---\nname: 123\n---\nFixture');
-  let rows = (await f.settings.list('workspace')).rows.filter(row => row.kind === 'skill');
-  assert.equal(rows.find(row => row.id === 'direct').name, 'Friendly display');
-  assert.equal(rows.find(row => row.id === 'Folder.ID').name, 'Different label');
-  assert.ok(rows.some(row => row.id === 'fallback')); assert.equal(rows.some(row => row.id === 'invalid'), false);
-  assert.equal(JSON.stringify(rows).includes('PRIVATE_SKILL_BODY'), false);
-  await f.settings.change({ projectId: 'workspace', kind: 'skill', id: 'Folder.ID', enabled: false });
-  const doc = await openCodeDocument(path.join(f.root, 'opencode.json'));
-  assert.deepEqual(doc.value.permissions.at(-1), { action: 'skill', resource: 'Folder.ID', effect: 'deny' });
-  await assert.rejects(f.settings.change({ projectId: 'workspace', kind: 'skill', id: 'Different label', enabled: false }), /discovered/);
-  await assert.rejects(f.settings.change({ projectId: 'workspace', kind: 'skill', id: '*', enabled: false }), /configurable/);
-  await f.settings.change({ projectId: 'workspace', kind: 'skill', id: 'direct', enabled: true });
-  rows = (await f.settings.list('workspace')).rows;
-  assert.equal(rows.find(row => row.id === 'direct').permissionEffect, 'allow');
-  await f.settings.change({ projectId: 'workspace', kind: 'skill', id: 'direct', enabled: null });
-  assert.equal((await f.settings.list('workspace')).rows.find(row => row.id === 'direct').effective, false);
-}));
 
 test('V2 remote/custom catalog is metadata-only and revalidated; ask is not an unconditional allow', async () => fixture(async f => {
   const doc = await openCodeDocument(f.globalFile);

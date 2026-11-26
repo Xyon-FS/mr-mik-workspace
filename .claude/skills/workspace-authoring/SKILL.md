@@ -37,3 +37,7 @@ Open every changed tab at wide and narrow sizes. Check media and links, Markdown
 rendering and image close/download controls. Preserve the dark surface during
 loading. Report actual verification and any remaining limitations. Prepare
 desktop changes without restarting active sessions until the user permits it.
+
+## Registered card content synchronization
+
+Registered card pages advertising autoSync are synchronized locally after stable saves. Reuse paths within this live chat; ordinary edits need no registration. Resolve and register new pages explicitly. Other Hub content retains its existing registration flow. Re-resolve expired destinations and re-read current source when needed. Native permission denials still stop writes.

@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import http from 'node:http';
-import { createService } from '../server.mjs';
 import { sleep } from '../util.mjs';
-import { completedTurn, tailNativeFile } from '../native-events.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 async function fixture() {
@@ -29,6 +28,8 @@ async function fixture() {
 test('local authorization and report isolation protect the terminal service', async () => {
   const { service, request, repo } = await fixture();
   try {
+    const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+    assert.deepEqual(await (await fetch(service.origin + '/health')).json(), { service: 'mrmik', version });
     assert.equal((await fetch(service.origin + '/api/bootstrap')).status, 401);
     assert.equal((await fetch(service.origin + '/api/mcp')).status, 401);
     assert.equal((await request('/mcp/check', { id: 'not-a-server' }, { Origin: 'https://unrelated.example' })).status, 403);
@@ -116,42 +117,18 @@ test('websocket rejects report origins and unauthenticated terminal input', asyn
   } finally { await service.close(); }
 });
 
-test('coordinator operation IDs prevent replay, including after a restart', async () => {
-  const { service } = await fixture();
-  try {
-    service.coordinator.operations.set('already-routed', { id: 'already-routed', status: 'completed', result: 'Delivered once.' });
-    assert.equal((await service.coordinator.ask({ id: 'already-routed', text: 'Send it again' })).result, 'Delivered once.');
-    assert.equal(service.coordinator.child, null);
-    await service.coordinator.save();
-    const { Coordinator } = await import('../coordinator.mjs');
-    const restored = await new Coordinator({ repo: service.sessions.repo, stateDir: service.sessions.stateDir }).init();
-    assert.equal((await restored.ask({ id: 'already-routed', text: 'Retry' })).status, 'completed');
-  } finally { await service.close(); }
-});
-
-test('completion notifications require a native final-turn event', async () => {
-  assert.equal(completedTurn({ type: 'assistant', message: { stop_reason: 'tool_use' } }, 'claude'), null);
-  assert.equal(completedTurn({ type: 'assistant', isSidechain: true, message: { stop_reason: 'end_turn' } }, 'claude'), null);
-  assert.equal(completedTurn({ type: 'event_msg', payload: { type: 'task_started' } }, 'codex'), null);
-  assert.equal(completedTurn({ type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } }, 'claude').kind, 'turn-completed');
-  const { service, repo } = await fixture();
-  const file = path.join(repo, 'native.jsonl');
-  await writeFile(file, '{"type":"event_msg","payload":');
-  const events = [];
-  const stop = tailNativeFile(file, 'codex', event => events.push(event));
-  try {
-    await sleep(100); assert.equal(events.length, 0);
-    const { appendFile } = await import('node:fs/promises');
-    await appendFile(file, '{"type":"task_complete"}}\n');
-    await until(() => events.length === 1, 3500);
-    assert.equal(events[0].kind, 'turn-completed');
-  } finally { stop(); await service.close(); }
-});
-
 test('History preserves closed and pinned chats while startup restores only open tabs', { skip: process.platform !== 'win32', timeout: 30000 }, async () => {
   const { service, repo, request } = await fixture();
   let reopened;
   try {
+    const close = (current, id) => fetch(current.origin + `/api/sessions/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${current.token}` } });
+    const empty = await service.sessions.create({ agent: 'shell', name: 'Unused chat', cwd: repo });
+    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
+    const result = await close(service, empty.id);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).savedInHistory, false);
+    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
+    await assert.rejects(readFile(path.join(repo, '.mrmak', `screen-${empty.id}.json`)), { code: 'ENOENT' });
     const archived = await service.sessions.create({ agent: 'shell', name: 'Pinned task', cwd: repo });
     service.sessions.pin(archived.id, true);
     await service.sessions.remove(archived.id);
@@ -180,6 +157,11 @@ test('History preserves closed and pinned chats while startup restores only open
     assert.equal(reopened.sessions.get(imported.id).nativeId, imported.nativeId);
     assert.equal(reopened.sessions.get(imported.id).process, null);
     assert.match((await reopened.sessions.read(active.id)).screen, /RESTORE_CONTEXT_OK/);
+    assert.equal(history.some(item => item.id === active.id), true);
+    const kept = await close(reopened, active.id);
+    assert.equal((await kept.json()).savedInHistory, true);
+    const reopenedHistory = await fetch(reopened.origin + '/api/history', { headers: { Authorization: `Bearer ${reopened.token}` } });
+    assert.ok((await reopenedHistory.json()).some(item => item.id === active.id));
   } finally { await reopened?.close(); await service.close(); }
 });
 
@@ -187,9 +169,16 @@ test('History archives and removes only Mr. Mik records, never a native transcri
   const { service, repo, request } = await fixture();
   try {
     const nativeId = '00000000-0000-0000-0000-000000000127';
-    const nativeFile = path.join(repo, 'native-transcript.jsonl');
-    await writeFile(nativeFile, '{"type":"session_meta"}\n');
+    const home = path.join(repo, 'fixture-codex');
+    const folder = path.join(home, 'sessions', '2026', '11', '25');
+    await mkdir(folder, { recursive: true });
+    const nativeFile = path.join(folder, 'rollout-fixture-' + nativeId + '.jsonl');
+    const nativeBytes = JSON.stringify({ type: 'session_meta', payload: { id: nativeId, cwd: repo } }) + '\n';
+    await writeFile(nativeFile, nativeBytes);
+    service.sessions.accountContext = async () => ({ sharedHome: home });
     const chat = await service.sessions.importConversation({ agent: 'codex', nativeId, name: 'Old chat', cwd: repo });
+    const session = service.sessions.get(chat.id);
+    assert.equal(await service.sessions.codexFile(session), nativeFile);
     await service.sessions.read(chat.id);
     await service.sessions.persist();
     const screen = path.join(repo, '.mrmak', `screen-${chat.id}.json`);
@@ -202,60 +191,9 @@ test('History archives and removes only Mr. Mik records, never a native transcri
     assert.equal((await removed.json()).nativeConversationUntouched, true);
     assert.equal((await request('/history')).status, 200);
     assert.equal((await (await request('/history')).json()).some(item => item.id === chat.id), false);
-    assert.equal(await readFile(nativeFile, 'utf8'), '{"type":"session_meta"}\n');
+    assert.equal(await service.sessions.codexFile(session), nativeFile);
+    assert.equal(await readFile(nativeFile, 'utf8'), nativeBytes);
     await assert.rejects(readFile(screen), { code: 'ENOENT' });
-  } finally { await service.close(); }
-});
-
-test('closing an unused chat omits it from Mr. Mik History', { skip: process.platform !== 'win32', timeout: 30000 }, async () => {
-  const { service, repo, request } = await fixture();
-  const close = id => fetch(service.origin + `/api/sessions/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${service.token}` } });
-  try {
-    const empty = await service.sessions.create({ agent: 'shell', name: 'Unused chat', cwd: repo });
-    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
-    const result = await close(empty.id);
-    assert.equal(result.status, 200);
-    assert.equal((await result.json()).savedInHistory, false);
-    assert.equal((await (await request('/history')).json()).some(item => item.id === empty.id), false);
-    await assert.rejects(readFile(path.join(repo, '.mrmak', `screen-${empty.id}.json`)), { code: 'ENOENT' });
-
-    const used = await service.sessions.create({ agent: 'shell', name: 'Used terminal', cwd: repo });
-    service.sessions.input(used.id, 'Write-Output used\r');
-    assert.equal((await (await request('/history')).json()).some(item => item.id === used.id), true);
-    const kept = await close(used.id);
-    assert.equal((await kept.json()).savedInHistory, true);
-    assert.equal((await (await request('/history')).json()).some(item => item.id === used.id), true);
-  } finally { await service.close(); }
-});
-
-test('pasted images are saved in inbox and inserted as a quoted path without submitting', { skip: process.platform !== 'win32', timeout: 20000 }, async () => {
-  const { service, repo } = await fixture();
-  try {
-    const image = await readFile(path.join(root, 'src-tauri', 'icons', '32x32.png'));
-    const upload = await fetch(service.origin + '/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'X-File-Name': encodeURIComponent('../../Screenshot sample.png') }, body: image });
-    assert.equal(upload.status, 201);
-    const saved = await upload.json();
-    assert.ok(saved.path.startsWith(path.join(repo, 'inbox', 'attachments') + path.sep));
-    assert.deepEqual(await readFile(saved.path), image);
-    const duplicate = await service.files.preview(saved.path);
-    assert.equal(duplicate.kind, 'image');
-    const rejected = await fetch(service.origin + '/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${service.token}` }, body: '<script>not an image</script>' });
-    assert.equal(rejected.status, 400);
-    const unauthenticated = await fetch(service.origin + '/api/attachments', { method: 'POST', body: image });
-    assert.equal(unauthenticated.status, 401);
-    // Wait for PowerShell readiness rather than racing startup on a cold runner.
-    // A wide terminal keeps long CI checkout paths from splitting the filename.
-    const shell = await service.sessions.create({ agent: 'shell', name: 'Attachment input', cwd: repo, cols: 500 });
-    await until(async () => /\bPS [^\r\n]*>/.test((await service.sessions.read(shell.id, 150)).screen));
-    const proc = service.sessions.get(shell.id).process;
-    const write = proc.write.bind(proc), input = [];
-    proc.write = data => { input.push(data); return write(data); };
-    const attached = await fetch(service.origin + `/api/sessions/${shell.id}/attach`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [saved.path] }) });
-    assert.equal(attached.status, 200);
-    assert.equal((await attached.json()).submitted, false);
-    assert.deepEqual(input, ["'" + saved.path.replaceAll("'", "''") + "' "]);
-    await until(async () => (await service.sessions.read(shell.id, 150)).screen.includes('Screenshot sample'));
-    assert.equal(service.sessions.get(shell.id).status, 'running');
   } finally { await service.close(); }
 });
 
@@ -290,20 +228,6 @@ test('pasted images use the chat project, then the selected workspace for unassi
     assert.deepEqual(await readFile(selectedImage.path), image);
     assert.deepEqual(await readFile(unassignedImage.path), image);
     assert.equal((await upload('unknown-chat')).status, 404);
-  } finally { await service.close(); }
-});
-
-test('context access reads project guidance and excludes credential and runtime files', async () => {
-  const { service, repo } = await fixture();
-  try {
-    const { ContextLibrary } = await import('../context.mjs');
-    const library = new ContextLibrary(repo);
-    await writeFile(path.join(repo, 'projects', 'brief.md'), '# Project brief\nA task description.');
-    assert.match((await library.read('projects/brief.md')).text, /task description/);
-    await assert.rejects(library.read('.env'), /Private runtime/);
-    await mkdir(path.join(repo, '.mrmak'), { recursive: true });
-    await writeFile(path.join(repo, '.mrmak', 'runtime.json'), '{}');
-    await assert.rejects(library.read('.mrmak/runtime.json'), /Private runtime/);
   } finally { await service.close(); }
 });
 

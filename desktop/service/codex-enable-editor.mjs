@@ -27,9 +27,9 @@ export function setTableEnabled(text, group, id, enabled) {
       })
     : `${newline}enabled = ${enabled}${body}`;
   const result = text.slice(0, start) + updated + text.slice(end);
-  const before = parseToml(text.replace(/^\uFEFF/, ''));
+  // This fresh parse belongs to the comparison; retain its safe table prototypes.
+  const expected = parseToml(text.replace(/^\uFEFF/, ''));
   const after = parseToml(result.replace(/^\uFEFF/, ''));
-  const expected = structuredClone(before);
   expected[group][id].enabled = enabled;
   if (!isDeepStrictEqual(after, expected)) throw new Error('The Codex table could not be updated without changing other settings. No changes were made.');
   return result;

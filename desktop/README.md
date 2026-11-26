@@ -1,9 +1,37 @@
 # Desktop architecture
 
+## Building a portable on Windows
+
+Double-click `Build-Portable.cmd` in the source root. It builds the current UI,
+service and native host, creates a portable ZIP and unpacked folder, then checks
+source parity, checksums and the bundled Node/terminal runtime. It does not
+install or launch Mr. Mik or send model requests.
+
+Each run creates a unique `release/<version>-portable-<timestamp>-<id>/` directory.
+Use the ZIP for distribution or the launcher inside `Mr-Mik-portable/` to try it.
+Successful builds contain `BUILD.txt` and `build.log`; failed runs retain their
+log under `.cache/build-logs/` and display its path. These packaging checks do not
+replace the UI acceptance tests. Preserve your existing `MyHub` when updating;
+replace only `App` and the launcher.
+
+The command uses the cached build Node when available, otherwise Node from PATH.
+Repository dependencies and the Windows Rust/MSVC build tools must be installed;
+NSIS is not required. Run `Build-Portable.cmd --check` to check dependency paths
+without compiling. Installer and portable builds share a lock because they use
+the same runtime staging directory. If a build is interrupted, confirm its
+processes have stopped before removing the lock named in the error message.
+
+## Runtime structure
+
 The Windows app is a Tauri 2 shell around two webviews. It starts one local Node
 service, binds it to loopback and gives each window the authenticated local URL.
 Workspace renders the React UI and report files. Chats renders real PTYs through
 xterm.js. The windows share sessions and settings but minimize independently.
+
+Development source also includes structured graphical chats for Codex and a first
+Claude preview. Claude uses its own local stream-json process, reuses the shared
+timeline and retains the existing CLI option. See the [Claude controls guide](../docs/user-guide.md#claude-specific-controls)
+for supported controls and limits. OpenCode graphical chat is pending.
 
 | Path | Responsibility |
 | --- | --- |

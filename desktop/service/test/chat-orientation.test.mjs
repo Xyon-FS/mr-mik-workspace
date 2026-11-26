@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { chatOrientation, codexSessionInstructions } from '../chat-orientation.mjs';
@@ -31,7 +32,13 @@ test('Codex session instruction override preserves the effective native instruct
   await writeFile(userFile, 'developer_instructions = "User instruction"\n');
   await writeFile(projectFile, 'developer_instructions = "Project instruction"\n');
   const result = await codexSessionInstructions('Hub routing', home, cwd);
-  assert.equal(result, 'Project instruction\n\nHub routing');
+  assert.ok(result.startsWith('Project instruction\n\nHub routing\n'));
+  assert.match(result, /OpenAI built-in Browser is unavailable in Codex CLI/);
+  assert.match(result, /actually exposed CLI-compatible browser tool/);
+  assert.match(result, /Distinguish a failed tool call from not having a tool/);
+  const withoutNativeInstructions = await codexSessionInstructions('Hub routing', path.join(base, 'empty-home'), path.join(base, 'empty-project'));
+  assert.ok(withoutNativeInstructions.startsWith('Hub routing\n'));
+  assert.match(withoutNativeInstructions, /OpenAI built-in Browser is unavailable/);
   assert.equal(await readFile(userFile, 'utf8'), 'developer_instructions = "User instruction"\n');
   assert.equal(await readFile(projectFile, 'utf8'), 'developer_instructions = "Project instruction"\n');
   const launch = terminalCommand('codex', { bridge: { script: path.join(base, 'bridge-mcp.mjs'), instructions: result, contentDirectories: [base], codexWritableRoots: true } });

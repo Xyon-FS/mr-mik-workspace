@@ -1,9 +1,9 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const repo = await mkdtemp(path.join(root, '.cache/demo-ui-'));
@@ -13,13 +13,14 @@ await cp(path.join(root, 'public/assets'), path.join(root, 'dist/assets'), { rec
 const service = await createService({ repo, uiDir: path.join(root, 'dist'), mcpOptions: { home: repo, env: {} } });
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, channel: 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultNavigationTimeout(30000);
   await page.route('https://fonts.googleapis.com/**', route => route.abort()); await page.route('https://fonts.gstatic.com/**', route => route.abort());
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.workspace);
   await page.getByRole('button', { name: 'Toggle projects' }).click();
-  await page.getByRole('button', { name: 'Add example workspace' }).click();
+  await page.getByRole('button', { name: 'Workspace actions', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Workspace actions', exact: true }).getByRole('button', { name: 'Add example workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Workspace · Mik’s Midnight Workshop', exact: true }).waitFor();
   const cards = JSON.parse(await readFile(service.projects.workspacePath, 'utf8')).entities;
   assert.equal(cards.length, 4);
@@ -63,5 +64,5 @@ try {
   await page.getByRole('button', { name: 'Workspace · Mik’s Midnight Workshop', exact: true }).click();
   await page.screenshot({ path: path.join(repo, 'overview.png') });
   assert.deepEqual(errors, []);
-  console.log(`Five demo pages and four cards passed wide/narrow previews, section links and local image preview: ${repo}`);
+  console.log('Five demo pages and four cards passed wide/narrow previews, section links and local image preview; temporary screenshots are cleaned with the fixture.');
 } finally { await browser?.close(); await service.close(); }

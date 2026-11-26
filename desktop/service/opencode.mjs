@@ -36,7 +36,7 @@ export async function readOpenCodeState(file, chatId) {
   } catch { return null; }
 }
 
-export function openCodeRuntimeConfig(env, bridge, family = 1) {
+export function openCodeRuntimeConfig(env, bridge, family = 1, browser) {
   let config;
   try { config = JSON.parse(env.OPENCODE_CONFIG_CONTENT || '{}'); }
   catch { throw new Error('OPENCODE_CONFIG_CONTENT is not valid JSON.'); }
@@ -50,6 +50,7 @@ export function openCodeRuntimeConfig(env, bridge, family = 1) {
       const hubSkillIds = bridge.hubSkillIds ?? bridge.hubSkillNames;
       if (hubSkillIds?.length) config.permissions = [...(config.permissions || []), ...hubSkillIds.map(id => ({ action: 'skill', resource: id, effect: 'deny' }))];
     }
+    if (browser) config.mcp = { ...config.mcp, servers: { ...config.mcp?.servers, [browser.serverName]: { type: 'local', command: [browser.command, ...browser.args], disabled: false } } };
     return config;
   }
   const plugin = pathToFileURL(fileURLToPath(new URL('./opencode/plugin.mjs', import.meta.url))).href;
@@ -62,13 +63,14 @@ export function openCodeRuntimeConfig(env, bridge, family = 1) {
       config.permission = { ...permission, skill: { ...skills, ...Object.fromEntries(bridge.hubSkillNames.map(name => [name, 'deny'])) } };
     }
   }
+  if (browser) config.mcp = { ...config.mcp, [browser.serverName]: { type: 'local', command: [browser.command, ...browser.args], enabled: true } };
   return config;
 }
 
-export async function openCodeLaunchEnvironment(session, stateDir, env, bridge) {
+export async function openCodeLaunchEnvironment(session, stateDir, env, bridge, browser) {
   const version = openCodeVersion(env), family = Number(version.split('.')[0]) >= 2 ? 2 : 1;
   if (session.nativeId && !validSessionId(session.nativeId)) throw new Error('Invalid OpenCode conversation ID.');
-  const config = openCodeRuntimeConfig(env, bridge, family);
+  const config = openCodeRuntimeConfig(env, bridge, family, browser);
   await mkdir(path.join(stateDir, 'opencode'), { recursive: true });
   const launchId = randomUUID();
   // V2 --session supports an explicit ID for creation. Assign it before startup

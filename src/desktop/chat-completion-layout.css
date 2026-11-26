@@ -1,0 +1,31 @@
+/* Keep scroll ownership and virtualization on the full-width viewport. */
+.chats-surface .graphical-chat{--chat-reading-width:720px}
+.chats-surface .graphical-chat .graphical-messages{padding-inline:18px!important}
+.chats-surface .graphical-chat .graphical-messages>*{width:100%;max-width:var(--chat-reading-width);margin-inline:auto}
+.chats-surface .graphical-chat .graphical-composer{box-sizing:border-box;width:calc(100% - 36px);max-width:var(--chat-reading-width);margin-inline:auto!important;position:relative}
+.chats-surface .graphical-chat>.graphical-support{width:100%;max-width:calc(var(--chat-reading-width) + 32px);margin-inline:auto}
+.chats-surface .graphical-chat>.graphical-footnote{width:calc(100% - 36px);max-width:var(--chat-reading-width);margin-inline:auto}
+.graphical-draft-editor{position:relative;flex:1;min-width:0;width:100%;display:flex}
+.graphical-draft-editor textarea{width:100%;min-width:0;box-sizing:border-box;position:relative;z-index:1}
+.graphical-draft-editor.has-skill-highlight textarea{color:transparent!important;caret-color:var(--ink-bright,#dedee7)}
+.graphical-draft-editor.has-skill-highlight textarea::selection{color:var(--ink-bright,#dedee7);background:var(--accent-medium,#ffffff26)}
+.graphical-draft-mirror{position:absolute;inset:0;pointer-events:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;color:var(--ink-bright,#dedee7)}
+.graphical-draft-mirror strong{color:var(--chat-skill-color,#8cb9ff);font-weight:inherit;text-shadow:.2px 0 currentColor}
+.graphical-skill-completion{position:absolute;inset-inline:-1px;bottom:calc(100% + 8px);z-index:60;display:flex;flex-direction:column;min-height:0;box-sizing:border-box;border:1px solid var(--conversation-line,var(--line,#ffffff20));border-radius:11px;background:var(--panel,#202026);box-shadow:0 10px 30px #0005;overflow:hidden;color:var(--ink-bright,#dedee7);font-size:12px}
+.graphical-skill-completion>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 7px;gap:10px}
+.graphical-skill-completion>header strong{font-size:12px;font-weight:500}
+.graphical-skill-completion>header small{font-size:11px;color:var(--ink-label)}
+.skill-completion-list{min-height:0;overflow:auto;overscroll-behavior:contain;padding:0 5px 5px;scrollbar-width:thin}
+.graphical-chat .skill-completion-list>button{display:flex;align-items:center;gap:10px;min-height:52px;width:100%;border:0;border-radius:7px;background:transparent;padding:9px 8px;text-align:left;box-sizing:border-box}
+.skill-completion-list>button>svg{flex:none;color:var(--ink-label)}
+.skill-completion-list>button>span{min-width:0;flex:1}
+.skill-completion-list>button>.skill-completion-return{flex:none;width:13px;color:var(--ink-label);font-size:13px}
+.skill-completion-list strong,.skill-completion-list small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.skill-completion-list strong{font-size:12px;font-weight:500}
+.skill-completion-list small{font-size:11px;color:var(--ink-label);margin-top:2px}
+.graphical-chat .skill-completion-list>button:not(:disabled):is(:hover,[aria-selected=true]){background:var(--accent-overlay-hover,#ffffff0a)}
+.skill-completion-list>p{padding:12px 8px;margin:0;font-size:12px;color:var(--ink-label);overflow-wrap:anywhere}
+.graphical-skill-completion>footer{flex:none;display:flex;gap:13px;flex-wrap:wrap;padding:7px 12px;border-top:1px solid var(--conversation-line,var(--line,#ffffff20));font-size:11px;color:var(--ink-label)}
+.graphical-skill-completion kbd{font:10px var(--font-body,system-ui);padding:1px 3px;border:1px solid var(--line,#ffffff20);border-radius:3px;color:var(--ink-bright)}
+@media(max-width:600px){.chats-surface .graphical-chat .graphical-messages{padding-inline:12px!important}.chats-surface .graphical-chat .graphical-composer{width:calc(100% - 20px)}}
+@media(pointer:coarse){.graphical-chat .skill-completion-list>button{min-height:52px}}

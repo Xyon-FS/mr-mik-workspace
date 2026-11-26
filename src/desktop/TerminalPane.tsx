@@ -3,16 +3,25 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
-import { api, onServiceEvent, pickFiles, reportError, sendEvent, uploadImage } from './client'
+import { api, onServiceEvent, pickFiles, reportError, sendEvent, uploadImage, useDesktop } from './client'
+import CompactConversation from './CompactConversation'
+import { terminalReadingAnchor } from './terminalReadingAnchor'
 import { Icon } from './Icons'
 import type { AgentId } from './types'
 import { decorateTerminal, focusTheme, originalTheme, type TerminalAppearance } from './terminalAppearance'
 
-export default function TerminalPane({ id, agent, fontSize, appearance, onAttachmentStatus }: { id: string; agent: AgentId; fontSize: number; appearance: TerminalAppearance; onAttachmentStatus: (id: string, text: string) => void }) {
+export default function TerminalPane({ id, agent, fontSize, appearance, compact, onNative, onAttachmentStatus }: { id: string; agent: AgentId; fontSize: number; appearance: TerminalAppearance; compact: boolean; onNative: () => void; onAttachmentStatus: (id: string, text: string) => void }) {
   const host = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState('')
+  const state = useDesktop()
+  const session = state.sessions.find(item => item.id === id)
+  const showingCompact = compact && session?.activity !== 'waiting'
+  const compactRef = useRef(false)
   const area = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const onNativeRef = useRef(onNative)
+  useEffect(() => { onNativeRef.current = onNative })
   const [dragging, setDragging] = useState(false)
   const statusTimer = useRef(0)
   const uploading = useRef(false)
@@ -20,7 +29,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   async function pasteImages(files: File[]) {
     if (!files.length || uploading.current) return
     clearTimeout(statusTimer.current)
-    uploading.current = true; setDragging(false); onAttachmentStatus(id, 'Saving image to inbox…')
+    onNativeRef.current(); uploading.current = true; setDragging(false); onAttachmentStatus(id, 'Saving image to inbox…')
     try {
       if (files.length > 12) throw new Error('Attach up to 12 images at a time.')
       const paths: string[] = []
@@ -34,7 +43,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   async function attachPaths(paths: string[]) {
     if (!paths.length || uploading.current) return
     clearTimeout(statusTimer.current)
-    uploading.current = true; setDragging(false)
+    onNativeRef.current(); uploading.current = true; setDragging(false)
     try {
       await api(`/sessions/${id}/attach`, { paths })
       onAttachmentStatus(id, `${paths.length === 1 ? 'Path' : `${paths.length} paths`} inserted`)
@@ -86,8 +95,10 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     })
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.loadAddon(new WebLinksAddon(openLink)); terminal.open(host.current)
     terminalRef.current = terminal; fitRef.current = fit
+    const readingAnchor = terminalReadingAnchor(terminal)
     let sequence = -1
     let ready = false
+    let running = false
     let queued: { sequence: number; data: string }[] = []
     const resize = () => {
       if (!host.current?.clientWidth || !host.current?.clientHeight) return
@@ -97,18 +108,29 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
     const subscribe = () => { ready = false; queued = []; sendEvent({ type: 'subscribe', id }) }
     const off = onServiceEvent(event => {
       if (event.type === 'connected') subscribe()
-      if (event.type === 'disconnected') ready = false
+      if (event.type === 'disconnected') { ready = false; running = false; readingAnchor.setEnabled(false) }
+      if (event.type === 'session' && event.session?.id === id) {
+        const wasRunning = running
+        running = event.session.status === 'running'
+        if (!wasRunning && running && ready && host.current?.contains(document.activeElement) && document.hasFocus()) { terminal.blur(); terminal.focus() }
+      }
       // Apply the same scrollback-only erase as the service. Resubscribing here
       // resets the frontend terminal and loses native cursor colors/modes.
-      if (event.type === 'screen-cleared' && event.id === id && ready) terminal.write('\x1b[3J')
+      if (event.type === 'screen-cleared' && event.id === id && ready) {
+        readingAnchor.setEnabled(false)
+        terminal.write('\x1b[3J', () => readingAnchor.setEnabled(agent === 'codex'))
+      }
       if (event.type === 'snapshot' && event.session?.id === id) {
+        running = event.session.status === 'running'
+        readingAnchor.setEnabled(false)
         sequence = event.sequence ?? 0
         terminal.reset()
         terminal.resize(event.session.cols, event.session.rows)
         terminal.write(event.data || '', () => {
           ready = true
+          readingAnchor.setEnabled(agent === 'codex')
           for (const chunk of queued) if (chunk.sequence > sequence) { terminal.write(chunk.data); sequence = chunk.sequence }
-          queued = []; resize(); terminal.focus()
+          queued = []; resize(); if (!compactRef.current) terminal.focus()
         })
       }
       if (event.type === 'output' && event.id === id) {
@@ -122,7 +144,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
       const deviceReply = /^\x1b\[[?>0-9;]*[Rcn]$/.test(data) || /^\x1b\][\s\S]*(?:\x07|\x1b\\)$/.test(data)
       // CSI I/O are focus notifications, not device replies. Only the visible
       // frontend can report focus; the headless terminal cannot replace them.
-      if (ready && !deviceReply) sendEvent({ type: 'input', id, data })
+      if (ready && running && !deviceReply && (!compactRef.current || data === '\x1b[I' || data === '\x1b[O')) sendEvent({ type: 'input', id, data })
     })
     terminal.attachCustomKeyEventHandler(event => {
       // Agent chats use Ctrl+C exclusively for copy. Even an empty selection
@@ -134,6 +156,7 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
         return false
       }
       if (event.type !== 'keydown') return true
+      readingAnchor.cancel()
       // Leave paste to the DOM clipboard event; do not send Ctrl+V to the CLI.
       if (event.ctrlKey && (event.code === 'KeyV' || event.key.toLowerCase() === 'v')) return false
       if ((event.ctrlKey && event.code === 'Tab') || (event.ctrlKey && event.shiftKey && ['KeyP', 'KeyT', 'KeyH', 'KeyW'].includes(event.code)) || (event.altKey && /^Digit[1-9]$/.test(event.code))) return false
@@ -159,14 +182,17 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
       if (text) terminal.paste(text)
     }
     const element = host.current
+    const cancelReadingRestore = () => readingAnchor.cancel()
+    element.addEventListener('wheel', cancelReadingRestore, { capture: true, passive: true })
+    element.addEventListener('pointerdown', cancelReadingRestore, true)
     element.addEventListener('paste', paste, true)
     const observer = new ResizeObserver(resize); observer.observe(host.current)
     subscribe()
-    const focus = () => terminal.focus()
-    const focusSelected = (event: Event) => { if ((event as CustomEvent<string>).detail === id) terminal.focus() }
+    const focus = () => { if (!compactRef.current) terminal.focus() }
+    const focusSelected = (event: Event) => { if ((event as CustomEvent<string>).detail === id) { onNativeRef.current(); terminal.focus() } }
     window.addEventListener('focus', focus)
     window.addEventListener('mrmak-focus-terminal', focusSelected)
-    return () => { off(); input.dispose(); observer.disconnect(); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); window.removeEventListener('mrmak-focus-terminal', focusSelected); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
+    return () => { readingAnchor.dispose(); off(); input.dispose(); observer.disconnect(); element.removeEventListener('wheel', cancelReadingRestore, true); element.removeEventListener('pointerdown', cancelReadingRestore, true); element.removeEventListener('paste', paste, true); window.removeEventListener('focus', focus); window.removeEventListener('mrmak-focus-terminal', focusSelected); clearTimeout(statusTimer.current); onAttachmentStatus(id, ''); terminal.dispose(); terminalRef.current = null; fitRef.current = null }
   }, [id, agent, onAttachmentStatus])
   useEffect(() => {
     const terminal = terminalRef.current
@@ -177,8 +203,15 @@ export default function TerminalPane({ id, agent, fontSize, appearance, onAttach
   useEffect(() => {
     if (terminalRef.current) { terminalRef.current.options.fontSize = fontSize; fitRef.current?.fit(); sendEvent({ type: 'resize', id, cols: terminalRef.current.cols, rows: terminalRef.current.rows }) }
   }, [fontSize, id])
+  useEffect(() => {
+    compactRef.current = showingCompact
+    if (showingCompact) terminalRef.current?.blur()
+    else if (compact) terminalRef.current?.focus()
+  }, [showingCompact, compact])
   return <div ref={area} style={{ '--terminal-caret-color': (appearance === 'focus' ? focusTheme : originalTheme).cursor } as import('react').CSSProperties} className={`terminal-area ${agent === 'opencode' ? 'terminal-opencode' : ''} ${appearance === 'focus' ? 'terminal-focus' : ''}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'none' }} onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragging(false); reportError('Drop original files or folders from Explorer into Mr. Mik Desktop. Paste clipboard images with Ctrl+V.') }}>
-    <div ref={host} className="terminal-host" aria-label="Interactive agent terminal" />
+    <div ref={host} className="terminal-host" style={showingCompact ? { visibility: 'hidden', pointerEvents: 'none' } : undefined} aria-hidden={showingCompact} aria-label="Interactive agent terminal" />
+    {session?.connectionIssue && <div className="terminal-connection-issue" role="alert"><strong>{session.connectionIssue.message}</strong>{session.connectionIssue.details && <small>{session.connectionIssue.details}</small>}<small>Use the native terminal to inspect the error and retry. Mr. Mik has not resent your request.</small></div>}
+    {showingCompact && <CompactConversation id={id} working={session?.activity === 'working'} connected={state.connected} running={session?.status === 'running'} fontSize={fontSize} draft={draft} setDraft={setDraft} />}
     {dragging && <div className="terminal-drop"><Icon name="attach" size={30} /><strong>Drop to insert paths</strong><span>Files, folders and images</span></div>}
   </div>
 }

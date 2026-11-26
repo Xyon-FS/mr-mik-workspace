@@ -1,0 +1,13 @@
+.graphical-image{display:inline-flex;flex-direction:column;vertical-align:top;width:fit-content;max-width:100%;margin:8px 0 12px;border:1px solid #ffffff10;border-radius:10px;background:#ffffff02;overflow:hidden}
+.graphical-image>button{display:flex!important;align-items:center;justify-content:center;border:0!important;border-radius:0!important;padding:0!important;background:transparent!important;max-width:100%;min-width:28px;min-height:28px}
+.graphical-image>button>img{display:block;object-fit:contain;max-width:100%;max-height:400px}
+.chat-image-footer{display:flex;align-items:center;gap:3px;min-width:0;max-width:100%;box-sizing:border-box;padding:5px 7px;border-top:1px solid #ffffff0b;color:var(--ink-secondary,#a19aa7)}
+.chat-image-dimensions{font-size:10px;white-space:nowrap;margin-right:auto;padding-right:8px;opacity:.65}
+.graphical-image .chat-image-footer button{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:auto;min-width:26px;height:27px;padding:4px 6px;border:0;border-radius:5px;background:transparent;color:inherit;font:11px var(--font-body);cursor:pointer}
+.graphical-image .chat-image-footer button:hover,.graphical-image .chat-image-footer button:focus-visible{background:#ffffff09;color:var(--ink-bright,#dedee7)}
+.chat-image-footer>.chat-output-actions{flex-wrap:nowrap;gap:2px}.chat-image-footer>.chat-output-actions>[role=alert]{white-space:normal}
+@media(hover:hover) and (pointer:fine){.chat-image-footer{opacity:0;transition:opacity .12s}.graphical-image:hover>.chat-image-footer,.graphical-image:focus-within>.chat-image-footer,.chat-image-footer:has([role=alert]){opacity:1}}
+@media(max-width:450px){.chat-image-dimensions{display:none}.chat-image-footer>.chat-output-actions{margin-right:auto}}
+@media(prefers-reduced-motion:reduce){.chat-image-footer{transition:none}}
+
+.graphical-tool-result>button[aria-label="Expand tool image"],.graphical-message a[aria-label="Expand image"]{display:inline-grid;place-items:center;min-width:28px;min-height:28px;max-width:100%}

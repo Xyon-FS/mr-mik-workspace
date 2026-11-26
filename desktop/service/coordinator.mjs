@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { codexBinary, childEnvironment } from './agents.mjs';
+import { leaseConversation } from './conversation-lease.mjs';
 import { publicError, readJson, saveJson } from './util.mjs';
+import { connectionIssue } from './connection-errors.mjs';
 import { randomUUID } from 'node:crypto';
 import { bridgeTools } from './workspace-bridge.mjs';
 import { makHistory } from './mak-history.mjs';
@@ -59,8 +61,8 @@ Do routine workspace operations yourself with the tools: open and read cards, in
 After a tool action, return a short factual result, without saying you consulted a coordinator, backend or another model. You are the one Mr. Mik persona. Clearly distinguish a running process, a terminal requesting attention, and a verified completed turn. Do not infer task success from silence. Read relevant context and skills only when needed for project questions and handoffs; avoid loading unrelated files for simple actions. Voice is temporarily unavailable in Mr. Mik.`;
 
 export class Coordinator extends EventEmitter {
-  constructor({ repo, stateDir, execute, context, orientation = async () => '', settings = () => ({}), threadConfig = async () => ({}) }) {
-    super(); Object.assign(this, { repo, stateDir, execute, context, orientation, settings, threadConfig });
+  constructor({ repo, stateDir, execute, context, orientation = async () => '', settings = () => ({}), threadConfig = async () => ({}), accountContext, verifyAccount, verifyIdentity }) {
+    super(); Object.assign(this, { repo, stateDir, execute, context, orientation, settings, threadConfig, accountContext, verifyAccount, verifyIdentity });
     this.model = settings().coordinatorModel || null;
     this.pending = new Map(); this.nextId = 1; this.child = null; this.threadId = null;
     this.queue = Promise.resolve(); this.operations = new Map(); this.operationPromises = new Map();
@@ -93,11 +95,11 @@ export class Coordinator extends EventEmitter {
     let threadId = null;
     if (fork) {
       if (!previous?.threadId) throw new Error('This conversation has no persisted native context to fork.');
-      await this.start(); await this.ensureThread({ projectId }, previous);
+      await this.start(previous.accountProfileId || 'system'); await this.ensureThread({ projectId }, previous);
       const result = await this.rpc('thread/fork', { threadId: previous.threadId, ...await this.threadOptions({ projectId }), ...(previous.model ? { model: previous.model } : {}), ephemeral: false }, 60000);
       threadId = result.thread.id;
     }
-    const item = { id: randomUUID(), projectId, threadId, parentId: fork ? previous.id : null, title: fork ? `Fork · ${previous.title}`.slice(0, 160) : 'New conversation', at: new Date().toISOString(), effort: fork ? previous.effort || this.settings().coordinatorEffort || 'medium' : this.settings().coordinatorEffort || 'medium', ...(fork && previous.model ? { model: previous.model } : {}) };
+    const item = { id: randomUUID(), projectId, threadId, accountProfileId: fork ? previous.accountProfileId || 'system' : 'system', ...(fork && previous.conversationStoreId ? { conversationStoreId: previous.conversationStoreId } : {}), parentId: fork ? previous.id : null, title: fork ? `Fork · ${previous.title}`.slice(0, 160) : 'New conversation', at: new Date().toISOString(), effort: fork ? previous.effort || this.settings().coordinatorEffort || 'medium' : this.settings().coordinatorEffort || 'medium', ...(fork && previous.model ? { model: previous.model } : {}) };
     this.conversations.conversations.push(item); this.conversations.selected[projectId || 'global'] = item.id;
     if (fork) {
       for (const old of this.history(projectId, previous.id)) { const copy = { ...structuredClone(old), id: randomUUID(), conversationId: item.id }; this.operations.set(copy.id, copy); }
@@ -113,10 +115,10 @@ export class Coordinator extends EventEmitter {
     return { selected: id };
   }
   async threadOptions(scope) {
-    return { cwd: this.repo, ...(this.model ? { model: this.model } : {}), baseInstructions: instructions + '\n\n' + await this.orientation(scope), approvalPolicy: 'never', sandbox: 'read-only', config: { ...await this.threadConfig(), 'features.shell_tool': false, 'features.multi_agent': false } };
+    return { cwd: this.repo, ...(this.model ? { model: this.model } : {}), baseInstructions: instructions + '\n\n' + await this.orientation(scope), approvalPolicy: 'never', sandbox: 'read-only', config: { ...await this.threadConfig(this.runtimeProfileId || 'system'), 'features.shell_tool': false, 'features.multi_agent': false } };
   }
-  async reasoningCapabilities(model, { worker = false } = {}) {
-    await this.start();
+  async reasoningCapabilities(model, { worker = false, profileId = 'system' } = {}) {
+    await this.start(profileId);
     if (!this.modelsCache || Date.now() - this.modelsCache.at > 300000) {
       const models = []; let cursor;
       do { const page = await this.rpc('model/list', { limit: 100, ...(cursor ? { cursor } : {}) }); models.push(...page.data); cursor = page.nextCursor; } while (cursor && models.length < 1000);
@@ -131,7 +133,7 @@ export class Coordinator extends EventEmitter {
     if (typeof model !== 'string' || !model.trim() || model.length > 200) throw new Error('Choose a model from the native catalogue.');
     if (this.operationPromises.size) throw new Error('Wait for Mak or stop its request before changing model.');
     const current = this.conversation(projectId, id);
-    const capabilities = await this.reasoningCapabilities(model);
+    const capabilities = await this.reasoningCapabilities(model, { profileId: current?.accountProfileId || 'system' });
     if (this.operationPromises.size) throw new Error('Wait for Mak before changing model.');
     const target = current || await this.newConversation(projectId);
     target.model = capabilities.model;
@@ -141,7 +143,7 @@ export class Coordinator extends EventEmitter {
   async setEffort(projectId, id, effort) {
     if (this.operationPromises.size) throw new Error('Wait for Mak or stop its request before changing reasoning.');
     const current = this.conversation(projectId, id);
-    const capabilities = await this.reasoningCapabilities(current?.model);
+    const capabilities = await this.reasoningCapabilities(current?.model, { profileId: current?.accountProfileId || 'system' });
     if (!capabilities.efforts.includes(effort)) throw new Error('This reasoning level is not supported by the Mak model.');
     // Recheck after the catalogue request: a turn may have started in the meantime.
     if (this.operationPromises.size) throw new Error('Wait for Mak before changing reasoning.');
@@ -194,21 +196,35 @@ export class Coordinator extends EventEmitter {
       try { this.send({ id, method, params }); } catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
-  start() {
+  async start(profileId = this.runtimeProfileId || 'system', { forOperation = false } = {}) {
+    await this.verifyIdentity?.(profileId);
+    if (this.changingAccount) throw new Error('Wait for the account change before connecting Mik.');
+    if (this.operationPromises.size && profileId !== (this.runtimeProfileId || 'system') && !forOperation) throw new Error('Wait for Mik before inspecting another account’s models.');
+    if (this.startPromise) { await this.startPromise; return this.start(profileId, { forOperation }); }
+    if (this.child && profileId !== (this.runtimeProfileId || 'system')) {
+      if (this.active) throw new Error('Wait for Mik before changing its account runtime.');
+      await this.disconnectRuntime();
+    }
+    this.runtimeProfileId = profileId;
     if (this.child && !this.startPromise) return Promise.resolve();
     if (!this.startPromise) this.startPromise = this.startInternal().finally(() => { this.startPromise = null; });
     return this.startPromise;
   }
   async startInternal() {
     this.setState('connecting');
-    const command = codexBinary();
-    const env = childEnvironment(this.repo);
+    const account = await this.accountContext?.(this.runtimeProfileId);
+    await this.verifyAccount?.({ agent: 'codex', cwd: this.repo }, account);
+    this.runtimeAccount = account;
+    const env = account?.env || childEnvironment(this.repo);
+    const command = codexBinary(env);
     // Keep the user's Codex sign-in. The OpenAI voice key is never given to Codex.
     this.child = spawn(command.file, [...command.args, 'app-server', '--stdio'], { cwd: this.repo, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const nativeChild = this.child;
     this.child.stderr.on('data', () => {}); // Diagnostics may contain local account context.
     const lines = createInterface({ input: this.child.stdout });
     lines.on('line', line => { try { this.message(JSON.parse(line)).catch(error => this.emit('error-detail', publicError(error))); } catch { /* Non-protocol diagnostics are not forwarded. */ } });
     const disconnected = error => {
+      if (this.child !== nativeChild) return;
       this.child = null; this.threadId = null; this.threads.clear(); this.usedThreads.clear(); this.setState('offline');
       for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
       this.pending.clear();
@@ -228,7 +244,7 @@ export class Coordinator extends EventEmitter {
       const request = this.pending.get(message.id);
       if (!request) return;
       clearTimeout(request.timer); this.pending.delete(message.id);
-      if (message.error) request.reject(new Error(message.error.message)); else request.resolve(message.result);
+      if (message.error) request.reject(Object.assign(new Error(message.error.message), { code: message.error.code, ...(message.error.data || {}), nativeProvider: true })); else request.resolve(message.result);
       return;
     }
     if (message.id != null && message.method === 'item/tool/call') {
@@ -255,7 +271,7 @@ export class Coordinator extends EventEmitter {
     if (message.method === 'item/completed' && params.item?.type === 'agentMessage') this.active.finalText = params.item.text || this.active.finalText;
     if (message.method === 'turn/completed') {
       if (params.turn.status === 'completed') this.active.resolve(this.active.finalText || this.active.text || 'Done.');
-      else this.active.reject(new Error(params.turn.error?.message || `Coordinator turn ${params.turn.status}`));
+      else this.active.reject(Object.assign(new Error(params.turn.error?.message || `Coordinator turn ${params.turn.status}`), { ...(params.turn.error || {}), nativeProvider: true }));
     }
   }
   async save() {
@@ -270,6 +286,7 @@ export class Coordinator extends EventEmitter {
     if (!id || typeof text !== 'string' || !text.trim() || text.length > 30000) return Promise.reject(new Error('A request ID and a non-empty message are required'));
     if (this.operationPromises.has(id)) return this.operationPromises.get(id);
     if (this.operations.has(id)) return Promise.resolve(this.operations.get(id));
+    if (this.changingAccount) return Promise.reject(new Error('Wait for the account change before sending to Mik. No message was sent.'));
     scope = scope ? Object.freeze(structuredClone(scope)) : undefined;
     const request = this.queue.catch(() => {}).then(async () => {
       let target;
@@ -287,8 +304,14 @@ export class Coordinator extends EventEmitter {
       this.emit('result', operation);
       try {
         if (this.cancelled.has(id)) throw new Error('Request cancelled before execution.');
-        await this.start(); await this.ensureThread(scope, target);
+        await this.start(target?.accountProfileId || 'system', { forOperation: true });
+        if (target && this.runtimeAccount) {
+          if (target.conversationStoreId && target.conversationStoreId !== this.runtimeAccount.conversationStoreId) throw new Error('Mik’s saved conversation store changed. Choose a compatible account explicitly.');
+          target.conversationStoreId = this.runtimeAccount.conversationStoreId;
+        }
+        await this.ensureThread(scope, target);
         if (this.cancelled.has(id)) throw new Error('Request cancelled before execution.');
+        const releaseLease = this.runtimeAccount && this.threadId ? await leaseConversation(this.runtimeAccount, this.threadId) : null;
         this.setState('working');
         const completion = new Promise((resolve, reject) => { this.active = { resolve, reject, text: '', finalText: '', calls: new Map(), observedChats: new Map(), operationId: id, scope }; });
         completion.catch(() => {}); // A user can stop while turn/start is still pending.
@@ -305,8 +328,8 @@ export class Coordinator extends EventEmitter {
           completion.catch(() => {});
           if (this.active?.turnId && this.threadId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.active.turnId }).catch(() => {});
           throw error;
-        } finally { clearTimeout(timer); this.active = null; }
-      } catch (error) { operation.status = this.cancelled.has(id) ? 'cancelled' : 'failed'; operation.result = publicError(error); }
+        } finally { clearTimeout(timer); this.active = null; await releaseLease?.(); }
+      } catch (error) { operation.status = this.cancelled.has(id) ? 'cancelled' : 'failed'; operation.result = publicError(error); if (operation.status === 'failed') { operation.connectionIssue = connectionIssue(error); if (error.nativeProvider || operation.connectionIssue.category !== 'unknown') operation.result = operation.connectionIssue.message; } }
       for (const [key, pending] of this.confirmations) if (pending.confirmation.operationId === id) this.confirm(key, false);
       await this.save(); this.setState(this.child ? 'idle' : 'offline'); this.emit('result', operation);
       return operation;
@@ -315,6 +338,24 @@ export class Coordinator extends EventEmitter {
     return request.finally(() => { this.operationPromises.delete(id); this.cancelled.delete(id); });
   }
   close() { for (const id of this.confirmations.keys()) this.confirm(id, false); this.child?.kill(); }
+  async setAccountProfile(projectId, id, profileId) {
+    if (this.operationPromises.size || this.active || this.changingAccount) throw new Error('Wait for Mik before changing its account.');
+    this.changingAccount = true;
+    try {
+      const target = this.conversation(projectId, id) || await this.newConversation(projectId);
+      const context = await this.accountContext(profileId);
+      if (target.conversationStoreId && target.conversationStoreId !== context.conversationStoreId) throw new Error('This Mik conversation belongs to a different native store.');
+      if (this.operationPromises.size) throw new Error('Mik started a request before the account change.');
+      await this.disconnectRuntime();
+      target.accountProfileId = context.profileId; target.conversationStoreId = context.conversationStoreId;
+      target.updatedAt = new Date().toISOString(); await this.save(); return target;
+    } finally { this.changingAccount = false; }
+  }
+  async disconnectRuntime() {
+    const child = this.child;
+    if (child?.once) { const ended = once(child, 'exit'); child.kill(); await ended; } else child?.kill();
+    this.child = null; this.threadId = null; this.threads.clear(); this.usedThreads.clear(); this.modelsCache = null; this.runtimeAccount = null;
+  }
   async disconnect() {
     if (this.operationPromises.size) throw new Error('Wait for Mak before reconnecting.');
     const child = this.child;

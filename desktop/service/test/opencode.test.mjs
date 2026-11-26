@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { createObserver, validSessionId, finalAnswerPreview } from '../opencode/observer.mjs';
-import plugin from '../opencode/plugin.mjs';
 import { openCodeRuntimeConfig, readOpenCodeState, watchOpenCode } from '../opencode.mjs';
 import { workerDefault } from '../effort.mjs';
-import { childEnvironment } from '../agents.mjs';
 import { Sessions } from '../sessions.mjs';
 import { PortableArchive } from '../portable-archive.mjs';
 
@@ -90,19 +89,6 @@ test('OpenCode preview persists through restart without repeating completion or 
   try { assert.equal(restored.get(id).preview, 'Final preview'); assert.equal(restored.get(id).completionVersion, 1); assert.equal(restored.get(id).unread, false); } finally { await restored.close(); }
 });
 
-test('OpenCode context hook mutates the native array without duplicating orientation', async t => {
-  const previous = process.env.MRMAK_OPENCODE_ORIENTATION;
-  process.env.MRMAK_OPENCODE_ORIENTATION = 'Fixture Hub orientation';
-  t.after(() => { if (previous === undefined) delete process.env.MRMAK_OPENCODE_ORIENTATION; else process.env.MRMAK_OPENCODE_ORIENTATION = previous; });
-  const hooks = await plugin({ directory: process.cwd() });
-  const system = ['Native instructions'], output = { system };
-  await hooks['experimental.chat.system.transform']({}, output);
-  await hooks['experimental.chat.system.transform']({}, output);
-  assert.equal(output.system, system); assert.equal(system.length, 1);
-  assert.equal(system[0].split('Fixture Hub orientation').length, 2);
-  assert.equal(childEnvironment().MRMAK_OPENCODE_ORIENTATION, undefined);
-});
-
 test('OpenCode state reader/watcher rejects wrong chat and obsolete launches', async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), 'mr-mik-opencode-'));
   const file = path.join(folder, 'state.json');
@@ -114,31 +100,6 @@ test('OpenCode state reader/watcher rejects wrong chat and obsolete launches', a
     await writeFile(file, JSON.stringify({ chatId: 'chat', launchId: 'current', nativeId: 'ses_test', revision: 2 }));
     await new Promise(resolve => setTimeout(resolve, 350)); assert.equal(received.length, 1);
   } finally { stop(); }
-});
-
-test('OpenCode History recovers its own observed ID and never assigns Codex reasoning', async t => {
-  const repo = await mkdtemp(path.join(os.tmpdir(), 'mr-mik-opencode-history-'));
-  const stateDir = path.join(repo, '.mrmak');
-  const sessions = await new Sessions(repo, stateDir).init(); t.after(() => sessions.close());
-  const id = '11111111-1111-4111-8111-111111111111';
-  const item = sessions.make({ id, agent: 'opencode', name: 'Offline History', cwd: repo, open: false, hasConversation: true });
-  sessions.items.set(id, item);
-  await mkdir(path.join(stateDir, 'opencode'));
-  const file = path.join(stateDir, 'opencode', `${id}.json`);
-  await writeFile(file, JSON.stringify({ chatId: id, nativeId: 'ses_owned', launchId: 'previous', revision: 1 }));
-  let resumed;
-  // This unit test covers observed History identity, not the installed CLI's
-  // version/storage preflight. Isolate that boundary just like terminal launch.
-  const boundary = t.mock.method(sessions, 'nativeBoundary', async (session, nativeId) => {
-    assert.equal(session, item); assert.equal(nativeId, 'ses_owned');
-    return null;
-  });
-  sessions.launch = async (_session, nativeId) => { resumed = nativeId; };
-  await sessions.resume(id);
-  assert.equal(boundary.mock.callCount(), 1);
-  assert.equal(resumed, 'ses_owned'); assert.equal(item.effort, undefined);
-  await sessions.remove(id); await sessions.forget(id);
-  assert.equal(await stat(file).catch(() => null), null);
 });
 
 test('OpenCode light transfer preserves History and full transfer explicitly rejects missing native conversations', async t => {

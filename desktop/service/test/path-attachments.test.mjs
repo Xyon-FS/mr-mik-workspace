@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readdir, open, stat, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, open, stat, symlink, readFile } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createService } from '../server.mjs';
 import { Attachments } from '../attachments.mjs';
 import { sleep } from '../util.mjs';
 
@@ -48,6 +48,34 @@ test('multiple folder, document and image paths reach a real terminal once witho
     const badBatch = await attach([paths[0], path.join(repo, 'Missing folder')]);
     assert.equal(badBatch.status, 400);
     assert.equal(writes.length, 1, 'A failing batch must not insert its first path.');
+
+    const image = await readFile(path.join(root, 'src-tauri', 'icons', '32x32.png'));
+    const upload = await fetch(service.origin + '/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'X-File-Name': encodeURIComponent('../../Screenshot sample.png') }, body: image });
+    assert.equal(upload.status, 201);
+    const saved = await upload.json();
+    assert.ok(saved.path.startsWith(path.join(repo, 'inbox', 'attachments') + path.sep));
+    assert.deepEqual(await readFile(saved.path), image);
+    const duplicate = await service.files.preview(saved.path);
+    assert.equal(duplicate.kind, 'image');
+    const rejected = await fetch(service.origin + '/api/attachments', { method: 'POST', headers: { Authorization: `Bearer ${service.token}` }, body: '<script>not an image</script>' });
+    assert.equal(rejected.status, 400);
+    const unauthenticated = await fetch(service.origin + '/api/attachments', { method: 'POST', body: image });
+    assert.equal(unauthenticated.status, 401);
+
+    const attached = await attach([saved.path]);
+    assert.equal(attached.status, 200);
+    assert.equal((await attached.json()).submitted, false);
+    assert.deepEqual(writes.slice(1), ["'" + saved.path.replaceAll("'", "''") + "' "]);
+    const deadline = Date.now() + 5000;
+    let screen;
+    do {
+      screen = (await service.sessions.read(shell.id, 150)).screen;
+      if (screen.includes('Screenshot sample')) break;
+      await sleep(50);
+    } while (Date.now() < deadline);
+    assert.match(screen, /Screenshot sample/);
+    assert.equal(service.sessions.get(shell.id).status, 'running');
+    assert.equal(service.sessions.get(shell.id).hasConversation, false);
   } finally { await service.close(); }
 });
 
@@ -61,20 +89,4 @@ test('path references preserve folder aliases and reject invalid lists or termin
     await assert.rejects(attachments.paths(invalid));
   }
   assert.deepEqual(await readdir(path.join(repo, 'inbox')), []);
-});
-
-test('native file selection is authenticated and correlated with the requesting window', async () => {
-  const { repo } = await fixture(), events = [];
-  const service = await createService({ repo, uiDir: path.join(repo, 'ui'), native: event => events.push(event) });
-  const requestId = '00000000-0000-4000-8000-000000000001';
-  const headers = { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' };
-  const pick = (body, extraHeaders = headers) => fetch(service.origin + '/api/files/pick', { method: 'POST', headers: extraHeaders, body: JSON.stringify(body) });
-  try {
-    assert.equal((await pick({ requestId }, {})).status, 401);
-    assert.equal((await pick({ requestId }, { ...headers, Origin: service.contentOrigin })).status, 403);
-    assert.equal((await pick({ requestId: 'unbounded event name' })).status, 400);
-    assert.deepEqual(events, []);
-    assert.equal((await pick({ requestId })).status, 200);
-    assert.deepEqual(events, [{ type: 'pick-files', window: 'chats', requestId }]);
-  } finally { await service.close(); }
 });

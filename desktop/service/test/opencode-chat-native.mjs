@@ -1,6 +1,7 @@
 // Explicit ConPTY smoke: native TUI, isolated profile, localhost mock only.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';

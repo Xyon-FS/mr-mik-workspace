@@ -1,24 +1,107 @@
 # Mr. Mik Workspace · Manual and reference
 
-Mr. Mik is a local organizational Hub around real folders and real agent CLIs. It keeps cards, reports, libraries and chat history together without copying your linked Unity, Blender, audio or other project folders into the Hub. The two windows are **Workspace** (cards and the right-hand rail) and **Chats** (terminals and History). This document combines a first-use manual, feature reference, storage model and troubleshooting guide. It is available offline from **Help**. A configured integration is not automatically a connected integration in an existing chat.
+Mr. Mik is a local organizational Hub around real folders and real agent CLIs. It keeps cards, reports, libraries and chat history together without copying your linked Unity, Blender, audio or other project folders into the Hub. The two windows are **Workspace** (cards, browser and file inspection panels, and the right-hand rail) and **Chats** (CLI terminals, Codex/Claude graphical chats and History). This document combines a first-use manual, feature reference, storage model and troubleshooting guide. It is available offline from **Help**. A configured integration is not automatically a connected integration in an existing chat.
+
+Use the guide's search and topic groups to find a task. For common actions, start
+with [chat navigation](#chats-and-working-folders), [files and collections](#files-and-the-shared-library),
+[skills](#skills-hub-and-linked-project), [Tools](#tools-mcp-and-plugins) or
+[Settings and transfer](#settings-and-transferring-a-hub). The guide works offline;
+external reference links open separately.
 
 ## Start here
+
+**Choose your chat interface:** for Codex, New chat offers **Interface → CLI ·
+current experience** or **Chat · preview**. CLI remains the default. Choose when
+creating the conversation; existing chats retain their interface. Graphical chat
+uses Codex app-server and offers messages, approvals, attachments, tool activity,
+saved-history search, a managed browser and recorded-change inspection. CLI uses
+the native terminal and its own commands. Both use native Codex conversations
+and the common account/tool configuration; their controls are different. Read
+**Codex graphical chat** below for the graphical workflow and its limits.
 
 This fork is named **Mr. Mik**, independently maintained from **Mr. Mak by witnesstodark**. It preserves the original license. Windows app settings are separate, while existing Hub folders (including their `.mrmak` state) remain supported. Choose the old Hub explicitly, or import its full private archive into a clean Hub; do not open the same Hub in both apps simultaneously.
 
 ### Workspace snapshots for Git
 
-Settings now includes **Workspace snapshot · Git**, separate from **Transfer Hub**. Select a workspace, export a new folder, update an existing validated snapshot with a preview/backup, or import a snapshot with conflict confirmation and optional linked-folder relinking. This format includes workspace cards/files/libraries/associated Inbox and effective Hub skills. It does **not** include chats, global Context, native tool definitions/auth/configuration or linked project contents. Git commits/pushes remain your choice outside the app. Shared styles/skill replacement can affect other workspaces; the import explicitly identifies file conflicts. See [workspace snapshot details](workspace-snapshots.md) for the manifest, backup, update and unresolved-link rules. For full conversation transfer continue to use **Transfer Hub → Export full**.
+Settings now includes **Workspace snapshots**, separate from **Transfer Hub**. Select a workspace, export a new folder, update an existing validated snapshot with a preview/backup, or import a snapshot with conflict confirmation and optional linked-folder relinking. This format includes workspace cards/files/libraries/associated Inbox and effective Hub skills. It does **not** include chats, global Context, native tool definitions/auth/configuration or linked project contents. Git commits/pushes remain your choice outside the app. Shared styles/skill replacement can affect other workspaces; the import explicitly identifies file conflicts. Use the Help navigation entry **Workspace snapshot reference** for the manifest, backup, update and unresolved-link rules. For full conversation transfer continue to use **Transfer Hub → Export full**.
 
 Before opening a chat, distinguish the **Hub folder** you launched from the **workspaces inside it**. The Hub is the installed app's selected content folder and must contain `workspace/workspace.json`. A workspace is a logical endeavor you create in the app. Its linked projects are external working folders; they do not need to be Git repositories. The desktop app does not include Codex, Claude, OpenCode, their accounts or your project folders.
 
-1. Run **Start Mr. Mik.cmd** from the extracted portable folder to open its MyHub directly. In the installed app, choose **Create a new Hub** (default `Documents/Mr. Mik/MyHub`, or a new MyHub inside another parent folder) or **Open an existing Hub**. Creation includes starter examples and skills and refuses to overwrite existing folders. Opening reuses a Hub containing `workspace/workspace.json`; it is not an import. The installed app remembers its chosen Hub across updates. Each portable location has a separate launch/window profile; opening it never replaces the installed app’s Hub choice. Direct portable executable launches also discover the sibling MyHub (or legacy Hub). An explicit --repo launch uses an isolated profile rather than changing the installed default. Native agent accounts and configuration remain shared. A missing saved Hub prompts again. Restore an archive later through **Settings → Transfer Hub → Import**.
-2. Install and sign in to at least one supported agent CLI separately. Codex, Claude Code and OpenCode V1/V2 have dedicated integrations; Kimi has limited support and PowerShell is a local shell, not an AI agent. Mr. Mik does not supply an account or copy an agent's login.
-3. In the right rail, open **Workspaces** and add a workspace. Give it a name; optionally pick its first linked project folder with **Browse…**, or leave it blank for a Hub-only planning workspace. The folder need not be a Git repository. Add further linked folders, such as Unity and Blender, under **Linked projects**.
+1. Run **Start Mr. Mik.cmd** from the extracted portable folder to open its MyHub directly. In the installed app, choose **Create a new Hub** (default `Documents/Mr. Mik/MyHub`, or a new MyHub inside another parent folder) or **Open an existing Hub**. Creation includes starter examples and skills. An existing valid destination Hub is reused unchanged; empty, unrelated or malformed existing folders are never overwritten. With no saved selection, a valid default Documents/Mr. Mik/MyHub is reopened automatically. Folder pickers accept a Hub or its parent containing MyHub/legacy Hub. Opening reuses a Hub containing `workspace/workspace.json`; it is not an import. The installed app remembers its chosen Hub across updates. Each portable location has a separate launch/window profile; opening it never replaces the installed app’s Hub choice. Direct portable executable launches also discover the sibling MyHub (or legacy Hub). An explicit --repo launch uses an isolated profile rather than changing the installed default. System agent accounts and configuration remain shared; optional isolated Codex profiles are selected separately per chat. A missing saved Hub prompts again. Restore an archive later through **Settings → Transfer Hub → Import**.
+2. Install and sign in to at least one supported agent CLI separately. Codex, Claude Code and OpenCode V1/V2 have dedicated integrations; PowerShell is a local shell, not an AI agent. Kimi is retired: saved terminal screens remain available in History for read-only viewing. Mr. Mik does not supply an account or copy an agent's login.
+3. In the right rail, open **Workspaces** and add a workspace. Use **+** beside the workspace selector and give it a name. Then use **Linked projects → +** to link a folder, or keep it as a Hub-only planning workspace. The folder need not be a Git repository. Add further linked folders, such as Unity and Blender, under **Linked projects**.
 4. Use the selector at the top of the right rail to switch between **Mr. Mik Hub · Global** and a workspace. The selection changes the Hub view and defaults for new actions; it does not move files or redirect an already-running chat.
 5. Open **Chats → +** to create a named chat, or use an agent-icon **+** on a workspace/card as a shortcut. Start with normal CLI permissions; bypass is a deliberate choice.
 
-The right rail is your control center: Workspaces, Files, Knowledge, Processes, Inbox, Skills, Tools, Settings and Help. The left navigation and cards remain available in Workspace.
+The right rail is your control center: Workspaces, Files, Skills, Tools, Settings and Help. Files contains Cards, Knowledge, Processes and Inbox; use **All collections** to show everything or filter to one collection. The left navigation and cards remain available in Workspace.
+
+**Settings** uses five compact categories: Appearance, Chats, Accounts, Transfer Hub and Workspace snapshots. Click a category to open its contextual panel. Appearance contains accent colour, the Windows key shortcut and a short window-size slider; Apply arranges the windows and Reset returns the slider to 30/70. Chats keeps independent Codex/Claude defaults behind one provider switch, plus terminal settings, coordinator reasoning and notifications. Accounts uses provider tabs and a bounded scrolling list. Click a named account to rename it in place: Enter or a click outside saves, Escape cancels. Row icons provide usage/reset information, sign-in/out and eligible disconnection; removing an association retains native chats and files. Imports, exports and snapshot reviews use separate confirmation dialogs with the existing conflict and backup safeguards.
+
+
+### Optional worker browser
+
+In **Tools → Browser · Playwright**, choose **Enabled globally** or **Enabled for
+this project**; a project can **Use global setting**. The global default is Off.
+For graphical Codex chats, **Open in → Workspace / External window** chooses how
+the same managed browser is displayed. It does not add a second MCP server.
+
+**Advanced** contains the Chrome/Edge engine, chat-specific overrides and **Show
+browser window in CLI chats**. That checkbox controls whether the separate CLI
+Playwright browser has a visible window or runs headlessly; it does not embed a
+CLI browser in Workspace. CLI availability changes take effect on worker
+start/resume. Graphical presentation changes restart only its browser when safe;
+tabs and unsaved page state can be lost. Return manual control to apply a pending
+change. An explicit prompt requesting external presentation can use the Bridge's
+browser settings operation; changing project/global defaults requires that scope
+to be requested explicitly.
+
+Graphical chats have dedicated local website profiles per Hub, project, chat and
+browser engine. Reopening the same chat can reuse its saved website login; it
+does not use your personal browser profile or choose website accounts from your
+Codex account. **Website data → Temporary website session** uses a fresh isolated
+session. **Clear website data** signs out of websites in that chat's selected
+browser profile without signing out of Codex. Browser profiles, cookies and
+preferences stay on this PC and are excluded from Hub transfers. Session-only
+state and changes lost in a crash are not guaranteed to survive.
+
+The **Agent / You** chip shows who controls the page. Its tooltip/action is
+**Take control** or **Return to agent**. Use it to interact manually, then allow
+agent tool calls again. Closing the Workspace browser panel returns control after active
+manual work finishes and keeps the browser available. Reopen it from graphical
+**Chat details → Actions**. A CAPTCHA needs manual takeover; neither persistence
+nor external presentation guarantees that a website accepts automation. Do not
+ask the agent to bypass challenges or retry them indefinitely.
+
+The compact address row has back, forward and reload buttons; Ctrl+L focuses the
+address while you control the page. Page tabs remain visible below it. Narrow
+panels give the address its own row. **Browser options** contains display and
+viewport settings, presentation and the selection-to-chat action. Informational
+notices disappear after a few seconds; pending changes and errors stay visible.
+When you control the browser, Left/Right and Home/End navigate the focused page
+tabs. Menus close when focus leaves them; commands return focus to their trigger.
+An empty tab explains how to open a website instead of showing a blank surface.
+Options menus adapt to the visible panel height when the window is resized.
+Returning to a browser view waits for a fresh connection before enabling controls.
+
+The browser **Display scale** selector changes only its display scale: **Fit panel** keeps
+the page visible, while **100%**, **125%** and **150%** make small content easier to
+read using panel scrollbars. This does not reload the page or transfer control.
+
+The separate **Viewport** selector changes the actual page dimensions to desktop,
+tablet or phone while you control the browser; it reflows the existing page.
+**Send selection to chat** adds the page's selected text and source URL to the
+owning chat as context, without submitting a message. Expand the resulting quote
+chip to edit its Browser note or remove it before sending. Page text is untrusted
+reference material. Switching Workspace tabs releases manual browser control.
+
+CLI chats keep a separate temporary browser tied to their MCP connection.
+Automatic CLI output stays under local `.mrmak/browser-output`; graphical output
+uses an owned temporary directory. Save important outputs into Hub content if
+you need durable library files; see the transfer section for optional referenced
+conversation files. Native permissions still apply. The coordinator can delegate
+browser work to worker chats but has no direct managed browser tool. The
+host-managed **browser@openai-bundled** entry belongs to the OpenAI host; seeing
+it in Tools does not make the Codex desktop browser available to Mr. Mik.
 
 **First-use check:** after starting a chat, ask the agent for its working directory and compare it with the linked folder selected in New chat. This verifies the operational scope more reliably than the workspace label alone. If the folder is wrong, close that chat and create a new one with the intended Working project; changing the workspace selector does not redirect an existing terminal.
 
@@ -47,9 +130,15 @@ In **Workspaces → Add workspace**, choose a name and optionally an external fo
 
 To disconnect one external folder without removing the entire workspace, open that workspace's settings and choose **Unlink** beside the linked project. Close chats currently working in that folder first. A workspace must retain at least one linked project; if unlinking the main one, select another to become the new default. The original folder and its native agent settings are not changed. The confirmation lists only cards associated with this folder and offers Keep (default), Archive or Delete. Kept or archived cards stay in the workspace but lose their default association to the removed folder; Hub artifact and technical-document links into it are removed without deleting their source files. Old chats remain in History with their original paths but cannot resume as linked-project chats after unlinking; start a new chat for that folder if you link it again.
 
-Create a card with **Create card** in Workspaces or the **+** beside **Files → Main folders → Cards**; you can also ask an agent to create one through the Workspace Bridge. The form asks for a title, optional description, category and optional linked project. Category changes the card's label and icon, not its storage or permissions; linked project sets the default working folder for quick chats. You can associate an existing card while creating a workspace. A card can be assigned to a workspace and, optionally, to one linked project. An unlinked card uses the workspace planning area. The card's Hub pages and assets stay inside Mr. Mik in either case. A card can be pinned from its own view; pinned cards appear in the Pinned section. Removing a workspace registration opens an in-app confirmation with Keep (default), Archive or Delete for all its cards. Kept/archived cards move to Global Hub; libraries and associated Inbox items also become global/unassigned without moving their physical files. External folders and native chat history are not deleted. Close the workspace's chats and finish or stop Mik before removing it.
+Create a card with the **+** beside **Files → Main folders → Cards**; you can also ask an agent to create one through the Workspace Bridge. The form asks for a title, optional description, category and optional linked project. Category changes the card's label and icon, not its storage or permissions; linked project sets the default working folder for quick chats. A card can be assigned to a workspace and, optionally, to one linked project. Its compact association selector opens one anchored editor for both choices; Inbox items offer the same selector for workspace only. An unlinked card uses the workspace planning area. The card's Hub pages and assets stay inside Mr. Mik in either case. The card row action menu in Files also offers Archive and Delete; deletion removes its registry entry, detaches retained chat associations and sends its Hub content to the Recycle Bin, without deleting external projects or native conversations. A card can be pinned from its own view; pinned cards appear in the Pinned section. Removing a workspace registration opens an in-app confirmation with Keep (default), Archive or Delete for all its cards. Kept/archived cards move to Global Hub; libraries and associated Inbox items also become global/unassigned without moving their physical files. External folders and native chat history are not deleted. Close the workspace's chats and finish or stop Mik before removing it.
 
 ### Card actions, storage and recovery
+
+Cards are archived only through an explicit archive action. Inactivity, creation
+dates and last-update dates never archive or hide active/completed cards. Dates
+control sorting only. Older versions also hid unpinned cards after seven days
+without changing their stored status; those cards reappear after updating, without
+rewriting their dates or restoring cards that were explicitly archived.
 
 On the home grid, right-click a card or press its small **…** icon. The same icon is at the right end of the banner of an opened card, with distinct Archive/Restore and Delete icons in its menu. The banner contains card commands; multi-page navigation such as Start here and Field guide lives inside the content area below it. Single-page cards do not show a redundant page tab. **Archive card** hides it without removing its contents; unpins it as well. Open the left navigation with Mr. Mik's nose, choose **Show archive**, open the card, then choose **Restore card**. Restoring makes it active and updates its date.
 
@@ -67,35 +156,105 @@ Registering or relinking a folder records a path; it does **not** copy the folde
 
 ## Chats and working folders
 
-**Walkthrough — open a project chat:** in the Chats window press **+**, choose the agent, enter a recognizable name, select the workspace, optionally select a card, then select the **Working project**. Review the displayed working folder and the permission-bypass choice before opening. A card proposes its associated folder but the full dialog lets you change it. For a fast associated chat, use the card's Codex, Claude or OpenCode icon with **+** instead.
+**Settings → Appearance → Window sizes** starts with **Chats 30% / Workspace 70%**. Move the
+slider to preview another split, then choose **Apply window sizes** to arrange
+both windows on the Workspace window's current monitor. The reset icon
+restores 30 / 70 in the slider; Apply saves it. Native minimum widths can limit the split.
+This changes window positions and sizes without restarting chats. **Restore
+default window layout** uses the saved split on the invoking window's monitor.
 
-In **Chats → +**, choose an available agent, a descriptive name, a workspace, an optional card and **Working project**. The selected linked folder becomes the CLI working directory. **No linked project · workspace planning** uses a local planning folder instead. With **Hub / custom folder**, supply a working folder directly. A card selection proposes its linked folder, but you can choose another before opening. The selected working folder matters more than whether Git is present.
+Chats share one navigator for CLI and graphical interfaces. The compact rail
+shows **All projects**, **Search** and **+** at the top. All projects opens the
+complete list of workspaces with open chats when the panel is closed, and closes
+the panel when it is open. Click a workspace icon to see only its conversations,
+grouped by **Workspace** (planning) and each linked project. Uploaded or generated
+workspace icons replace initials. **Global Hub** appears only while it has open
+chats; external folders and missing workspace registrations stay accessible.
+
+A workspace's vertical indicator combines the states of its open chats: animated
+red for working, animated amber for input needed, and green for unread completed
+results. The selected workspace keeps these indicators too. Hover its icon to
+inspect a small chat list without changing the active conversation. Individual
+rows distinguish Chat and CLI with combined provider/interface icons, and show
+working, input or result status. Reading a completed response clears its unread
+indicator; a completion indicator does not certify that the task succeeded.
+
+**Search** in the compact rail searches all open chats. The search icon beside
+a workspace's action menu searches only that workspace, including linked-project
+names. The filter menu offers Open chats, Working, Needs input, Unread results
+and Pinned. **+** remains visible with the panel open; a linked-project plus
+preselects that folder in New chat. **History** is a single icon at the bottom of
+the compact rail, visible both when the panel is open and when it is closed. Its
+workspace filter chooses which saved conversations to inspect. Chat actions,
+including Rename and Archive chat, are available from the conversation's menu.
+
+At sufficient width, the open navigator reserves room beside the conversation;
+otherwise it overlays it. Navigation preferences can force overlay mode. The
+docked panel stays open while selecting or typing in a chat. In overlay mode,
+selecting a chat or focusing its input closes the panel. Escape or All projects
+also closes it. Switching chats preserves drafts and running processes. Drag
+conversation rows to reorder within their working-project/pinned group; touch
+screens scroll the list normally. A response covered by the navigator stays
+unread until the conversation becomes visible again.
+
+**Completion notifications:** enable or disable them in **Settings → Chats**.
+Codex, Claude and OpenCode live turn-completion events notify once, except when
+their selected chat is focused. History loading, interruptions and quiet periods
+do not trigger notifications. The notification includes only the chat title,
+not the answer. On Windows, native toasts require an installed app and OS
+notifications enabled; portable mode also requests taskbar attention. PowerShell does not provide supported completion events. This preference is
+included when you export portable settings and opt to restore them on import.
+
+**Visual card verification:** resolving an existing HTML card page or registering
+a newly written page returns a localhost HTTP `previewUrl`. Agents should use
+that URL rather than `file:` in browser tools. Links are read-only, limited to
+the card folder and shared report assets, and valid only while this app instance
+is running (old links may expire as preview grants are replaced). They do not
+grant native filesystem write access or override a browser refusal. Never share
+the link as a permanent/public URL; resolve it again after restarting Mr. Mik.
+
+**Walkthrough — open a project chat:** in the Chats window press **+**, choose the agent, enter a recognizable name, select the workspace, optionally select a card, then select the **Working project**. Review Working project and permissions before opening. A card proposes its associated folder; the explicit Working project selector chooses the actual target. For a fast associated chat, use the card's Codex, Claude or OpenCode icon with **+** instead.
+
+In **Chats → +**, choose an available agent, a descriptive name, a workspace, an optional card and **Working project**. The selected linked folder becomes the CLI working directory. **Workspace** uses the workspace planning area instead. **Global Hub** starts in the Hub root. A card selection proposes its linked folder; you can choose another Working project before opening. The selected working folder matters more than whether Git is present.
 
 The **New Codex chat**, **New Claude chat** and **New OpenCode chat** shortcuts are compact agent-icon buttons with a small **+**; hover or focus to identify them. On a card they open immediately using that card's linked project, or the workspace planning area when no linked project is attached. The workspace-home shortcuts start planning rather than silently choosing its first linked folder. Use the full New chat dialog whenever you need a different agent, working folder, card, permissions or an existing native session ID.
 
 Codex, Claude and OpenCode workspace chats receive an invocation-only **Workspace Bridge**. A supported agent chat opened in the Hub root also receives the global Bridge; a custom-folder chat does not. Its startup description includes only the current workspace, selected card and linked working project. Card, library, skill and tool details are discovered on request instead of loading the entire Hub into every chat. It can list workspace names and linked folders, but listing another workspace does not switch this chat's scope; open a chat in that workspace to change its contents. It can read limited non-private text from linked folders, but does not silently copy the Hub into them or make other folders writable. Native `AGENTS.md`, `CLAUDE.md`, project skills and MCP settings remain the agent's own mechanisms. A chat keeps its original working folder and native conversation identity even if you later change the workspace selector or relink a folder.
 
-Mr. Mik supplies a short, chat-scoped **destination rule** when launching or resuming a supported Codex/Claude/OpenCode chat. Each Chats tab shows the chat name and its **workspace · working project**; the line beside Model shows the associated **Card**. The working-folder path remains in the tab tooltip. “This card” refers to the card associated with the chat, not whichever card is open in the other window. Hub content belongs in its resolved Hub destination, never in Unity or Blender's working folder. Technical project files remain in that project's filesystem. Ask when the destination is unclear. This is compact guidance, not a guarantee of model tool choice: verify consequential writes. Existing running sessions acquire new instructions only after resuming; MCP updates apply when safe or remain pending.
+Mr. Mik supplies a short, chat-scoped **destination rule** when launching or resuming a supported Codex/Claude/OpenCode chat. Each Chats tab shows the chat name and its **workspace · working project**; Chat details shows the associated **Card**. The working-folder path remains in the tab tooltip. “This card” refers to the card associated with the chat, not whichever card is open in the other window. Hub content belongs in its resolved Hub destination, never in Unity or Blender's working folder. Technical project files remain in that project's filesystem. Ask when the destination is unclear. This is compact guidance, not a guarantee of model tool choice: verify consequential writes. Existing running sessions acquire new instructions only after resuming; MCP updates apply when safe or remain pending.
 
-**Native Hub file authoring:** the agent calls `mrmak_hub_destination` for the exact card directory/page, Knowledge, Process, Context or skill path. Resolving a card without a title or page path lists its registered pages without loading content. The agent reads and edits the original file with native CLI tools, then calls `mrmak_register_hub_file` with only the destination ID. Registration validates the existing file and updates metadata; it does not generate, copy or replace document content. Whole HTML/Markdown documents no longer travel through Bridge writing tools. Context and skill authoring require explicit approval. Metadata, Inbox import/assignment and skill/MCP switches retain dedicated actions. Never edit internal registries directly.
+**Native Hub file authoring:** the agent calls `mrmak_hub_destination` for the exact card directory/page, Knowledge, Process, Context or skill path. Resolving a card without a title or page path lists registered pages and reusable destination IDs without loading every page's content. The agent reads and edits original files with native tools. Registered HTML/Markdown card pages marked for automatic synchronization do not need registration after each edit: local scans detect stable changes and refresh metadata/previews, including changes made while the app was closed. New pages and other Hub destinations still use `mrmak_register_hub_file` with their destination ID. Registration validates the existing file; it does not generate, copy or replace document content. Context and skill authoring require explicit approval. Metadata, Inbox assignment and skill/MCP switches retain dedicated actions. Never edit internal registries directly.
 
-Codex receives existing card/library content directories only when its configured sandbox explicitly permits additional workspace-write roots; read-only and custom profiles are not silently relaxed. Claude receives additional working directories without changing permission mode. OpenCode V1/V2 retain native external-path permissions: Mik adds no automatic allow override. New destinations outside startup roots can require native approval. **If access is denied, stop:** there is no Bridge document-writing fallback. Registration is not a backup or transaction around earlier native edits. Destination IDs are temporary and chat-scoped: resolve again after restart. New files still consume generation tokens; small native patches avoid rewriting complete documents, but terminal output may still show native writes.
+Codex receives existing card/library content directories only when its configured sandbox explicitly permits additional workspace-write roots; read-only and custom profiles are not silently relaxed. Claude receives additional working directories without changing permission mode. OpenCode V1/V2 retain native external-path permissions: Mik adds no automatic allow override. New destinations outside startup roots can require native approval. **If access is denied, stop:** there is no Bridge document-writing fallback. Registration and automatic synchronization do not back up earlier native edits or lock files against concurrent writers. Destination IDs are temporary and chat-scoped: resolve again after restart. Existing destinations can be reused in that chat, but read the current file when it may have changed. Missing or invalid pages are not recreated by the scanner; shared asset-only edits are not automatically registered. New files still consume generation tokens; small native patches avoid rewriting complete documents.
 
 **Ask a chat to organize the Hub:** in a card chat, “add a page explaining this feature” uses that card by default; ask for another card by name if needed. “Save this lesson in Knowledge” creates a Markdown document for the chat's workspace; say “globally” for a reusable Hub-wide item. The same applies to Processes. Existing Hub-owned Markdown documents can be revised after the chat reads their current content; stale or truncated versions are not overwritten. Linked technical documentation is never edited through this operation. The chat can list Inbox items, associate or unassign an item, and copy an explicitly selected non-private file from its linked project into the shared Inbox. Global Context can be listed/read on demand and changed only after approval; keep project-specific technical rules in the linked project's own instructions. If more than one linked project is registered and none is selected for the chat, name the target before changing its native configuration.
 
 **Ask a chat about Skills or Tools:** it can inspect Hub skill switches, native skill names, declared MCP servers and supported Codex/Claude/OpenCode plugin settings, then use the same configuration services as the right rail for supported changes. State the agent, exact item and scope—for example, “disable this Hub Codex skill only in Game X” or “add this MCP definition only to the Unity linked project.” Configuration changes require explicit approval. Mik applies supported MCP changes to affected safe chats, or leaves a pending update. Native skill/plugin changes made through Mik use protected same-conversation resume rather than live MCP reconnect. A saved definition does not install or authenticate its server. Native plugin identities, host-managed components and some externally owned settings do not support the same actions; the chat must report such limits rather than claiming success. The right rail remains the direct visual way to review these settings.
 
-**Codex permissions** offers three choices in Settings and the new-chat dialog:
+**Codex permissions** offers five choices in Settings and the new-chat dialog:
 
-- **Native CLI configuration:** no sandbox or approval override; Codex uses its own configuration.
-- **Full access · ask for approval:** no filesystem sandbox, with `on-request` approvals routed to you. Routine permitted commands run directly; commands requiring review can ask in the terminal. This is broad access, not a safer filesystem sandbox, and explicit policy denials remain blocked.
-- **Bypass · no approvals:** retains the existing unrestricted/no-prompt mode. This does not override explicit denials and may reject a command that would otherwise require confirmation.
+- **Use Codex settings:** inherit the native configuration without forcing a sandbox or approval policy.
+- **Ask for approval:** project (`workspace-write`) sandbox with `on-request` approvals routed to you.
+- **Approve for me:** native `--approve-for-me` automatic review using the project sandbox. Eligible requests are reviewed, not blindly accepted; explicit consent can still be required.
+- **Full access · user review:** unrestricted native filesystem policy with `on-request` approvals routed to you. This preserves the former `full-access` setting; it does not enable bypass.
+- **Full access (bypass):** retains the existing unrestricted/no-prompt mode. This does not override explicit denials and may reject a command that would otherwise require confirmation.
 
-Existing Codex chats retain their previous native/bypass choice. To change permissions in the **same conversation**, use **Chat options → Codex permissions**. Mr. Mik restarts the CLI and resumes the same saved conversation in the same tab automatically. Busy requests, typed drafts, approval prompts and native menus defer the restart until the terminal is idle and empty; the footer shows the pending change. No Apply button or trip through History is needed. Missing native context or failed preflight never kills the current CLI; errors stop automatic retries. Close/reopen through History remains the recovery path if an automatic restart fails. A default change in Settings only affects newly created chats. Forks inherit the saved per-chat choice. No native/global Codex configuration is rewritten. Organization policies and OS access still apply; approvals are not guaranteed for every rejected command.
+Existing Codex CLI chats retain their previous native/bypass choice. To change permissions in the **same conversation**, use **Chat options → Codex permissions**. Mr. Mik restarts the CLI and resumes the same saved conversation in the same tab automatically. Busy requests, typed drafts, approval prompts and native menus defer the restart until the terminal is idle and empty; the footer shows the pending change. No Apply button or trip through History is needed. Missing native context or failed preflight never kills the current CLI; errors stop automatic retries. Close/reopen through History remains the recovery path if an automatic restart fails. Graphical chats use their composer permissions selector, described below. A default change in Settings only affects newly created chats. Forks inherit the saved per-chat choice. No native/global Codex configuration is rewritten. Organization policies and OS access still apply; approvals are not guaranteed for every rejected command.
 
-**Bypass permissions · other agents** keeps the existing behaviour for Claude, OpenCode and Kimi; it is separate from the Codex selection. **Settings → Chats → Default worker reasoning** selects separate defaults for new Codex and Claude chats. Existing chats keep their saved effort. Previous installations retain their compatible defaults; fresh Claude defaults to high if no compatible value exists. Agent installation and sign-in happen outside Mr. Mik. Dedicated temporary-folder management is not implemented; these choices do not automatically clean temporary files.
+**Settings → Chats → Default permissions** combines an agent selector with its permission choices. Codex retains its native modes; Claude has independent Ask/Bypass launch defaults. **Bypass permissions · OpenCode** applies to OpenCode. **Settings → Chats → Default worker reasoning** uses the shared Codex/Claude provider tabs to select independent defaults for new chats. Coordinator reasoning is in the same Chats category. New chat remembers your last agent choice; there is no separate Default agent control in Settings. Existing chats keep their saved effort. Previous installations retain their compatible defaults; fresh Claude defaults to high if no compatible value exists. Agent installation and sign-in happen outside Mr. Mik. Dedicated temporary-folder management is not implemented; these choices do not automatically clean temporary files.
 
 Chats are not tied to the workspace selector after creation. A chat created for Unity remains in Unity even if you switch Workspace to Blender or Hub global. A newly created card chat without a linked project opens in `workspace/planning/<workspace-id>` inside the Hub, not in an arbitrary first project folder. Older planning chats retain their original AppData working directory when resumed on the same computer. Use **Hub / custom folder** in the full New chat dialog when you deliberately want a different working directory.
+
+Public progress messages in Codex and Claude graphical chats are collapsed under
+**Working** or **Worked for…**. Open that disclosure to read the intermediate
+steps, with each activity group following its corresponding progress message.
+The final response remains in the main conversation. New turns start collapsed;
+opening a previous turn does not change the default for later turns.
+
+The compact chat rail keeps **All projects**, **Search** and **+** available while
+the project panel is open. All projects opens the complete list when closed and
+closes the panel when open. Use the search icon beside a workspace's actions to
+search only that workspace's open chats; the rail search covers all open chats.
 
 ## Working in the terminal
 
@@ -105,11 +264,405 @@ For a running Codex chat, **Model ▾** asks that same CLI for its native `/mode
 
 **Reasoning ▾**, next to Model in Codex/Claude terminal chats, opens the native reasoning choices for the active model. Codex reaches these through its `/model` picker without choosing a different model; Claude uses `/effort`. Mr. Mik verifies the highlighted choice, confirms with the native session-only key (`s`) and saves the effort in its History only after native confirmation. These controls do not restart the terminal or change worker defaults in Settings. Wait for an idle, empty prompt before opening them. Unrecognized layouts, account/model restrictions or cache-warning confirmations stay in the terminal for you to handle; Mr. Mik never approves an unknown dialog. Do not confirm with Enter when you intend a session-only change, because the native picker can save a personal default.
 
-**Fork:** the fork icon beside the existing **+** branches the selected idle Codex or Claude conversation. Its native conversation ID must have been captured and its transcript must exist. The original stays open and unchanged; the branch inherits workspace, linked project, card, working folder and permissions. Native CLI fork support is required. If the source cannot be found, reconnect it in History first; creating a new chat is not a substitute for a fork.
+**Fork:** the fork icon beside **+** branches an eligible idle Codex, Claude or
+OpenCode conversation. A verified native ID and available native context are
+required. The original remains; the branch keeps workspace, linked project,
+card, working folder and permissions. Native support varies by agent/version;
+OpenCode's family limits are described below. If the source cannot be located,
+recover it through History first. A branch does not undo project file edits.
 
 **Send / Stop:** the small icon at the bottom right of the chat, in its status bar, alternates between Send when idle and Stop while working. Its position stays fixed, including when scrolling the terminal. Type in the CLI's own input area: Send submits that existing draft with Enter, not a separate Mr. Mik message. Stop sends the native Escape interruption to the selected Codex/Claude terminal without closing it or undoing completed changes. Permission prompts still require your own action; the control is disabled for idle attention prompts. The terminal's own keyboard controls remain available if activity detection lags. Codex's “Conversation interrupted” message is expected after stopping a response.
 
 Paste an image into a chat to save a copy in the Hub Inbox and insert its path into the terminal without submitting the message. The current chat's workspace determines its Inbox association; for an unassigned chat, the selected workspace is used. Drag files or folders into the terminal to insert paths. Clipboard images and linked-file paths can contain private information: review before sending to an agent. The built-in voice chat is currently disabled; an API key is not needed for text chats.
+
+### Hide CLI operations (Codex)
+
+The eye button in a **CLI** Codex chat toggles **Hide operations / Show
+operations**. This is a compact reading view of the same running terminal's
+recorded user/assistant text, not the separate app-server graphical interface.
+It omits command/tool details and refreshes periodically rather than streaming
+every token. Long histories/messages can be shortened with a notice.
+
+The compact composer sends to that same CLI; it refuses slash commands,
+unrecognized prompts, native menus and conflicting terminal drafts. Native
+waiting prompts show the terminal again. Return to **Show operations** for
+attachments, model controls, approvals and diagnostics. Its draft is temporary;
+it is not the graphical composer's saved draft. Hiding operations does not
+change permissions, suppress native errors or remove transcript content.
+
+### Chat keyboard shortcuts
+
+| Shortcut in Chats | Action |
+| --- | --- |
+| Ctrl+Shift+T | Open New chat |
+| Ctrl+Shift+P | Find a chat |
+| Ctrl+Shift+H | Toggle History |
+| Ctrl+Shift+W | Close the selected tab; recorded conversations remain in History |
+| Ctrl+Tab / Ctrl+Shift+Tab | Select the next / previous open tab |
+| Ctrl+F in graphical chat | Find in the selected conversation |
+
+Escape closes supported menus/dialogs; the native terminal retains its own
+keyboard handling. Graphical composer Enter/Shift+Enter behavior is described
+below. Closing Help also works with Escape.
+
+### Save graphical chat outputs to cards
+
+Codex and Claude graphical chats offer **Add to card** beside completed responses,
+local document links, images and file attachments. Choose an existing card in the
+chat's workspace or **New card…**, then set an output title. Nothing is added until
+you confirm. Global Hub chats use Global Hub cards.
+
+A file is saved as a **live link**, without copying it. Use **Open in Workspace**
+to preview the original. The card shows linked outputs with their source chat;
+later file edits appear when you reopen the preview. Adding the same file to the
+same card again does not create another link. A response is saved as a Markdown
+note containing its current text; attachments and local files are linked separately.
+The note records its source chat and is not changed by later conversation messages.
+
+Files must be non-private, under 32 MB, and inside the Hub or a repository linked
+to this chat's workspace. Previously attached files still need a registered location
+before they can be linked to a card. Deleted/moved files need restoring or relinking.
+Project-only snapshots retain links to Hub files outside their exported card content
+as references; they do not copy those files. A full Hub export includes only its
+normal reviewed content folders. Keep the original linked files or transfer them
+separately. **Source chat** is unavailable when that conversation is absent from
+the current Hub. Saving a card or opening its preview sends no model prompt.
+
+### Preview controls and remembered views
+
+Workspace views now have tabs, Back/Forward and a Home button. Up to ten recent
+views are retained; up to five can be pinned. A pinned active view stays selected
+when an agent opens another output; the new tab is marked pending. Explicit user
+opening still selects its destination. Closing a tab removes it; the preview's
+Back to Workspace button returns Home while retaining the recent view. State is
+kept in memory for this window, not restored after restarting the application.
+The three most recent PDF/interactive HTML frames retain their running state;
+older heavy views reload when selected. Switching away from the browser returns
+control to the agent without closing its pages. The top origin strip distinguishes
+linked project files from recorded-output snapshots and names the source chat.
+
+The **Chat results** icon beside conversation search in Codex/Claude chats opens
+the Conversation outputs panel. It lists recognized completed code
+blocks, document/image links and table responses from the current history page.
+Filter the list or use **Scan older outputs** to read earlier native history.
+Opening a result revalidates its source; the list is not a durable file catalogue.
+The card action saves the source response as a note or links the selected file,
+using the existing card dialog. It does not automatically create cards or save
+an executable copy of each individual code block.
+
+Code blocks, tables and Mermaid diagrams show **Copy**, **Open** in Workspace and
+an **Output options** menu (…). Download, code wrapping and alternate source/data
+views are in that menu. Their separate Expand dialog has been removed.
+Tables download as CSV, rendered diagrams as SVG
+(or Mermaid source while rendering), and code as a source file. Workspace block
+previews are temporary snapshots; opening one creates no file or card.
+**Source chat** returns to the conversation. Diagram previews have zoom and Fit
+controls, an explicit **Pan** toggle and a clickable minimap. Ordinary scrolling
+never changes diagram zoom. Release the pointer to stop dragging; Escape or Fit
+also exits Pan mode. SVG code blocks have a safe image
+preview and source view; scripts and external resources are removed from the
+image representation. Source copying/downloading remains unchanged.
+
+Completed self-contained HTML interface blocks run directly in chat when visible,
+with source and reset actions in **Output options**. Switching source views preserves
+the running document. **Open in Workspace** opens a separate working
+**Preview**, with **Code**, phone/tablet/desktop widths and an **HTML preview options**
+menu for height and **Reset preview**. File copy/download/reveal actions are in
+**File preview options**; primary preview actions use labeled icon buttons.
+For images, the Workspace header's Expand button and clicking the image open the
+same image viewer, with shared zoom, position, copy and download controls. Use
+Fullscreen inside that viewer for a fullscreen image. Other preview types keep
+their fullscreen button, which changes to **Exit fullscreen** while expanded.
+
+Native file-source citations in graphical chat render as clickable filenames,
+with the complete path in the tooltip. Clicking a source uses the existing
+session-scoped Workspace preview; citations do not grant access to files outside
+that chat's allowed locations. Citation syntax inside code examples stays literal.
+Inline CSS/JavaScript and native controls such as sliders can run in an opaque-origin
+sandbox. The document cannot access the application, local storage, files or network;
+external scripts, fonts, images and libraries are unavailable. Use one complete HTML
+block with its style/script included. JavaScript alone, JSX/TypeScript and separate
+HTML/CSS/JS blocks are not assembled into an application. Ordinary HTML source
+without a renderable interface remains a code preview. Raw HTML in Markdown is
+still disabled. Scrolling at an inline document's boundary scrolls the conversation.
+
+**Include local assets** explicitly builds a small isolated HTML snapshot using
+relative project CSS, classic JavaScript, raster images and fonts. Quoted local
+references are resolved from the chat project (CSS images from the CSS folder).
+The bundle is limited to 20 assets and 200 KB encoded, excludes private/config
+folders, and still has no network access. Module imports, CSS imports, build
+pipelines and arbitrary project dev servers are not provided by this action.
+The preview shows loading/ready status and up to 30 runtime warnings/errors.
+Diagnostics are emitted by the preview, not a guarantee that its code is correct.
+
+Completed JSON blocks offer **Data / Code** through Output options: Data is an expandable hierarchy,
+while Code retains the original source. CSV/TSV blocks offer a scrollable table
+with the first row as headers; quoted commas, quotes and multiline cells are
+preserved. Large arrays and tables reveal 50 entries/rows at a time. The same
+views are available for JSON/CSV/TSV files in Workspace. Invalid or oversized data
+stays as source. Parsing is limited to 200,000 characters, 1,000 CSV/TSV rows and
+100 columns; deeper JSON levels remain accessible through Code. Copy/download
+always use the original block source, regardless of the selected view.
+
+Open **Explore data** beneath a table header for row filtering, column sorting, first-column pinning and
+explicit bar/line chart selection. Charts use the selected category/value columns
+and first 200 filtered rows; empty/non-numeric values require a different value
+column. These are view operations and never rewrite source data. JSON search
+inspects up to 5,000 nodes and lists up to 100 matching leaf values with path/value
+copy actions; deep values remain available in the original Code view.
+
+Chat and Workspace images share Fit, actual **100%**, zoom, copy, download and
+expanded-view controls. Closing and reopening a recent image retains zoom and
+pan; opening a chat image in Workspace transfers its view state. Non-PNG images
+are converted to PNG for clipboard copy when the browser supports it. External
+image access still follows the application's existing content policy.
+
+Recent Workspace scroll positions are kept in memory. The last three retained
+PDF/interactive HTML views share a bounded cache while navigating between previews,
+including after closing the panel. Opening another retained view may evict the oldest;
+a changed file/output reloads. Switching Preview/Code does not reset a running HTML
+document; **Reset preview** does. HTML preview grants are memory-only and bounded;
+after a service restart or expiry, reopen the output from the source chat.
+These states are bounded conveniences for the current app window, not saved PDF
+bookmarks or persistent settings. Browser-native PDF controls remain available.
+Closing a preview preserves the chat draft and reading position. Copy and download
+operate on displayed/saved content; save Markdown edits before downloading them.
+
+When sending a new message, a normal user bubble appears and the composer clears
+immediately. The recorded native message replaces the local bubble when available;
+no extra model request is sent. On rejection the original draft is restored if the
+composer is untouched. A newer draft is preserved; the original message remains
+visible with a failure label so its text is not lost.
+Guidance and queued messages retain their own native workflow and are not displayed
+as already delivered normal messages.
+
+## Codex graphical chat
+
+Create a Codex chat with **Interface → Chat · preview**. Its Chat badge in tabs
+and History distinguishes it from CLI terminals. The interface is fixed for
+that chat; there is no in-chat CLI/Chat switch. It uses the selected Codex account
+and the common Tools configuration, with its own per-conversation settings.
+Support depends on the installed Codex app-server version and account access.
+Arbitrary native CLI commands are not supported in this composer.
+
+### Messages, composer and context
+
+User messages have a blue rounded background; responses are rendered directly
+in the timeline. Expand grouped activities for commands, tool output and public
+reasoning summaries when Codex provides them. Working status animates and shows
+elapsed time; completed turns show their recorded duration. This does not expose
+private reasoning or imply that every native event includes a duration.
+
+**Enter** sends and **Shift+Enter** adds a line. With an active turn and an empty
+composer, the send button becomes **Stop**. Typing a follow-up changes it back to
+Send: that message steers the current turn immediately when native steer is
+available. It is not an automatic queued next turn. Stop interrupts work; it does
+not undo edits already made. If delivery is uncertain, review the visible state
+before retrying; the app does not silently replay the prompt.
+
+The composer attachment/context menu lets you add files or folders and select
+available native skills on demand. Images can be pasted or attached and previewed
+before sending. **Quote** on a message adds selected text, or that message, as a
+removable context chip; source navigation helps you find it again. Long text
+pastes (over 6,000 characters or 120 lines) become text-file references, with
+Undo conversion or Remove paste. This avoids filling the editor with a large
+document; inspect the selected references before submitting.
+
+Drafts and selected context are local convenience state. They are not transferred
+to another computer. Sent file references are a separate concern: see **Conversation
+files and media** under transferring a Hub. A file reference does not grant new
+filesystem permissions or copy an entire linked project into the Hub.
+
+### Model, mode, permissions and requests
+
+The combined model selector below the prompt lets you choose a model and one of
+its reported reasoning levels. Availability comes from Codex; not every model
+supports every effort. Its **Work mode → Plan / Build** row offers the native modes reported for
+this conversation. Controls can be disabled while a response, approval or settings
+change is in progress. Wait for the chat to become idle before changing settings.
+These choices belong to this chat and do not change another CLI or graphical
+chat's selection or worker defaults in Settings.
+
+The permissions selector uses the policies described in **Chats and working
+folders**. Requests needing your approval appear in the conversation, including
+supported command/file approvals and structured questions. Supported MCP forms
+can also request input. Review the actual request rather than assuming automatic
+review permits everything. Windows administrator consent remains an OS prompt:
+**Approve for me** cannot accept it. If sandbox setup is required, follow **Set up
+sandbox**, then **Reconnect chat** when offered. Do not repeatedly retry commands
+after a setup failure; the visible runtime error needs resolving first. A program
+installed on Windows may still be inaccessible inside the selected sandbox.
+
+### History, search and results
+
+Older messages load separately from the live timeline. Scrolling up preserves
+your reading position; **Back to latest** returns to current activity. The search
+icon or **Ctrl+F** searches this conversation's saved native history, including
+messages and supported tool text, even when older messages are not loaded. It
+does not search every chat in History. Select a result to load its surrounding
+context; continue an incomplete search when offered. Search errors and incomplete
+coverage are shown explicitly. Private reasoning and binary media are excluded.
+
+Generated or attached images open in a larger viewer. Supported tool resources
+can show text, images, playable audio/video or file links; binary bodies are not
+searchable and not every format is previewable. Rendering a resource is different
+from providing a generation tool: an account/tool must actually support creating
+that media. Unsupported interactive MCP applications are not promised to behave
+like arbitrary embedded apps. **Load full output**, where available, expands a
+shortened tool result.
+
+Recorded file changes produce a **files changed** summary after the response;
+choose **View changes** to inspect them in Workspace. Activity-level **Inspect
+changes** and completed-review **Inspect review** open the same read-only
+inspection workflow. Diffs represent recorded native results; the current file
+may have changed since then. Available line links open the current file. This
+does not apply patches, revert edits, stage files or make Git commits.
+
+Claude has **Work mode → Plan / Build** inside the model/reasoning picker and a
+separate **Permissions** control. Build is the
+default for a new chat. Entering Plan remembers the operational permission choice
+and disables the Permissions selector; returning to Build restores that choice
+only after native confirmation. Ask, Accept edits, Deny unapproved actions and
+launch-authorized Bypass remain operational permission choices.
+
+### Chat details and conversation actions
+
+The lower **⋯ → Chat details** menu uses the same three tabs for Codex and Claude:
+**Session**, **Context** and **Actions**. Account/model/reasoning/work mode
+are selected through the model picker; limits are available from its usage icon
+or **Settings → Accounts**.
+
+- **Context:** a shared Codex/Claude meter with reported context usage, **Compact context**
+  in Codex and **Compact conversation** in Claude.
+  Before native measurements arrive it shows **Not measured yet**, not an assumed 0%.
+  Claude no longer shows a separate Token details section. Compaction
+  asks Codex to summarize older context, keeps recorded messages and files, and
+  can consume account allowance. Codex can also compact automatically.
+- **Session:** open the managed browser controls, conversational outputs or start **Review
+  changes** for Working changes, Against a branch or A commit. Review uses native
+  Codex behavior and your account; it does not automatically apply fixes.
+- **Actions:** Find in conversation, Rename, Pin in History, Fork, Show working
+  folder, Tab color and Archive chat. CLI-specific appearance and terminal text
+  controls also live here.
+- **Context** also reports effective permissions and relevant runtime errors.
+  Account usage windows remain separate from context capacity; unavailable
+  values are never treated as zero usage.
+
+Message actions offer **Edit and branch** for user input, **Branch from this
+response**, and **Retry response in a new chat**. They preserve the original
+conversation. Branch opens a new chat without sending; retry starts a new model
+response, and edit prepares the revised branch. None restores project files to
+an earlier state. Origin navigation is disabled if the original conversation was
+not included in an import. Native subagent activities can offer **View agent**
+and **Refresh agent** for a bounded read-only view; the agent continues under its
+parent conversation.
+
+Codex and Claude also show a collapsible **Subagents** panel above the composer
+when native child activity is available. Select an agent tab to read its recent
+messages and activity; updates follow the bottom while preserving earlier reading.
+The panel is read-only and does not send messages or stop agents. Historical
+Claude previews may show unavailable live status after reconnect.
+
+Claude confirmed Edit/Write operations offer **View changes** in the shared
+Workspace inspector, using recorded native hunks where available. Current-file
+preview is separate from the recorded diff. Edits performed through shell commands
+or child streams are not automatically included. In Claude **Chat details → Session → Review
+changes**, choose a scope and **Prepare review draft**. Inspect the ordinary
+review-task prompt and press Send to request findings using your selected model
+and permissions. Preparing the draft sends nothing and changes no files.
+
+## Claude account profiles
+
+For Claude, **Settings → Accounts → Claude accounts** uses the current native
+account directly. **Add Claude account** creates a separate empty native directory
+and starts browser sign-in, or links an existing directory when supplied. Native
+files and credentials are not copied. Select the Claude account when creating a
+CLI or graphical chat; each conversation stays with that profile. Missing profiles
+never fall back to the current account. To reconnect a disconnected profile, link
+its original directory again. **Tools** edits a common platform configuration;
+there is no Claude account selector. Claude MCP definitions from the current
+native configuration are supplied to added accounts at launch, with the normal
+project scope. Existing private-profile MCP files are preserved and are not
+automatically migrated; independently installed native plugins and skills are
+not copied between account stores. Account directories are machine-local
+and excluded from Hub exports. On a different machine, chats whose original
+profile is unavailable stay unavailable; this version has no account-remapping
+workflow for transferred Claude chats.
+
+## Codex account profiles
+
+In **Settings → Accounts**, click **Connect Codex account**. Complete the native
+login in your browser; no command window opens. The account list updates
+automatically on completion. An automatic label is assigned; click the name
+to rename it. Only accounts added here are available for Mr. Mik chats; the
+normal Desktop/CLI login is not a selectable account.
+
+Choose **Codex account** when opening a chat. In a graphical chat, use the
+**Model and reasoning** picker's Account section; in CLI use **Model and session**.
+Permissions stay in their own control.
+With no added accounts, connect one through Settings first. Existing chats
+associated with System must be explicitly mapped to an added account before
+resume or input; a stopped open chat can be mapped directly from this menu.
+Different chats can use different accounts concurrently. Changing an open chat's
+account verifies the target login and reconnects only that idle chat, resuming
+the same native conversation. Finish the current action, close native dialogs
+and clear the prompt first. No message is resent. History and Mik also retain
+account selectors; imported accounts must be mapped explicitly.
+
+Accounts share Codex conversations, SQLite state, skills, plugins and global
+MCP/tool settings. Shared Windows sandbox state follows the common Codex home;
+account profiles are not separate project sandboxes. A CLI upgrade or missing
+setup can still require Windows setup. Tools has one common view; project overrides apply to every
+account. Credentials and model caches remain private. On Windows, each private
+home receives an atomic projection of the common config on context preparation;
+plugin and skill directories use junctions. Manage global changes through Tools
+or the original Codex config. Private native config edits are retained locally
+before being replaced by the common settings; they are never copied back.
+Previous private plugin/skill directories are retained during migration.
+Shared conversations include their existing context and related memory/log
+state; this is not an account data-privacy boundary. MCP services may still
+require their own authorization; account switching does not bypass it.
+
+**Sign out** logs out an added account and removes it from the connected list;
+chats and retained native files are kept. System is not listed in Accounts.
+An already disconnected or failed account can be removed with its small × button.
+Chats referring to a disconnected account require an explicit available account
+selection before continuing. Missing profiles never fall back to another account. After importing a
+Hub, explicitly map imported non-system references to available local accounts
+through History/Mik. Logins and local account labels are excluded from archives.
+Native activity in unrelated external CLI/Desktop apps is outside Mr. Mik's
+conversation-writer guard. Claude/OpenCode retain their existing account flows.
+
+### Account identity checks
+
+Settings shows each profile's ChatGPT email when it is available. A successful
+new login is associated with that ChatGPT identity, not just its editable display
+name. Connecting an identity already present in another active profile reports
+a duplicate; sign out the unwanted profile rather than treating it as a second
+subscription. A rejected duplicate login can still have native credentials on
+disk until you sign it out; Mr. Mik does not silently delete them.
+
+Profiles created before identity checks show **Verify account**. Close that
+profile's chats and confirm the displayed identity once; no new login is needed
+when it is readable and unique. A duplicate must be resolved first. If a pinned
+identity changes unexpectedly, affected new/reconnected chats and checked send
+paths are blocked. Sign out and reconnect deliberately; the changed identity is
+not accepted automatically. A normal token refresh for the same identity remains
+valid. Existing work is not terminated by these checks.
+
+Login, logout and status commands explicitly use file-based credentials in the
+chosen private home. Sign out removes the connected-list entry only after native
+logout is verified; a failure leaves it visible for recovery. The automatic name
+uses the first unused **Account N** among listed profiles. Removing Account 2
+can therefore free that name, but a newly connected Account 2 gets a new internal
+ID and private home; old chat references are never silently reassigned.
+
+These checks detect local identity changes; they do not sandbox unrelated Windows
+applications running as your user or revoke their access to files. Another app
+using the ordinary Codex home should not overwrite a Mr. Mik private login.
+Browser ChatGPT sign-in can nevertheless authorize the same identity during
+separate explicit login flows. Account labels and local identity metadata stay
+on this PC and are not transferred with Hub archives.
 
 ## Chat History, archive and deletion
 
@@ -124,7 +677,39 @@ History and the agent's native conversation store are separate. Mr. Mik stores i
 
 Closing a chat tab keeps a conversation in **History**. An unused, empty chat is omitted. History has search, workspace and agent filters, Pinned and Archived views. Pinning is for quick access; **Archive** hides a closed chat from the ordinary list, and **Restore** brings it back. Archived chats are not deleted.
 
-**Remove from Mr. Mik** deletes only the Hub history record and saved terminal screen. If a native CLI ID exists, that CLI conversation remains outside Mr. Mik and can be resumed by ID. **Delete native chat…** is a separate, controlled action for an eligible closed Codex or Claude chat. It shows the exact targets, requires the chat name and may be unavailable if the native conversation cannot be uniquely identified. It removes native data as well as the Mr. Mik entry, so export first if you may need it later. A conversation started outside Mr. Mik is not automatically imported into History; use **Resume an existing CLI conversation** with its native ID to bring it in.
+Codex entries retain their **Chat** or **CLI** interface badge when reopened.
+History search filters the listing; graphical **Find in conversation** separately
+searches the selected conversation's saved messages. A tab's unread indicator
+marks activity you have not yet viewed, rather than a new account or tool error.
+
+**Change the working project:** History places compact **Workspace** and
+**Working project** selectors side by side. Workspace changes the organizational
+association under the existing folder checks; it does not move the terminal.
+Working project explicitly changes the folder used when reopening a closed Codex
+or Claude chat. Close its tab first, choose a linked folder from its workspace
+or **Workspace planning**, and confirm. The conversation ID, messages, account,
+model and permission choice are retained. Files are not moved or reverted; an
+incompatible card association is cleared. Native tools, instructions and effective
+folder access are resolved again when you reopen the chat. The new folder does
+not bypass native trust or permissions.
+
+This is useful after adding the first linked project to a workspace: earlier
+planning chats remain planning chats until you select their working project.
+Unavailable folders, missing native context and unsupported agents cannot be
+switched this way. OpenCode and other agents require a new appropriately scoped
+chat rather than an unverified native relocation. Linking a project alone still
+does not redirect existing chats automatically.
+
+**Remove from Mr. Mik** deletes only the Hub history record and saved terminal
+screen. If a native ID exists, that native conversation remains outside Mr. Mik
+and can be resumed by ID. **Delete native chat…** is separate: it is available
+for eligible closed Codex, Claude and OpenCode chats, lists the verified targets
+or native family members, and requires the exact chat name. OpenCode family
+deletion includes its planned children; see **OpenCode native transfer and
+deletion**. Missing/ambiguous native context or a conflicting reference blocks
+the operation. This removes native data as well as the Mr. Mik entry, so export
+first if needed. Conversations started outside Mr. Mik are not automatically
+listed; use **Resume an existing CLI conversation** with a supported native ID.
 
 If History reports that a native conversation cannot be located, the saved screen stays visible. Use the recovery prompt with the native ID, check that the correct CLI account and local session files are available, and check that the linked folder has been relinked. A saved screen alone cannot reconstruct a missing native transcript.
 
@@ -139,17 +724,24 @@ If History reports that a native conversation cannot be located, the saved scree
 | Processes | Global or workspace | Reusable procedures | Hub files, never automatic jobs |
 | Inbox | One physical Hub intake area, optional workspace association | Screenshots and incoming references | Assignment is metadata; the file need not move |
 
-**Files → Main folders** presents the Hub's Context, Knowledge, Processes, Inbox and Cards for the selected scope. Changing workspace keeps you in the Hub view; it does not automatically browse the external project. **Files → Browse files** is the explicit filesystem browser: choose the Root to inspect the Hub or a linked folder. Browsing a linked folder is a user action, not an automatic transfer. Markdown can be previewed and edited; other supported media open in the preview. You can copy files in, drag within the browser and reveal paths in Explorer.
+**Files → Main folders** presents the Hub's Context, Knowledge, Processes, Inbox and Cards for the selected scope. Changing workspace keeps you in the Hub view; it does not automatically browse the external project. **Files → Browse files** is the explicit filesystem browser: choose the location to inspect the Hub or a linked folder, or use **Go to folder…** for a custom path. Browsing a linked folder is a user action, not an automatic transfer. Markdown can be previewed and edited; other supported media open in the preview. Use the **+** beside Knowledge, Processes or Inbox in Main folders to import copies into that collection and the selected workspace. The general **Add files** command in Browse files copies into the selected filesystem folder. You can copy files in, drag within the browser and reveal paths in Explorer.
 
-Right-click a file in either Main folders or Browse files for **Open in Explorer** and the applicable removal action. Hub-owned files can go to the Windows Recycle Bin, after confirmation. An externally linked technical document offers **Remove link from Hub** instead; this does not delete its original. In Browse files, be careful when a linked external folder is selected: moving its files to the Recycle Bin really changes that folder. Cards are logical containers, not file-delete targets in Main folders.
+Use the row action menu or right-click a file in either Main folders or Browse files for **Open in Explorer** and the applicable removal action. Hub-owned files can go to the Windows Recycle Bin, after confirmation. An externally linked technical document offers **Remove link from Hub** instead; this does not delete its original. In Browse files, be careful when a linked external folder is selected: moving its files to the Recycle Bin really changes that folder. Cards are logical containers, not file-delete targets in Main folders.
 
-**Context** is Hub-global: identity, goals and truly shared preferences. Keep project-specific technical rules in each linked folder's own `AGENTS.md` or equivalent, not in Hub Context. **Knowledge** stores reusable notes or workspace-scoped knowledge. **Processes** are reusable procedures, global or workspace-scoped; they are not scheduled jobs and never execute automatically. **Inbox** is one physical Hub intake folder; a file may be unassigned or associated with a workspace without moving it. The dedicated Knowledge, Processes and Inbox rail sections remain useful as the collection grows.
+**Context** is Hub-global: identity, goals and truly shared preferences. Keep project-specific technical rules in each linked folder's own `AGENTS.md` or equivalent, not in Hub Context. **Knowledge** stores reusable notes or workspace-scoped knowledge. **Processes** are reusable procedures, global or workspace-scoped; they are not scheduled jobs and never execute automatically. **Inbox** is one physical Hub intake folder; a file may be unassigned or associated with a workspace without moving it. Use the **All collections** selector in Files to focus on Cards, Knowledge, Processes or Inbox; these collections share one Files screen rather than separate rail sections. Context appears only in Global Hub.
 
 Use **+** on a library folder to import a copy into the Hub. Ordinary Knowledge/Processes files under `knowledge/` and `processes/` are global unless assigned; workspace material can be stored under their project folders. Technical documentation may instead be *linked* from an external project when that explicit option is used; the original stays outside the Hub. A link's path must still exist after transfer to another computer. The Bridge searches global plus relevant workspace material on request; it does not preload every document into every chat.
 
 ## Skills: Hub and linked project
 
-New source/portable Hubs include public defaults enabling **workspace-authoring** and **feature-handoff** for Codex and Claude. Other skills remain Off. Override either core skill to Off in a workspace, or disable it globally. Updates do not apply these defaults to existing Hubs; their switches remain unchanged. Public `projects/skill-defaults.json` supplies initial values only while `projects/skill-scopes.json` is absent; saved scope settings take precedence.
+New source/portable Hubs include public defaults enabling **workspace-authoring**
+and **feature-handoff** for Codex, Claude and OpenCode. Other skills remain Off.
+Override either core skill to Off in a workspace, or disable it globally. Public
+`projects/skill-defaults.json` fills missing skill entries; saved entries in
+`projects/skill-scopes.json`, including explicit Off and workspace overrides,
+take precedence. Existing Hubs are not replaced with a fresh template on app
+update. Older public defaults can supply the OpenCode core defaults without
+overwriting saved choices. Availability still requires the skill files to exist.
 
 Chats and Mik receive a short rule to discover enabled skills, consult the authoring guide before requested Hub card content, and read the handoff skill before a handoff. Empty-card creation and metadata-only changes do not need an authoring read. Skill content is read only when relevant and reused while in context; no full catalog is preloaded. This is model guidance, not a guarantee that every model follows it. Existing live chats normally need resume/relaunch to receive updated launch guidance.
 
@@ -159,9 +751,9 @@ An installed/portable update adds only missing game-pack folders to the Hub you 
 
 **Walkthrough — share a skill but disable it in one workspace:** under **Skills → Codex → Hub**, make the skill **On** in Hub global. Select a workspace where it is inappropriate and set that skill to **Off** instead of **Inherit**. Other workspaces continue inheriting On. Repeat under Claude or OpenCode as needed: availability switches are agent-specific. OpenCode shares canonical `.agents/skills` files with Codex; Claude uses `.claude/skills`.
 
-Use **Skills → Linked project → +** when a skill belongs inside a particular external folder. If multiple linked folders exist, choose the intended one first. This explicitly writes a native `SKILL.md` in that folder, creating missing skill directories; it is different from enabling a Hub skill through the Bridge. Mik requests protected resume for affected chats when safe; check native availability after applying the update. External edits require reopening/resuming the chat.
+Use **Skills → Linked projects → +** when a skill belongs inside a particular external folder. If multiple linked folders exist, choose the intended one first. This explicitly writes a native `SKILL.md` in that folder, creating missing skill directories; it is different from enabling a Hub skill through the Bridge. Mik requests protected resume for affected chats when safe; check native availability after applying the update. External edits require reopening/resuming the chat.
 
-Open **Skills** and choose **Codex**, **Claude** or **OpenCode**, then **Hub** or **Linked project**. Hub skills are files in the Mr. Mik Hub (`.agents/skills` for Codex and `.claude/skills` for Claude). Linked-project skills are native files in the selected external folder. The **+** form creates a `SKILL.md` in your chosen location and creates missing skill directories, but never overwrites an existing skill. With multiple linked folders, select the intended one before browsing or creating.
+Open **Skills** and choose **Codex**, **Claude** or **OpenCode**, then the **Hub** or **Linked projects** tab. The linked-project selector appears only when there is more than one linked folder; a single folder is shown by name. The **Skills** view lists each skill with one availability control; selecting its name opens its instructions in the Workspace. The **Files** view retains folder/path navigation, file filtering, previews, Markdown editing, drag/drop transfers and the Explorer/Recycle Bin context menu. **Refresh** reloads the catalog and file tree. The **+** command opens a centered creation dialog with Hub/linked destination, scope or linked folder, name, usage description and instructions. Hub skills are files in the Mr. Mik Hub (`.agents/skills` for Codex and `.claude/skills` for Claude). Linked-project skills are native files in the selected external folder. The **+** form creates a `SKILL.md` in your chosen location and creates missing skill directories, but never overwrites an existing skill. With multiple linked folders, select the intended one before browsing or creating.
 
 In the global Hub view, **On** makes a Hub skill available to all workspaces; **Off** leaves it disabled globally. Within a workspace, **Inherit** follows that global setting, while **On** and **Off** override it for that workspace. Codex, Claude and OpenCode have separate Hub scope settings. New chats know how to discover enabled Hub skill names and short descriptions when a workflow is relevant, then read full instructions on demand; autonomous use is helpful but not guaranteed. Hub skills are not native `$`/slash-menu skills in an external linked folder. Linked-project native skills are discovered by the relevant CLI at chat startup; changes made through Mik request a protected resume of the same conversation when needed; external edits require reopening/resuming the chat. Native skill controls appear for supported agents in the linked-project view. Claude uses skillOverrides in .claude/settings.local.json: On/Off override availability and Inherit removes the local override. Plugin skills use their plugin switch instead. In Claude chats started under the Hub, invocation-only settings suppress native Hub skill discovery so the Bridge remains the availability gate. This does not edit skill files or global Claude settings. Codex Hub-root native discovery remains unchanged. OpenCode shares the canonical Hub skill files but has independent Bridge scopes; its native Hub suppression follows the appropriate V1/V2 adapter.
 
@@ -203,9 +795,19 @@ Use **+ Add MCP server → OpenCode**, choose global or selected linked project,
 
 These are **file inventories, not live connection status**. Custom OpenCode configuration environment variables lock controls, rather than writing an ineffective override. Remote/managed/ancestor configuration and agent permissions may affect actual availability. Changes through Mik use safe live MCP updates where supported, or protected same-conversation resume; pending updates require the terminal refresh action. Reopen/resume after external configuration edits. The Bridge exposes the same skill/tool controls to an OpenCode chat; writes need explicit user confirmation. Remote OAuth connections must be checked in OpenCode itself; Mr. Mik never reuses private native OAuth credentials for its temporary inspector.
 
-**Transfer and limits:** light Hub export includes OpenCode History references/screens and Hub skill scopes, not native conversation data. Workspace snapshots include effective OpenCode Hub skill settings/files and deduplicate shared Codex/OpenCode files on import. Native config, account state and config backups are excluded. Full export lists unavailable/unsupported native conversations for explicit exclusion; healthy conversations can still transfer. Unsafe archive paths or present-file integrity failures remain blocking. Full transfer and controlled native deletion are available for standalone chats and bounded same-folder conversation families when native contracts are compatible; CLI 1.18.34 is the tested baseline. See the limits below. Mik can open, read, send to, interrupt, resume and manage scoped OpenCode worker chats, with the same real UI confirmations. It uses native readiness checks and response abort; unavailable controls leave the terminal for manual handling, never generic key fallback. OpenCode provider/model/variant settings remain native; Mik itself still uses Codex. Real provider acceptance is separate from offline/local-mock tests; see [integration details](opencode-integration.md).
+**Transfer and limits:** light Hub export includes OpenCode History references/screens and Hub skill scopes, not native conversation data. Workspace snapshots include effective OpenCode Hub skill settings/files and deduplicate shared Codex/OpenCode files on import. Native config, account state and config backups are excluded. Full export lists unavailable/unsupported native conversations for explicit exclusion; healthy conversations can still transfer. Unsafe archive paths or present-file integrity failures remain blocking. Full transfer and controlled native deletion are available for standalone chats and bounded same-folder conversation families when native contracts are compatible; CLI 1.18.34 is the tested baseline. See the limits below. Mik can open, read, send to, interrupt, resume and manage scoped OpenCode worker chats, with the same real UI confirmations. It uses native readiness checks and response abort; unavailable controls leave the terminal for manual handling, never generic key fallback. OpenCode provider/model/variant settings remain native; Mik itself still uses Codex. Actual provider access still depends on your native OpenCode installation and authenticated provider.
 
 ## Tools, MCP and plugins
+
+Select a workspace and linked project, then use **All / MCP / Plugins** and
+search to narrow the list. Click a tool name to open its configuration and
+availability details. Each row keeps aligned availability, check and visibility
+controls. A hollow circle marks an inherited choice; a filled circle marks an explicit
+choice or local definition. Hover for its meaning. Unsupported actions remain disabled. **Check
+availability** checks a supported server; it does not install or enable it.
+The eye hides an entry only from Tools, without changing its availability.
+Use the filter menu to reveal hidden entries. The plus opens Add MCP server.
+
 
 **Walkthrough — create an MCP only for one linked project:** select the workspace, choose the correct linked folder in Tools, open **+ Add MCP server**, select **Codex** and **Selected linked project**, enter a unique name, then choose HTTP URL or local process command and arguments. Save and start a **new** trusted chat in that folder. Mr. Mik writes the definition in that folder's `.codex/config.toml`; Git is not required. The MCP executable or remote service must already exist. The form does not install it or add authentication credentials.
 
@@ -216,11 +818,22 @@ These are **file inventories, not live connection status**. Custom OpenCode conf
 | Enabled | Scope setting allows it in a new chat | Inspect Global/Linked project switch and effective config |
 | Connected | That chat actually started/authenticated the server | Use the agent's native `/mcp` or equivalent in the new chat |
 
-**Tools** inventories MCP servers and supported Codex/Claude/OpenCode plugins from their actual sources. The agent/type/scope filters narrow the list; the eye beside search shows system and manually hidden entries, which have a different background. An entry's small eye hides it from this list only. **Hiding is not disabling.** The status describes configuration; **Check** opens a temporary connection and does not prove an existing chat is using the server. Check the agent's own `/mcp`, `/skills` or configuration commands inside a newly started chat for effective availability.
+**Tools** inventories MCP servers and supported Codex/Claude/OpenCode plugins from their actual sources. Use the All/MCP/Plugins tabs and search to narrow the list; Filters contains provider, scope and Show hidden. Click an entry name to open its details beside the row. The eye on the row hides or restores the entry in Tools only. Unavailable row controls remain visible but disabled. **Hiding is not disabling.** The status describes configuration; the row's **Check availability** icon opens a temporary connection and does not prove an existing chat is using the server. Its result, time and reported tool count appear in the details popup. Check the agent's own `/mcp`, `/skills` or configuration commands inside a newly started chat for effective availability.
 
-Where supported, choose **Global On/Off** for the personal Codex configuration and **Linked project On/Off/Inherit** for the selected folder. An inherited setting follows the global/default state. To make an integration opt-in, turn its global default off and enable it only in chosen trusted folders. A project override may write to that folder's `.codex/config.toml`—this is the explicit exception to Mr. Mik's normal “do not modify linked projects” rule. Codex must trust the project before its project configuration loads, and affected chats use protected refresh/resume when safe; drafts, busy chats or missing native IDs require manual review. Host-managed or plugin-provided entries may be read-only or require changes at their original source; the app does not promise the same switch for every tool.
+Click the compact **On/Off** control beside an entry to open its scope settings. A hollow dot indicates an inherited setting; a filled dot indicates an explicit setting or project definition. The tooltip clarifies its source. Where supported, choose **Global On/Off** for the personal configuration and **Project On/Off/Inherit** for the selected linked folder. An inherited setting follows the global/default state. To make an integration opt-in, turn its global default off and enable it only in chosen trusted folders. A project override may write to that folder's `.codex/config.toml`—this is the explicit exception to Mr. Mik's normal “do not modify linked projects” rule. Codex must trust the project before its project configuration loads, and affected chats use protected refresh/resume when safe; drafts, busy chats or missing native IDs require manual review. Host-managed or plugin-provided entries may be read-only or require changes at their original source; the app does not promise the same switch for every tool.
 
-Use **+ Add MCP server** to create an HTTP or local-process definition owned by Mr. Mik, at global or selected-project scope. It manages only its own marked definitions; manually configured entries remain at their source. Do not put secrets in the visible URL or command fields. Codex global actions request confirmation. Claude user-scope and private linked-project MCP definitions use Claude's own configuration outside the Hub; Claude's shared `.mcp.json` and approval flow are separate. Kimi uses its native MCP files. Installing a server, plugin or CLI is distinct from enabling it; Mr. Mik does not duplicate their installations.
+Use **+ Add MCP server** to create an HTTP or local-process definition owned by Mr. Mik, at global or selected-project scope. The centered editor selects provider, scope and transport. Edit and Remove are available under Configuration in the details popup only for definitions owned by Mr. Mik; manually configured entries remain at their source. Editing requires re-entering the endpoint or command rather than exposing saved credentials. Do not put secrets in the visible URL or command fields. Codex global actions request confirmation. Claude user-scope and private linked-project MCP definitions use Claude's own configuration outside the Hub; Claude's shared `.mcp.json` and approval flow are separate. Kimi and Cursor are excluded from Tools; their external MCP configuration files are left untouched. Installing a server, plugin or CLI is distinct from enabling it; Mr. Mik does not duplicate their installations.
+
+**Recover an invalid local MCP definition:** eligible failures expose **Use
+global configuration**. Review the named local/global files, then **Confirm
+recovery** to remove only that local definition and inherit the valid global
+configuration. A private backup is retained and **Undo recovery** is offered.
+This is not a blanket reset of project tools; it appears only when recovery is
+supported. A valid global definition still needs a working executable/service
+and authentication; recovery does not prove a live connection. Undo is limited
+to the current Tools view/service session and refuses to overwrite later edits. Closing and reopening a tool details popup keeps Undo available while Tools remains open.
+Affected chats use the safe configuration scheduler. Unsupported or malformed
+configuration may require manual repair. Configuration diagnostics are available from the Tools footer.
 
 ### OpenCode coverage and differences
 
@@ -238,7 +851,7 @@ with your selected provider and a clean destination PC remains a separate check.
 | MCP | Inventory, global/project overrides, local/remote definitions and eligible connection checks; safe MCP updates or guarded resume; native instruction changes require protected same-conversation resume |
 | Plugins | V1 declarations are read-only; V2 verified server-plugin IDs support exact exclusion controls; no package installation |
 | Model/Variant | Searchable native model catalogue and verified native selection; variants without restarting; unknown layouts leave manual terminal control |
-| Defaults | Default agent can be OpenCode; no dedicated OpenCode model/variant default in Mr. Mik Settings |
+| Defaults | New chat remembers OpenCode when selected; no dedicated OpenCode model/variant default in Mr. Mik Settings |
 | Mik | OpenCode workers are supported; Mik's own engine remains Codex |
 | Native transfer/deletion | Standalone chats and bounded same-folder conversation families with compatible native contracts; precise limits below |
 
@@ -329,9 +942,14 @@ private import backups remain until separately removed.
 
 ## Mik · workspace coordinator
 
-Click the small **Mik icon at the bottom-right of the workspace** to open the floating text coordinator. Click it again or the panel's close icon to hide it; hiding does not cancel a running request. The familiar **Conversation** and **Activity** tabs show the scoped conversation and terminal attention events for this workspace. Mik uses the existing signed-in Codex CLI and the configured coordinator model; it does not use the voice API. The coordinator engine is Codex, while its visible worker chats can be Codex, Claude or OpenCode (or Kimi when installed). Choosing Claude for a worker does not change Mik's engine. Mik does not start a model turn merely because you open its panel; sending a message uses your configured Codex access and quota.
+Click the small **Mik icon at the bottom-right of the workspace** to open the floating text coordinator. Click it again or the panel's close icon to hide it; hiding does not cancel a running request. The familiar **Conversation** and **Activity** tabs show the scoped conversation and terminal attention events for this workspace. Mik uses the existing signed-in Codex CLI and the configured coordinator model; it does not use the voice API. The coordinator engine is Codex, while its visible worker chats can be Codex, Claude or OpenCode. Choosing Claude for a worker does not change Mik's engine. Mik does not start a model turn merely because you open its panel; sending a message uses your configured Codex access and quota.
 
-**Choose the target:** the top workspace selector selects **Global Hub** or one logical workspace. Mik has a separate text conversation for each. Optionally choose a **card** and **working project** below its heading. When you open Mik while viewing a card, that card and its linked folder are proposed. Selecting a card proposes its linked project; you can change it to another linked folder or **Workspace planning**. No linked folder is silently chosen just because it is first in a list.
+**Choose the target:** the top workspace selector selects **Global Hub** or one
+logical workspace. Mik keeps conversations scoped to that workspace. When you
+open Mik while viewing a card, that card and its linked folder are proposed.
+A selected card fixes the working target to its linked project, or **Workspace
+planning** if unlinked. Choose **No selected card** to select a linked project
+independently. No linked folder is chosen merely because it is first in a list.
 
 **Send a request:** type in **Ask Mik…** and press Enter or the send icon. Shift+Enter inserts a line break. Mik captures the workspace, linked project, card and selected chat when you send. Changing the app view while it works does not redirect that request. Its conversation and pending confirmations remain under the original workspace; select that workspace again to view them. Requests are processed sequentially. A different workspace can queue a request without sharing the first workspace's model conversation.
 
@@ -345,7 +963,14 @@ Examples:
 - “Open a Claude chat for Unity optimization, associated with the Performance card.”
 - “Read the Blender chat and prepare a follow-up task for Unity.”
 
-Mik uses the same **Workspace Bridge** for metadata, discovery, Inbox and skill/tool configuration. It remains read-only: both Hub document authoring and linked-project implementation are delegated to a visible worker terminal, which keeps its native permissions. The worker resolves and registers Hub destinations; generated content stays in the Hub. Mik cannot bypass a rejected worker file write. A configured MCP is not proof of a live connection. Installation, account authorization, automatic permission approval and permanent native chat deletion are not coordinator actions.
+Mik uses the same **Workspace Bridge** for metadata, discovery, Inbox and
+skill/tool configuration, with confirmation for applicable changes. Document
+file authoring and linked-project implementation are delegated to visible
+worker chats under their native permissions. Workers resolve Hub destinations;
+registered card edits can synchronize automatically, while new pages need
+registration. Mik cannot bypass a rejected worker file write. A configured MCP
+is not proof of a live connection. Installation, account authorization, native
+permission approval and permanent native chat deletion are not coordinator actions.
 
 **Confirmations:** configuration changes, Context writes, explicitly global library changes, new/resumed worker chats, worker messages/attachments, closing and interruption show a confirmation in Mik. Review the target and details, then choose **Approve** or **Decline**. A model-generated `confirmed: true` cannot replace this click. An unanswered confirmation expires after two minutes without applying the action. The coordinator must read a worker's current terminal before sending or attaching; a changed process, intervening user input or ongoing work blocks delivery. Native login or permission prompts must be handled by the user, not approved by Mik.
 
@@ -359,7 +984,7 @@ Mik uses the same **Workspace Bridge** for metadata, discovery, Inbox and skill/
 
 Both **light** and **full** exports include Mik's text History and conversation references, including forks. **Full** also includes available native Mik transcripts, using the same native duplicate/conflict review as worker chats; use it to resume on a different computer. **Light** preserves visible exchanges but cannot restore missing native model context on another PC. Import merges stable operation/conversation IDs without replaying actions, and keeps the destination's existing conversation selection. Native sessions still live in the normal Codex user store and may appear in Codex outside Mr. Mik; no separate login or global tool configuration is created. Credentials and login state are never exported. Wait for Mik to finish or stop its request before exporting/importing; close worker chat tabs too. Use updated builds on both computers and protect archives containing private conversation text.
 
-**Settings → Mr. Mik → Coordinator reasoning** selects the default for **new** Mik conversations. Choices come from the configured Codex model's native catalogue: low, medium, high, extra high, max or other levels appear only when that model declares them. A level saved for a previous model may be marked unavailable; select a compatible level rather than assuming every model supports the same options. The optional `MRMAK_COORDINATOR_MODEL` in the Hub's private `.env` selects its model on startup. Changing a worker's model does not change the coordinator. Voice remains unavailable.
+**Settings → Chats → Coordinator reasoning** selects the default for **new** Mik conversations. Choices come from the configured Codex model's native catalogue: low, medium, high, extra high, max or other levels appear only when that model declares them. A level saved for a previous model may be marked unavailable; select a compatible level rather than assuming every model supports the same options. The optional `MRMAK_COORDINATOR_MODEL` in the Hub's private `.env` selects its model on startup. Changing a worker's model does not change the coordinator. Voice remains unavailable.
 
 The compact **Reasoning** selector above Mik's message box changes the current conversation for its **next request**. It does not restart the conversation, discard context or change Settings. It is locked while a request runs and for view-only legacy History. A fork inherits the parent's reasoning; a new conversation takes the Settings default. The selected level survives restart and travels with conversation metadata in light/full export. Light export still cannot resume native context without the corresponding CLI transcript.
 
@@ -370,6 +995,26 @@ Worker defaults are separate from coordinator reasoning. Codex worker choices us
 Maintainer reference: Mik uses the [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server). Dynamic tools are experimental; regression-check the protocol after a Codex CLI upgrade. Isolated UI tests simulate model decisions; the installed-CLI smoke test verifies persistent resume/fork across restart using fixture context without a model turn. A live model test is still necessary to assess natural-language routing and worker handoffs.
 
 ## Settings and transferring a Hub
+
+Settings contains five compact categories: **Appearance**, **Chats**, **Accounts**,
+**Transfer Hub** and **Workspace snapshots**. Each opens beside the rail; adding
+an account and reviewing transfers opens a centered dialog. These preferences
+apply to the app. Snapshot actions identify the selected workspace separately.
+
+- **Appearance:** accent, native window shortcut and the Chats/Workspace split.
+- **Chats:** choose Codex or Claude to edit that provider's reasoning and permission
+  defaults. Existing chats keep their settings. Coordinator reasoning, terminal
+  appearance/text and completion notifications are in the same category.
+- **Accounts:** choose a provider; longer account lists scroll while add/connect
+  stays available below. Click an account name to rename it inline; Enter or
+  leaving the field saves, Escape cancels. Logged in is green. The usage icon
+  beside the sign-in/out and disconnect actions shows usage and reset times.
+  Disabled actions explain their restrictions in their tooltip. Disconnecting
+  an association does not delete its native conversations.
+- **Transfer Hub:** full/light archive export and import with conflict review.
+- **Workspace snapshots:** export, update and import one workspace's files,
+  keeping native chats and external project folders separate.
+
 
 ### Unavailable conversations: partial full transfer
 
@@ -412,8 +1057,8 @@ Preserve the entire Hub, including hidden `.mrmak`, `.agents` and `.claude` fold
 The small split-window icon in the Chats header and Workspace top bar restores
 both native windows to the initial arrangement: Chats on the left, Workspace on
 the right. It uses the monitor of the window where you click and its work area
-(excluding the taskbar). The default chat width is 27% of the display, bounded
-to 360–560 logical pixels; the Workspace uses the remainder. Minimum window sizes
+(excluding the taskbar). The default is Chats 30% / Workspace 70%; **Settings → Appearance → Window sizes**
+changes the saved split. Minimum window sizes
 can prevent an exact fit on very small displays. Hidden/minimized/maximized
 windows are shown in the restored layout, without restarting sessions, sending
 messages, changing permissions or clearing drafts. Browser-only use does not
@@ -421,34 +1066,40 @@ control native window geometry.
 
 ### Native accounts
 
-**Settings → Accounts** offers Sign in / Sign out for Codex, Claude and
-OpenCode providers. The **+** icon (Connect provider) beside the OpenCode heading opens its native provider setup,
-including providers that are not connected yet. Connected providers get separate
-rows with their own status/sign-out action. Environment-only connections show External setup. V2 supplies exact integration IDs; V1 reports display names, so its Sign out
-action opens the native picker: select the intended provider there. Environment-only
-V2 connections do not offer Sign out because native logout cannot remove environment
-variables. Close the agent's Mr. Mik tabs first and wait for
-any Mik request before changing Codex login. Review the shared-profile warning,
-then choose **Open native sign-in/sign-out**. A separate visible PowerShell window
-executes the native CLI authentication command. It is never pasted into a chat,
-and authentication output, codes and credentials are not captured in History,
-Hub files or archives. Complete browser/native prompts yourself; opening the
-terminal is not proof that authentication succeeded. Cancel starts no command.
+**Settings → Accounts** has Codex, Claude and OpenCode tabs. Codex connects
+accounts using the browser flow described in **Codex account profiles**. Claude
+lists its current native account and any linked or independent profiles described
+in **Claude account profiles**. Click the name of an added account to rename it
+in place. Enter or leaving the field saves; Escape cancels. Sign-in/out and
+eligible disconnect/remove actions are compact icons with tooltips. The usage
+icon stays on the same line as those actions, and reports usage/reset times.
+Long account lists scroll without hiding the add/connect control.
 
-Accounts is below **Workspace snapshot · Git**, with one compact agent/status/action
-row per CLI or OpenCode provider (status wraps below the name on narrow panels). Green **Logged in** shows only
-Sign out; red **Not logged in** shows only Sign in. If the native status cannot
-be established, **Status unavailable** keeps both actions. Status is refreshed
-when Settings opens and the app regains focus. This is local sign-in state, not
-verification of subscription access, token expiry or regional availability.
+Green **Logged in** identifies a detected native login. **Not logged in** and
+**Status unavailable** remain distinct; a connecting/unavailable profile does not
+show a successful green state. Status refreshes when Settings opens and the app
+regains focus. It describes sign-in state, not guaranteed subscription access,
+token validity or regional availability. Close other clients using a profile
+before changing its login; existing chats and files are kept.
+
+OpenCode's **+** beside its provider heading opens native provider setup.
+Connected providers have separate status/sign-out actions. Environment-only
+connections show **External setup**: native logout cannot remove an environment
+credential. V2 supplies exact integration IDs; V1 sign-out opens its native picker.
+Review the shared-profile warning and choose **Open native sign-in/sign-out** to
+open the separate authentication terminal. No command is pasted into a chat;
+authentication output and credentials are not captured in Hub History or archives.
+Cancel starts no command. Complete native/browser prompts yourself; opening a
+terminal does not confirm successful authentication.
 
 Native status output stays in memory only for the check and is reduced to a
 fixed status; it is never logged, exported or saved with the Hub.
 
-This changes the normal native CLI profile on this PC, including its use outside
-Mr. Mik, not just one workspace. Close other clients using that account too, then
-reopen chats after completing the change. Mik may need an app restart to load the
-new Codex account; the app never closes live conversations automatically. Chats,
+Actions on the other agents change their normal native CLI profile on this PC,
+including use outside Mr. Mik. Connected Codex accounts affect only their own
+saved login; Mr. Mik does not expose the system Codex login as an account. Close other clients using that account too, then
+reopen affected chats after completing the change. Select the intended connected
+Codex account in Mik before starting its work. The app never closes live conversations automatically. Chats,
 cards, MCP configuration and linked folders are not deleted. Environment/API-key
 settings can take precedence over stored logins. OpenCode's other providers stay
 managed through its native authentication commands. Native CLI errors remain in
@@ -468,6 +1119,14 @@ The temporary cursor diagnostics control has been removed. Cursor visibility
 and scrollback preservation continue to work without background diagnostic sampling.
 
 ### Codex usage and limits
+
+In **Settings → Accounts**, the information icon beside each Codex or Claude
+account reads its native subscription limits, including reported usage windows
+and reset times. No graphical chat needs to be open. Reads are shared and cached
+briefly; an unsuccessful refresh identifies any previously reported values as
+stale. Unavailable values are never interpreted as zero usage. These checks do
+not send model prompts. Claude environments that disable nonessential network
+traffic can also disable the native online usage read.
 
 Type **/status** in the native Codex terminal to inspect session configuration,
 context/token usage and available rate-limit information. CLI versions supporting
@@ -498,7 +1157,9 @@ Claude has its own native configuration; Mr. Mik does not translate Codex TOML i
 
 Permanent Claude deletion lists the transcript, session sidecar and existing session-ID-specific task/checkpoint/upload/image-cache folders in its confirmation. It does not purge an entire project, credentials, settings, shared prompt history, debug logs or temporary data whose ownership cannot be established safely. Full archives may contain private conversation text and file checkpoints: review them before sharing or committing.
 
-The development machine currently has Claude CLI 2.1.283 but no Claude model access. Configuration, isolated UI, transcript transfer and synthetic picker behavior can be tested without a subscription. Actual model responses, account-specific picker output and autonomous Bridge use still require an authenticated live test.
+Actual Claude responses, account-specific picker choices and tool use require
+native authentication and model access. Configuration inventory alone does not
+verify that the selected account can run a model.
 
 Native reference: [Claude skill visibility](https://code.claude.com/docs/en/skills), [MCP scopes and disabling](https://code.claude.com/docs/en/mcp), [CLI resume and prompt flags](https://code.claude.com/docs/en/cli-reference), [settings scopes](https://code.claude.com/docs/en/settings).
 
@@ -508,7 +1169,41 @@ Native reference: [Claude skill visibility](https://code.claude.com/docs/en/skil
 
 **Settings** controls the Windows shortcut when available, default chat agent, reasoning, terminal text size and appearance, Codex permission default, other-agent bypass default, and coordinator reasoning. Settings affect new chats as described; existing chats keep their native state. Voice is currently unavailable.
 
-Under **Transfer Hub**, first close all chat tabs for a consistent snapshot. **Export · light** includes Hub cards/pages/assets, planning files, Context, Knowledge, Processes, Inbox, project registry, Hub skill folders and scope settings, portable preferences, Mr. Mik History and saved screens. It does **not** include native CLI transcripts, so a chat may not resume on another computer. **Export · full** additionally transfers supported OpenCode V1/V2 contexts/families and copies available native Codex and Claude transcripts associated with Mr. Mik History, plus available Claude sidecars and session-ID-specific task lists, file checkpoints, uploads and legacy image-cache files. It excludes native login/settings, shared caches, debug/environment state and temporary CLI scratchpads/images outside the Hub. It does not discover and export unrelated CLI conversations.
+Under **Transfer Hub**, first close all chat tabs for a consistent snapshot. **Export · light** includes Hub cards/pages/assets, planning files, Context, Knowledge, Processes, Inbox, project registry, Hub skill folders and scope settings, portable preferences, Mr. Mik History and saved screens. It does **not** include native CLI transcripts, so a chat may not resume on another computer. **Export · full** additionally transfers supported OpenCode V1/V2 contexts/families and copies available native Codex and Claude transcripts associated with Mr. Mik History, plus available Claude sidecars and session-ID-specific task lists, file checkpoints, uploads and legacy image-cache files. Saved Mik coordinator contexts are included where supported. It excludes native login/settings, shared caches and debug/environment state. External conversation files have their own optional review below. It does not discover and export unrelated CLI conversations; unsupported native agents such as Kimi are identified rather than promised a resumable transfer.
+
+### Conversation files and media
+
+Files inside the Hub's transferable content folders remain included in both
+light and full exports. For **full** export, the review can additionally offer
+external files referenced by supported Codex/Claude conversation messages and
+media results. Inclusion is **Off by default**. Inspect file paths, estimated
+size and exclusions before checking the media option and confirming export.
+This is separate from OpenCode's required attachment-copy review.
+
+External files are filtered for supported types and private paths, with limits
+of 128 MB per file and 1 GB total reviewed external content. Media review is
+bounded to 4,096 references; missing, inaccessible, unsupported, oversized or
+unreviewed references are reported as exclusions. Equal content is deduplicated,
+including reuse of referenced Hub files. The archive can still contain inline
+media already embedded in native transcripts: turning the option off does not
+strip or rewrite those transcripts and does not guarantee a small archive.
+
+On import, included external payloads become Hub attachment files. A local
+binding lets supported graphical chat previews find them through their original
+conversation paths, even if the source PC's files are gone. Original native
+transcript bytes are retained; paths in a CLI transcript are not rewritten, so
+native CLI tools may still need the relocated file's actual path. Graphical
+asset previews retain their own 10 MB limit and format restrictions; inclusion
+does not guarantee inline playback of every large attachment.
+
+Unsent graphical drafts, selected quote/skill context and pending composer
+references are not transferred. Existing saved terminal screens are included
+and can contain visible typed text. Browser profiles/cookies and runtime caches
+are excluded. Export is not a copy of all files mentioned in a command or every
+linked project folder. Review exclusions before relying on an archive as your
+only copy of important conversation files.
+
+### Import conflicts and recovery
 
 Import previews file counts and the state of each native chat. Relink **every linked project** to an existing folder on the destination computer; those external folders are not copied. Existing local folder mappings are suggested first, and your explicit folder choice takes precedence. Codex resumes with the mapped working folder, without rewriting its transcript or changing its user home.
 
@@ -522,13 +1217,39 @@ Import previews file counts and the state of each native chat. Relink **every li
 
 For example, importing messages A/B/C onto a computer that has A/B updates to A/B/C. Importing A/B onto A/B/C does nothing. Importing A/B/D onto A/B/C requires a replacement decision for Codex/Claude; OpenCode keeps the local branch without a replacement option. This is a manual snapshot transfer, not continuous synchronization. Formats that rewrite earlier JSONL records are conservatively treated as conflicts even when the archive appears newer. A light archive cannot establish transcript ancestry, so it adds missing History entries/screens but does not automatically update existing ones.
 
-Replacement backups live under the destination Hub's `.mrmak/import-backups/<timestamp>/`: `native/<agent>/<id>.jsonl`, Claude companion files, and `state/sessions.json`/saved screens where applicable. They are recovery files, not an automatic undo button. Keep them private and restore them only with the app and affected CLI closed. An existing Claude transcript keeps its native location even when you relink its working folder. Mr. Mik resumes the verified absolute transcript path in the mapped folder; it does not move or duplicate the transcript. Multiple files with the same native ID prevent transferring/resuming that native context until the ambiguity is resolved; explicit transfer exclusion can preserve other healthy conversations. Older CLI versions may need updating to support the current resume flags.
+Recovery data lives under the destination Hub's `.mrmak/import-backups/` in a
+timestamped import directory. The transaction journal records staged changes and
+retained originals; replacement backups can also include native transcripts,
+Claude companion files, History and saved screens. These are private recovery
+files, not an automatic undo button. Failed supported file writes are rolled
+back when safe; concurrent edits are preserved rather than blindly overwritten.
+An unfinished/recovery-required import blocks a subsequent import until resolved.
+There is no automatic crash replay or guaranteed rollback of an external native
+service operation. Preserve the reported journal/backup and resolve the failure
+before trying again. Do not manually restore files while the app or affected
+CLI is writing them.
 
-Hub file conflicts are kept by default unless selected for replacement. Cards, resource metadata and Inbox assignments merge by ID; skill-scope configuration files follow the file-conflict choice, so review that entry when combining two populated Hubs. **Restore app preferences** is an explicit option, off by default. It may restore Codex permission and other-agent bypass defaults, so inspect them before checking the box. It may restore the selected workspace when that ID exists in the destination registry; it never restores open chat/window selection or credentials. Different native conversations claiming the same Mr. Mik History ID are rejected rather than mixed.
+An existing Claude transcript keeps its native location even when you relink its working folder. Mr. Mik resumes the verified absolute transcript path in the mapped folder; it does not move or duplicate the transcript. Multiple files with the same native ID prevent transferring/resuming that native context until the ambiguity is resolved; explicit transfer exclusion can preserve other healthy conversations. Older CLI versions may need updating to support the current resume flags.
 
-The archive excludes linked external project contents and their `.codex`/`.claude` files, personal Codex/Claude/OpenCode/Kimi configuration, CLI installations, logins, secrets, runtime caches and local tool-visibility choices. Mr. Mik-owned private Claude MCP definitions also require review/recreation on the destination. Project-relative technical-document links and card artifact links work only after their external folders and referenced files are relinked. A full archive can contain sensitive conversation text and Hub documents even though credential files are filtered: store and share it carefully. Import does not install CLIs, authorize accounts, trust Codex projects or validate live MCP connections. The accent choice travels only with portable preferences and is applied on import only if **Restore app preferences** is selected.
+Hub file conflicts are kept by default unless selected for replacement. This
+also applies to differing media files already present in the Hub. Cards,
+resource metadata and Inbox assignments merge by ID. **Skill activation
+conflicts** are reviewed individually by agent, skill and global/workspace
+scope: existing local decisions are kept by default, missing decisions are
+added, and destination-only choices remain. Check only the imported decisions
+you want to accept. Skill file contents still follow ordinary Hub file-conflict
+choices. A changed conflict selection requires a fresh review rather than
+silently replacing a newer setting.
+
+**Restore app preferences** is an explicit option, off by default. It may restore Codex permission and other-agent bypass defaults, so inspect them before checking the box. It may restore the selected workspace when that ID exists in the destination registry; it never restores open chat/window selection or credentials. Different native conversations claiming the same Mr. Mik History ID are rejected rather than mixed. Branch/edit/retry origins are remapped to imported History entries; an absent parent is marked unavailable instead of opening an unrelated conversation.
+
+Empty legacy Inbox registries without a `resources` field are accepted as an empty list; malformed present values or failed archive integrity checks are still rejected. Starter examples transfer like other workspaces: repeated imports preserve their IDs without duplicating cards. Examples created independently on two computers have different IDs and are retained as separate workspaces, even if their names match, to avoid discarding customized content. Existing pages are kept unless explicitly selected for replacement.
+
+The archive excludes whole linked external project folders and their `.codex`/`.claude` files, personal Codex/Claude/OpenCode/Kimi configuration, CLI installations, logins, secrets, browser profiles, runtime caches and local tool-visibility choices. Explicitly reviewed conversation files are the limited exception for individual external payloads, not a project-folder backup. Mr. Mik-owned private Claude MCP definitions also require review/recreation on the destination. Project-relative technical-document links and card artifact links work only after their external folders and referenced files are relinked. A full archive can contain sensitive conversation text and Hub documents even though credential files are filtered: store and share it carefully. Import does not install CLIs, authorize accounts, trust Codex projects or validate live MCP connections. The accent choice travels only with portable preferences and is applied on import only if **Restore app preferences** is selected.
 
 ## Where things live and what to verify
+
+New Hubs have AGENTS.md and CLAUDE.md in their root, with instructions for Hub content, scope, native file authoring and user safety. These come from the source repository's templates/hub/ files. The repository-root AGENTS.md/CLAUDE.md are separate developer instructions and are not copied into user Hubs. Installer creation and portable starter MyHub use the same Hub templates; updating the app does not replace customized instructions in an existing Hub. Linked external projects retain their own instructions. These are instructions for agents, not an automatic background cleanup service.
 
 Hub cards and page references live in `workspace/workspace.json`; page files and media live under `workspace/`. Workspace identities are in `projects/registry.json`, and Hub skill switches in `projects/skill-scopes.json`. Shared files are under `context/`, `knowledge/`, `processes/` and `inbox/`. The Hub's `.mrmak/` folder holds machine-local state such as chat History/screens, Inbox assignments and linked-folder paths. Native CLI transcripts live in each agent's own user area, not in the linked project. Linked folders keep their own instructions, native skills and MCP configuration.
 
@@ -568,6 +1289,12 @@ Mr. Mik normally leaves external project folders untouched. The exceptions are e
 | Tool entry cannot be toggled | Check its listed source and whether it is host/plugin-managed or a built-in component | Every installed tool does not have the same global/project controls |
 | History will not resume | Check the native session ID, agent account, native transcript files and linked-folder mapping | A saved terminal screen cannot rebuild a lost native conversation |
 | Card media or technical link breaks after import | Check that Hub media was imported and external referenced files were copied/relinked separately | Full export still excludes external project folders |
+| Graphical image/file is missing after transfer | Check the full-export media selection and exclusions, then the preview size/type | Optional payload transfer does not rewrite CLI transcript paths |
+| Browser tool is missing | Enable Browser · Playwright for the correct scope and start/resume the worker; check pending changes | The host-managed OpenAI browser entry does not connect a browser to Mr. Mik |
+| Browser cannot continue after manual work | Return control to the agent; reopen its panel if needed | CAPTCHA may still require manual input; external presentation is not a bypass |
+| Windows asks for administrator consent | Complete the requested Codex sandbox setup and reconnect when offered | Automatic request review cannot accept Windows consent |
+| Local command fails or an installed tool appears missing | Read the current runtime/setup error and check effective sandbox access | Installation outside the sandbox does not guarantee access inside it |
+| Import reports recovery required | Preserve its journal/backup and resolve that transaction before importing again | Retrying does not automatically replay or undo every native operation |
 | Accent looks different in one area | Check Settings → Appearance in both windows and whether the area is an authored card page or an Original-colours CLI terminal | Themes intentionally do not repaint independent content |
 
 When reporting an issue, record the selected workspace, linked folder, agent, whether the chat was already running, the exact action and error text. This is safer than repeatedly changing global configuration to make one project work.
@@ -576,6 +1303,23 @@ When reporting an issue, record the selected workspace, linked folder, agent, wh
 
 The installed app has a user interface and a local service. The interface under `src/` renders Workspace, Chats, the right rail and this Help document. The service under `desktop/service/` manages settings, project locations, chat terminals, native-session metadata, tools and transfer archives. `src-tauri/` contains the Windows desktop host. Cards and other Hub content are ordinary files; the app source and Hub content may share one repository in the template, but they serve different purposes.
 
-This Help window reads `docs/user-guide.md` at build time. Top-level `##` headings become navigation sections, and the text is searchable offline. When changing a feature, update the matching section and any relevant examples rather than adding a vague note at the end. For installation/build prerequisites, see `docs/getting-started.md`; for the multi-folder model, see `docs/multi-project.md`; for the source layout, see `desktop/README.md`.
+This Help window bundles `docs/user-guide.md` and the workspace snapshot reference
+from `docs/workspace-snapshots.md` at build time. Top-level `##` headings become
+navigation sections, and the text is searchable offline. Technical reports in
+`docs/` are not automatically included in Help. Update the relevant manual
+section when behavior changes; installed copies receive it with a new build.
+For installation/build prerequisites, see `docs/getting-started.md`; for the
+multi-folder model, see `docs/multi-project.md`; for the source layout, see
+`desktop/README.md`.
 
 For a source build, use `Setup.ps1 -Mode Check` to inspect prerequisites, then `Setup.ps1 -Mode Desktop` to build the Windows installer. A browser preview is not equivalent to the desktop app: managed terminals and native file actions require the desktop host and local service. Do not restart a running app or terminate active agent chats merely to apply a new build; finish and verify the build, then restart at a time that does not interrupt work.
+
+### Connection failures
+
+Local Mr. Mik service loss, native offline evidence, provider unavailability,
+timeouts, authentication and quota failures have distinct descriptions.
+**Retry connection** reconnects without resending a task. Worker errors observed
+through native structured events are also shown in supported chat views;
+use the native terminal for CLI request retry. Graphical chat reports runtime
+and uncertain-delivery failures without silently resending the message.
+Terminal-only errors retain their native display.

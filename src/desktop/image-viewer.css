@@ -1,0 +1,35 @@
+.chat-image-viewer { position:fixed; inset:0; margin:auto; box-sizing:border-box; width:calc(100vw - 8px); height:calc(100dvh - 8px); max-width:calc(100vw - 8px); max-height:calc(100dvh - 8px); padding:0; border:1px solid var(--line,#ffffff25); border-radius:10px; background:var(--panel,#14161c); color:var(--ink-bright,#dedee7); overflow:hidden; }
+.chat-image-viewer[open] { display:flex; flex-direction:column; }
+.chat-image-viewer::backdrop { background:#000b; }
+.chat-image-viewer>header { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; border-bottom:1px solid var(--line,#ffffff20); }
+.chat-image-viewer>header>span { overflow-wrap:anywhere; min-width:0; font-size:12px; }
+.chat-image-viewer>header>div { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.chat-image-viewer button,.chat-image-viewer header a { display:inline-flex; align-items:center; padding:5px 8px; color:inherit; font:inherit; font-size:12px; text-decoration:none; background:transparent; border:1px solid var(--line,#ffffff25); border-radius:6px; cursor:pointer; }
+.chat-image-viewer :focus-visible { outline:2px solid var(--accent-border); outline-offset:2px; }
+.chat-image-viewer button:disabled { opacity:.4; cursor:default; }
+.chat-image-viewer>p { margin:0; padding:7px 14px; font-size:12px; }
+.chat-image-viewer .chat-image-canvas { flex:1; min-height:0; overflow:auto; display:flex; align-items:center; justify-content:center; padding:12px; }
+.chat-image-viewer .chat-image-canvas img { display:block; object-fit:contain; max-width:100%; max-height:100%; flex-shrink:0; }
+.chat-image-viewer .chat-image-canvas.zoomed { display:block; }
+.chat-image-viewer .chat-image-canvas.zoomed img { height:auto; max-width:none; max-height:none; object-fit:initial; }
+.chat-image-viewer:fullscreen { width:100%; height:100%; max-width:100%; max-height:100%; border-radius:0; }
+.chat-image-viewer>header{padding:8px 12px;gap:8px}
+.chat-image-viewer .image-viewer-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:80px;color:var(--ink-secondary,#a19aa7)}
+.chat-image-viewer .image-viewer-tools{display:flex;align-items:center;gap:5px}
+.chat-image-viewer .image-viewer-tools button,.chat-image-viewer .image-viewer-tools a{justify-content:center;min-width:28px;height:28px;box-sizing:border-box;padding:4px 6px;background:transparent;border:0;border-radius:5px;color:var(--ink-secondary,#a19aa7)}
+.chat-image-viewer .image-viewer-tools button:hover,.chat-image-viewer .image-viewer-tools a:hover,.chat-image-viewer .image-viewer-tools [aria-pressed=true]{background:#ffffff09;color:var(--ink-bright,#dedee7)}
+.image-viewer-zoom,.image-viewer-fit{display:flex;align-items:center;gap:2px}.image-viewer-zoom{border-right:1px solid #ffffff10;padding-right:5px}.image-viewer-fit{margin-right:5px}.image-viewer-zoom>[role=status]{min-width:37px;text-align:center;font-size:11px;color:var(--ink-secondary,#a19aa7)}
+.chat-image-viewer .chat-image-canvas{background-color:#111216;background-image:conic-gradient(#ffffff03 25%,transparent 0 50%,#ffffff03 0 75%,transparent 0);background-size:20px 20px}
+@media(max-width:560px){.chat-image-viewer .image-viewer-name{flex-basis:100%}.chat-image-viewer .image-viewer-tools{width:100%;justify-content:space-between;gap:2px}.chat-image-viewer .image-viewer-fit{margin-right:auto}}
+
+.chat-image-viewer>header { position:relative; padding-inline-end:46px; }
+.chat-image-viewer>header .image-viewer-close { position:absolute; top:8px; right:9px; width:28px; height:28px; justify-content:center; padding:4px; border:0; border-radius:0; }
+.chat-image-viewer .image-viewer-close:hover { background:var(--accent-overlay-hover,#ffffff0a); }
+.chat-image-viewer .image-viewer-gallery { display:flex; align-items:center; gap:3px; color:var(--ink-secondary); font-size:11px; }
+.chat-image-viewer .image-viewer-gallery span { white-space:nowrap; }
+.chat-image-viewer .image-viewer-tools button,.chat-image-viewer .image-viewer-tools a { border-radius:0; }
+.chat-image-viewer .chat-image-canvas:focus-visible { outline-offset:-3px; }
+@media(max-width:560px) {
+  .chat-image-viewer .image-viewer-tools { justify-content:flex-start; }
+  .chat-image-viewer .image-viewer-fit { margin-right:3px; }
+}

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseOpenCodeVersion } from '../opencode.mjs';
@@ -14,34 +15,10 @@ CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, data T
 CREATE TABLE todo (session_id TEXT, content TEXT, status TEXT, priority TEXT, position INTEGER);
 `;
 
-test('OpenCode version discovery accepts later minor/major and prerelease versions, not an allowlist', () => {
+test('OpenCode version discovery accepts the native prefix and later minor/major and prerelease versions', () => {
+  assert.equal(parseOpenCodeVersion('v2.0.9'), '2.0.9');
   for (const version of ['1.18.34', '1.99.0', '2.0.0', '3.1.0-beta.2']) assert.equal(parseOpenCodeVersion(`OpenCode ${version}\n`), version);
   assert.throws(() => parseOpenCodeVersion('unavailable'), /could not be verified/);
-});
-
-test('legacy transfer cannot misidentify migrated V2 storage containing old V1 tables', () => {
-  const db = new DatabaseSync(':memory:');
-  try {
-    db.exec(schema + 'CREATE TABLE session_v2 (id TEXT PRIMARY KEY);');
-    assert.throws(() => assertOpenCodeDatabaseSchema(db), /V2 transfer adapter/);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM session_v2').get().count, 0);
-  } finally { db.close(); }
-});
-
-test('OpenCode transfer opens compatible schemas without consulting the CLI release number', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-oc-compat-'));
-  const file = path.join(root, 'fixture.db');
-  try {
-    const fixture = new DatabaseSync(file);
-    fixture.exec(schema + 'ALTER TABLE session ADD COLUMN future_metadata TEXT; CREATE TABLE future_table (id TEXT);');
-    fixture.close();
-    const transfer = new OpenCodeTransfer(root), calls = [];
-    transfer.command = async args => { calls.push(args); assert.deepEqual(args, ['db', 'path']); return file; };
-    const db = await transfer.database();
-    assert.deepEqual(calls, [['db', 'path']]);
-    assert.throws(() => db.exec("INSERT INTO session (id) VALUES ('ses_test')"), /readonly/i);
-    db.close();
-  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('OpenCode incompatible database structures refuse only transfer/deletion before native mutation', async () => {
@@ -54,6 +31,14 @@ test('OpenCode incompatible database structures refuse only transfer/deletion be
     transfer.command = async args => { calls.push(args); assert.deepEqual(args, ['db', 'path']); return file; };
     await assert.rejects(transfer.database(), /Unsupported native OpenCode database schema/);
     assert.deepEqual(calls, [['db', 'path']]);
+    const migration = new DatabaseSync(file);
+    try { migration.exec('ALTER TABLE todo ADD COLUMN priority TEXT; CREATE TABLE session_v2 (id TEXT PRIMARY KEY);'); }
+    finally { migration.close(); }
+    await assert.rejects(transfer.database(), /V2 transfer adapter/);
+    assert.deepEqual(calls, [['db', 'path'], ['db', 'path']]);
+    const migrated = new DatabaseSync(file, { readOnly: true });
+    try { assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM session_v2').get().count, 0); }
+    finally { migrated.close(); }
     const db = new DatabaseSync(':memory:');
     assert.throws(() => assertOpenCodeDatabaseSchema(db), /schema/); db.close();
   } finally { await rm(root, { recursive: true, force: true }); }

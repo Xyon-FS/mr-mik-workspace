@@ -1,6 +1,7 @@
 // Native family acceptance: isolated profiles, no provider, account or real chat.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';

@@ -1,12 +1,14 @@
+import { selectControl } from './select-control.mjs';
+import { selectChatInNavigation } from './chat-navigation.mjs';
 // Run after npm run build. Isolated browser, repository and fake PTYs; no agent
 // login, live conversation, Windows shortcut or production setting is touched.
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, cp } from 'node:fs/promises';
+import { mkdtemp, createService, cleanupFixtures, testBrowserEnvironment } from './fixtures.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as toml } from 'smol-toml';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const repo = await mkdtemp(path.join(root, '.cache/workspace-ui-'));
@@ -36,7 +38,7 @@ for (const agent of ['codex', 'claude', 'kimi', 'shell']) {
 }
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const context = await browser.newContext({ viewport: { width: 900, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await context.newPage(); page.setDefaultTimeout(10000); page.setDefaultNavigationTimeout(30000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -65,6 +67,7 @@ try {
   await guide.getByRole('button', { name: 'Close guide' }).click();
   await guide.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Toggle settings' }).click();
+  await page.getByRole('button', { name: 'Appearance settings', exact: true }).click();
   await page.getByRole('button', { name: 'Blue accent' }).click();
   await page.locator('html[data-accent-theme="blue"]').waitFor();
   assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--pink').trim()), '#83c5ff');
@@ -75,7 +78,7 @@ try {
   await chatsTheme.close();
   await page.getByRole('button', { name: 'Rose accent' }).click();
   await page.locator('html[data-accent-theme="rose"]').waitFor();
-  await page.getByRole('button', { name: 'Close settings' }).click();
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
   assert.equal(await page.frameLocator('iframe.report-frame').locator('body').evaluate(element => getComputedStyle(element).scrollbarColor), 'rgb(81, 76, 89) rgb(17, 18, 23)');
   await page.unroute('**/workspace/test/step0.html');
   await page.route('**/workspace/test/step1.html', route => route.request().method() === 'HEAD' ? route.fulfill({ status: 404 }) : route.continue());
@@ -92,7 +95,9 @@ try {
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('textbox', { name: 'Edit notes.md' }).fill('# Edited document\n\nUnicode: русский 🐽\n');
   await page.getByRole('textbox', { name: 'Edit notes.md' }).press('Control+s');
-  await page.getByText('Saved', { exact: true }).waitFor(); assert.match(await readFile(documentPath, 'utf8'), /русский 🐽/);
+  // A file-watch refresh can replace the transient Saved label. Verify the durable result.
+  await expect.poll(() => readFile(documentPath, 'utf8')).toMatch(/русский 🐽/);
+  await expect(page.getByText('Saved',{exact:true})).toBeVisible();
   await writeFile(documentPath, '# Changed by another agent\n');
   await page.getByRole('textbox', { name: 'Edit notes.md' }).fill('# My unsaved draft\n');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -116,86 +121,90 @@ try {
   assert.equal(await readFile(documentPath, 'utf8'), '# Changed by another agent\n');
   await page.getByRole('button', { name: 'Toggle skills', exact: true }).click();
     await page.getByRole('group', { name: 'Skill agent' }).getByRole('button', { name: 'Claude' }).click();
+  await page.getByRole('group', { name: 'Skill view' }).getByRole('button', { name: 'Files', exact: true }).click();
   await page.getByRole('treeitem', { name: /^example$/ }).click(); await page.getByRole('treeitem', { name: /^SKILL.md/ }).click();
   await page.getByRole('heading', { name: 'Example skill' }).waitFor();
   await page.getByRole('button', { name: 'Toggle mcp', exact: true }).click();
-  await page.getByRole('heading', { name: 'fixture-tools', exact: true }).waitFor();
+  const availability = async name => {
+    const trigger = page.getByRole('button', { name: `Availability for ${name}`, exact: true });
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+  };
+  const confirmTools = async () => { await page.getByRole('dialog', { name: 'Confirm tool configuration', exact: true }).getByRole('button', { name: 'Confirm', exact: true }).click(); };
+  await page.getByRole('button', { name: 'Details for fixture-tools', exact: true }).waitFor();
   assert.equal((await page.locator('.mcp-panel').innerText()).includes('private-ui-fixture-token'), false);
   await page.getByRole('button', { name: 'Check fixture-tools for Claude', exact: true }).click();
   await page.locator('[data-mcp-id="claude:fixture-tools"]').getByText('7 tools', { exact: true }).waitFor();
-  await page.getByRole('combobox', { name: 'Filter MCP by agent' }).selectOption('codex');
-  await page.getByRole('heading', { name: 'global-tools', exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'unity@local', exact: true }).waitFor();
-  await page.locator('[data-mcp-id="codex:global-tools"]').getByRole('button', { name: 'Hide global-tools in Tools' }).click();
-  await page.getByRole('heading', { name: 'global-tools', exact: true }).waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'Show hidden tools' }).click();
-  await page.locator('[data-mcp-id="codex:global-tools"].is-hidden').getByRole('button', { name: 'Show global-tools in Tools' }).click();
-  await page.getByRole('button', { name: 'Hide hidden tools' }).click();
-  await page.getByRole('combobox', { name: 'Filter tools by type' }).selectOption('mcp');
-  assert.equal(await page.locator('.mcp-server').count(), 1);
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('combobox', { name: 'global-tools global setting' }).selectOption('false');
-  await page.locator('[data-mcp-id="codex:global-tools"] .mcp-state.disabled').waitFor();
-  assert.equal(toml(await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).mcp_servers['global-tools'].enabled, false);
-  await page.getByRole('combobox', { name: 'Filter tools by type' }).selectOption('plugin');
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('combobox', { name: 'unity@local global setting' }).selectOption('true');
-  await page.waitForFunction(() => document.querySelector('select[aria-label="unity@local global setting"]')?.value === 'true');
-  assert.equal(toml(await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).plugins['unity@local'].enabled, true);
-  await page.getByRole('combobox', { name: 'Active workspace' }).selectOption(game.id);
-  await page.getByRole('combobox', { name: 'Filter tools by type' }).selectOption('mcp');
-  await page.getByRole('combobox', { name: 'global-tools project setting' }).selectOption('true');
-  await page.waitForFunction(() => document.querySelector('select[aria-label="global-tools project setting"]')?.value === 'true');
-  assert.equal(toml(await readFile(path.join(gameRoot, '.codex/config.toml'), 'utf8')).mcp_servers['global-tools'].enabled, true);
-  await page.getByRole('combobox', { name: 'Active workspace' }).selectOption('');
-  await page.getByRole('button', { name: '+ Add MCP server' }).click();
-  await page.getByRole('heading', { name: 'Add MCP server' }).waitFor();
+  await selectControl(page, 'Filter MCP by agent', 'codex');
+  await page.getByRole('button', { name: 'Details for global-tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Hide global-tools in Tools', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Details for global-tools', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Tool filters', exact: true }).click();
+  await page.getByLabel('Show hidden tools', { exact: true }).check();await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Details for global-tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Show global-tools in Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Tool filters', exact: true }).click();
+  await page.getByLabel('Show hidden tools', { exact: true }).uncheck();await page.keyboard.press('Escape');
+  await selectControl(page, 'Filter tools by type', 'mcp');
+  await expect(page.locator('[data-mcp-id="codex:global-tools"]')).toBeVisible();
+  await expect(page.locator('[data-tool-id^="plugin:"]')).toHaveCount(0);
+  await availability('global-tools');await selectControl(page, 'global-tools global setting', 'false');await confirmTools();
+  await expect.poll(async () => toml(await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).mcp_servers['global-tools'].enabled).toBe(false);
+  await selectControl(page, 'Filter tools by type', 'plugin');
+  await availability('unity@local');await selectControl(page, 'unity@local global setting', 'true');await confirmTools();
+  await expect.poll(async () => toml(await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).plugins['unity@local'].enabled).toBe(true);
+  await selectControl(page, 'Active workspace', game.id);
+  await selectControl(page, 'Filter tools by type', 'mcp');
+  await availability('global-tools');await selectControl(page, 'global-tools project setting', 'true');
+  await expect.poll(async () => toml(await readFile(path.join(gameRoot, '.codex/config.toml'), 'utf8').catch(() => '')).mcp_servers?.['global-tools']?.enabled).toBe(true);
+  await page.keyboard.press('Escape');
+  await selectControl(page, 'Active workspace', '');
+  await page.getByRole('button', { name: 'Add MCP server', exact: true }).click();
   await page.getByLabel('Server name').fill('managed_fixture');
   await page.getByLabel('MCP URL').fill('https://managed.example/mcp');
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: 'Save definition' }).click();
-  await page.getByText('managed_fixture · http', { exact: true }).waitFor();
-  assert.equal((await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).includes('managed_fixture'), true);
-  await page.getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('button', { name: 'Save definition', exact: true }).click();await confirmTools();
+  await expect.poll(async () => (await readFile(path.join(mcpHome, '.codex/config.toml'), 'utf8')).includes('managed_fixture')).toBe(true);
+  await expect(page.getByRole('dialog', { name: 'Add MCP server', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add MCP server', exact: true }).click();
+  await page.getByRole('group', { name: 'MCP agent', exact: true }).getByRole('button', { name: 'Claude', exact: true }).click();
   await page.getByLabel('Server name').fill('claude_shared_fixture');
   await page.getByLabel('MCP URL').fill('https://claude.example/mcp');
-  await page.getByRole('button', { name: 'Save definition' }).click();
-  await page.getByText('claude_shared_fixture · http', { exact: true }).waitFor();
-  assert.equal(JSON.parse(await readFile(path.join(mcpHome, '.claude.json'), 'utf8')).mcpServers.claude_shared_fixture.url, 'https://claude.example/mcp');
-  await page.getByRole('button', { name: 'Back to Tools' }).click();
-  await page.getByRole('combobox', { name: 'Filter MCP by agent' }).selectOption('claude');
-  await page.getByRole('combobox', { name: 'Active workspace' }).selectOption(game.id);
-  const inheritedClaude = page.locator('[data-mcp-id="claude:claude_shared_fixture"]');
-  await inheritedClaude.getByRole('combobox', { name: 'claude_shared_fixture linked Claude MCP' }).click();
-  await page.getByRole('listbox', { name: 'claude_shared_fixture linked Claude MCP' }).getByRole('option', { name: 'Off' }).click();
-  await inheritedClaude.getByRole('combobox', { name: 'claude_shared_fixture linked Claude MCP' }).getByText('Off', { exact: true }).waitFor();
-  assert.deepEqual(JSON.parse(await readFile(path.join(mcpHome, '.claude.json'), 'utf8')).projects[gameRoot].disabledMcpServers, ['claude_shared_fixture']);
+  await page.getByRole('button', { name: 'Save definition', exact: true }).click();
+  await expect.poll(async () => JSON.parse(await readFile(path.join(mcpHome, '.claude.json'), 'utf8').catch(() => '{}')).mcpServers?.claude_shared_fixture?.url).toBe('https://claude.example/mcp');
+  await expect(page.getByRole('dialog', { name: 'Add MCP server', exact: true })).toHaveCount(0);
+  await selectControl(page, 'Filter MCP by agent', 'claude');
+  await selectControl(page, 'Active workspace', game.id);
+  await availability('claude_shared_fixture');await selectControl(page, 'claude_shared_fixture linked Claude MCP', 'off');
+  await expect.poll(async () => JSON.parse(await readFile(path.join(mcpHome, '.claude.json'), 'utf8')).projects?.[gameRoot]?.disabledMcpServers).toEqual(['claude_shared_fixture']);
+  await page.keyboard.press('Escape');
   assert.equal((await readFile(path.join(repo, '.mcp.json'), 'utf8')).includes('private-ui-fixture-token'), true);
   await page.getByRole('button', { name: 'Close MCP', exact: true }).click();
   await page.goto(service.urls.chats);
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await page.getByRole('button', { name: 'New chat', exact: true }).first().click();
   const projectChoice = page.locator('.desk-dialog').getByRole('combobox', { name: 'Workspace', exact: true });
   await projectChoice.click();
-  assert.equal(await page.getByRole('listbox', { name: 'Workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(37, 35, 45)');
+  assert.equal(await page.getByRole('listbox', { name: 'Workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(23, 23, 30)');
   await page.getByRole('listbox', { name: 'Workspace' }).getByRole('option', { name: 'Fixture Game' }).click();
   assert.match(await projectChoice.innerText(), /Fixture Game/);
   await page.locator('.desk-dialog').getByRole('button', { name: 'Close', exact: true }).click();
   const oldChat = await service.sessions.importConversation({ agent: 'codex', nativeId: '00000000-0000-0000-0000-000000000128', name: 'Old fixture', cwd: repo });
-  await page.locator('.history-button').click();
+  await page.keyboard.press('Control+Shift+h');
   await page.getByRole('combobox', { name: 'History workspace' }).click();
-  assert.equal(await page.getByRole('listbox', { name: 'History workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(37, 35, 45)');
+  assert.equal(await page.getByRole('listbox', { name: 'History workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(23, 23, 30)');
   await page.getByRole('listbox', { name: 'History workspace' }).getByRole('option', { name: 'All workspaces' }).click();
   const oldRow = page.locator('.history-item').filter({ hasText: 'Old fixture' });
+  await oldRow.locator('.history-management > summary').click();
   await oldRow.getByRole('combobox', { name: 'Associate Old fixture with workspace' }).waitFor();
   await oldRow.getByRole('combobox', { name: 'Associate Old fixture with workspace' }).click();
-  assert.equal(await page.getByRole('listbox', { name: 'Associate Old fixture with workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(37, 35, 45)');
+  assert.equal(await page.getByRole('listbox', { name: 'Associate Old fixture with workspace' }).evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(23, 23, 30)');
   await page.getByRole('listbox', { name: 'Associate Old fixture with workspace' }).getByRole('option', { name: 'No association' }).click();
   await oldRow.getByRole('button', { name: 'Archive' }).click();
   await oldRow.waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'Archived', exact: true }).click();
+  await page.getByRole('combobox',{name:'History filter',exact:true}).click();await page.getByRole('option',{name:'Archived',exact:true}).click();
+  await oldRow.locator('.history-management > summary').click();
   await oldRow.getByRole('button', { name: 'Restore' }).click();
   await oldRow.waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('combobox',{name:'History filter',exact:true}).click();await page.getByRole('option',{name:'All',exact:true}).click();
+  await oldRow.locator('.history-management > summary').click();
   await oldRow.getByLabel('More actions for Old fixture').click();
   await oldRow.getByRole('button', { name: 'Remove from Mr. Mik' }).click();
   const removal = page.getByRole('dialog', { name: 'Remove chat from Mr. Mik' });
@@ -208,12 +217,12 @@ try {
   assert.equal(service.sessions.items.has(oldChat.id), false);
   await page.getByRole('button', { name: 'Close history' }).click();
   async function setTerminalFontSize(size) {
-    await page.getByTitle('Chat options', { exact: true }).click();
-    const control = page.locator('.font-control');
-    const current = Number(await control.locator('span').last().innerText());
-    const button = control.getByRole('button', { name: size > current ? '+' : '−', exact: true });
-    for (let count = 0; count < Math.abs(size - current); count++) await button.click();
-    await page.getByTitle('Chat options', { exact: true }).click();
+    await page.getByLabel('Chat details', { exact: true }).click();
+    await page.getByRole('tab', { name: 'Actions', exact: true }).click();
+    const bounds=await page.locator('.graphical-info-panel').boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=(await page.evaluate(()=>window.innerWidth))+1,'Shell details fit without a native Send button');
+    await page.getByRole('spinbutton', {name:'Terminal text size',exact:true}).fill(String(size));
+    await page.getByRole('spinbutton', {name:'Terminal text size',exact:true}).press('Tab');
+    await page.keyboard.press('Escape');
   }
   // Check the actual terminal rows, not just the host box: FitAddon can size
   // a grid into parent padding and silently clip the CLI's bottom status row.
@@ -234,7 +243,7 @@ try {
   await page.setViewportSize({ width: 900, height: 800 });
   await setTerminalFontSize(13);
   for (const agent of ['codex', 'claude', 'kimi', 'shell']) {
-    await page.locator(`[data-chat-tab="${agent}"] [role="tab"]`).click();
+    await selectChatInNavigation(page, agent);
     const screen = page.locator('.terminal-area .xterm-screen'); await screen.waitFor();
     await page.locator('.xterm-rows').filter({ hasText: 'Fixture line' }).waitFor();
     if (agent !== 'shell') {
@@ -261,4 +270,5 @@ try {
   await browser?.close();
   for (const session of service.sessions.items.values()) session.process = null;
   await service.close();
+  await cleanupFixtures();
 }

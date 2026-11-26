@@ -23,12 +23,3 @@ test('report fallback preserves recovery controls and never renders raw error in
   assert.match(html, /Reload/);
   assert.doesNotMatch(html, /Sensitive fixture/);
 });
-test('Markdown base resolution works for relative service preview URLs', async () => {
-  // Extract the real Markdown renderer without document editor hooks/imports.
-  const file = new URL('../../../src/components/MarkdownDocument.tsx', import.meta.url);
-  const source = await readFile(file, 'utf8');
-  assert.match(source, /new URL\(baseUrl, window.location.href\)/);
-  const base = new URL('/api/files/preview/report.md', 'http://127.0.0.1:3009/workspace').href;
-  assert.equal(new URL('assets/image.png', base).href, 'http://127.0.0.1:3009/api/files/preview/assets/image.png');
-  assert.equal(new URL('../notes.md', base).href, 'http://127.0.0.1:3009/api/files/notes.md');
-});

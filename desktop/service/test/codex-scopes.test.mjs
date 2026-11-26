@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import { parse as toml } from 'smol-toml';
 import { Projects } from '../projects.mjs';
 import { CodexScopes } from '../codex-scopes.mjs';
@@ -48,23 +49,22 @@ test('Codex project toggles preserve foreign config, shared installation and per
   assert.equal(toml(await readFile(f.config, 'utf8')).mcp_servers?.unityMCP, undefined);
 });
 
-test('Codex scope manager edits externally declared enablement without losing other fields', async () => {
+test('desktop Browser is unavailable in CLI without changing shared config or restricting other browser tools', async () => {
   const f = await fixture();
-  await writeFile(f.config, '# keep this comment\n[plugins."unity@local"]\nenabled = false # hand configured\n[mcp_servers.unityMCP]\nenabled = false # hand configured\ncommand = "uvx"\nargs = ["coplay"]\n');
-  await f.scopes.set(f.registered.id, { kind: 'plugin', id: 'unity@local', enabled: true });
-  await f.scopes.set(f.registered.id, { kind: 'mcp', id: 'unityMCP', enabled: true });
-  const projectText = await readFile(f.config, 'utf8');
-  assert.equal((projectText.match(/enabled = true # hand configured/g) || []).length, 2);
-  assert.match(projectText, /command = "uvx"/);
-  assert.match(projectText, /# keep this comment/);
-  await assert.rejects(f.scopes.set(f.registered.id, { kind: 'mcp', id: 'unityMCP', enabled: null }), /defines the component/);
-  await f.scopes.set(f.registered.id, { kind: 'mcp', id: 'unityMCP', enabled: false, scope: 'global' });
-  assert.equal(toml(await readFile(path.join(f.home, '.codex/config.toml'), 'utf8')).mcp_servers.unityMCP.enabled, false);
-  await f.scopes.set(f.registered.id, { kind: 'plugin', id: 'unity@local', enabled: true, scope: 'global' });
-  assert.equal(toml(await readFile(path.join(f.home, '.codex/config.toml'), 'utf8')).plugins['unity@local'].enabled, true);
-  await writeFile(f.config, '[broken');
-  await assert.rejects(f.scopes.set(f.registered.id, { kind: 'plugin', id: 'unity@local', enabled: true }), /malformed/);
-  assert.equal(await readFile(f.config, 'utf8'), '[broken');
+  const file = path.join(f.home, '.codex/config.toml');
+  const original = '[plugins."browser@openai-bundled"]\nenabled=true\n[plugins."browser@local"]\nenabled=true\n[mcp_servers.playwright]\ncommand="fixture-browser"\n';
+  await writeFile(file, original);
+  const listed = await f.scopes.list(f.registered.id);
+  const desktop = listed.rows.find(row => row.id === 'browser@openai-bundled');
+  assert.equal(desktop.cliSupport, 'unsupported');
+  assert.equal(desktop.globalEnabled, true);
+  assert.equal(desktop.globalEditable, false);
+  assert.equal(desktop.projectEditable, false);
+  assert.match(desktop.note, /not available in Codex CLI/);
+  assert.equal(listed.rows.find(row => row.id === 'browser@local').cliSupport, undefined);
+  assert.equal(listed.rows.find(row => row.id === 'playwright').cliSupport, undefined);
+  await assert.rejects(f.scopes.set(f.registered.id, { kind: 'plugin', id: desktop.id, enabled: false, scope: 'global' }), /cannot be changed/);
+  assert.equal(await readFile(file, 'utf8'), original);
 });
 
 test('installed Codex reads project plugin, skill and MCP overrides from a trusted repository', { skip: !commandPath('codex')?.endsWith('.exe'), timeout: 20000 }, async () => {

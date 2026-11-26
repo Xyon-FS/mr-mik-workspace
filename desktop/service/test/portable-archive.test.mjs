@@ -1,90 +1,157 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, realpath, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { Sessions } from '../sessions.mjs';
 import { PortableArchive } from '../portable-archive.mjs';
 import { claudeTranscript, codexTranscript } from '../native-events.mjs';
-import { terminalCommand } from '../agents.mjs';
-import { codexCommandFixture } from './cli-fixture.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
+import { Projects } from '../projects.mjs';
+import { leaseConversation } from '../conversation-lease.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const projectId = '22222222-2222-4222-8222-222222222222';
 
-for (const agent of ['codex', 'claude']) test(`${agent}: explicit partial full transfer keeps healthy contexts, warns for missing History and protects local chats`, async () => {
+test('native import rejects another managed writer before changing Hub files and releases only its own leases', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mr-mik-import-lease-'));
+  const source = await hub(root, 'source'), target = await hub(root, 'target'), previous = process.env.CODEX_HOME;
+  let release;
+  try {
+    const sourceHome = path.join(root, 'source-codex'), targetHome = path.join(root, 'target-codex');
+    process.env.CODEX_HOME = sourceHome;
+    await mkdir(path.join(sourceHome, 'sessions'), { recursive: true });
+    await writeFile(path.join(sourceHome, 'sessions', `rollout-fixture-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: source.repo } }) + '\n');
+    await writeFile(path.join(source.repo, 'knowledge', 'incoming.md'), '# Incoming fixture');
+    source.sessions.items.set(projectId, source.sessions.make({ id: projectId, agent: 'codex', nativeId: id, cwd: source.repo, name: 'Lease fixture', open: false, hasConversation: true }));
+    const archive = await source.archive.exportTo(root, { chats: 'full' });
+    process.env.CODEX_HOME = targetHome;
+    const context = { sqliteHome: targetHome }; target.sessions.accountContext = async () => context;
+    release = await leaseConversation(context, id);
+    await assert.rejects(target.archive.importFrom(archive.path), /already owned/);
+    assert.equal(await stat(path.join(target.repo, 'knowledge', 'incoming.md')).catch(() => null), null);
+    assert.equal(target.sessions.list().length, 0);
+    await release(); release = null;
+    assert.equal((await target.archive.importFrom(archive.path)).nativeImported, 1);
+  } finally {
+    await release?.(); await source.sessions.close(); await target.sessions.close();
+    if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
+  }
+});
+
+test('portable profile references exclude local account labels/store identities and require explicit destination mapping', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mr-mik-profile-transfer-'));
+  const source = await hub(root, 'source'), target = await hub(root, 'target');
+  const profileId = '33333333-3333-4333-8333-333333333333';
+  try {
+    source.sessions.items.set(id, source.sessions.make({ id, agent: 'codex', accountProfileId: profileId, accountProfileLabel: 'private-account@example.invalid', conversationStoreId: 'a'.repeat(64), name: 'Profile transfer', cwd: source.repo, open: false, nativeId: null, hasConversation: false }));
+    await writeFile(path.join(source.stateDir, 'mak-conversations.json'), JSON.stringify({ conversations: [{ id: 'mik-fixture', projectId: null, threadId: null, parentId: null, title: 'Profile conversation', at: '2026-10-15T10:00:00Z', accountProfileId: profileId, conversationStoreId: 'a'.repeat(64) }], selected: { global: 'mik-fixture' } }));
+    const archive = await source.archive.exportTo(root, { chats: 'light' });
+    const entries = unzipSync(await readFile(archive.path));
+    const chats = JSON.parse(strFromU8(entries['state/sessions.json']));
+    assert.equal(chats[0].accountProfileId, profileId);
+    assert.equal(chats[0].accountProfileLabel, undefined); assert.equal(chats[0].conversationStoreId, undefined);
+    const mak = JSON.parse(strFromU8(entries['state/mak-conversations.json']));
+    assert.equal(mak.conversations[0].conversationStoreId, undefined);
+    await target.archive.importFrom(archive.path);
+    const incoming = target.sessions.get(id);
+    assert.equal(incoming.accountProfileId, 'unmapped-' + profileId);
+    assert.equal(incoming.conversationStoreId, null);
+    const importedMak = JSON.parse(await readFile(path.join(target.stateDir, 'mak-conversations.json'), 'utf8'));
+    assert.equal(importedMak.conversations[0].accountProfileId, 'unmapped-' + profileId);
+  } finally { await source.sessions.close(); await target.sessions.close(); }
+});
+
+test('mixed partial full transfer keeps healthy native contexts and protects local chats', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mik-partial-transfer-'));
   const source = await hub(root, 'source'), target = await hub(root, 'target');
   const oldCodex = process.env.CODEX_HOME, oldClaude = process.env.CLAUDE_CONFIG_DIR;
   try {
     process.env.CODEX_HOME = path.join(root, 'pc1-codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'pc1-claude');
-    const healthy = { id: randomUUID(), agent, ...(agent === 'codex' ? { codexPermissions: 'full-access' } : {}), nativeId: projectId, name: 'Healthy context', cwd: source.repo, hasConversation: true, open: false, updatedAt: '2026-10-02T00:00:00Z' };
-    const missing = { ...healthy, id: randomUUID(), nativeId: id, name: 'Missing context' };
-    for (const chat of [healthy, missing]) source.sessions.items.set(chat.id, source.sessions.make(chat));
-    const file = agent === 'codex' ? path.join(process.env.CODEX_HOME, 'sessions', 'rollout-fixture-' + projectId + '.jsonl') : await claudeTranscript(source.repo, projectId);
-    await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id: projectId, cwd: source.repo } }) + '\n');
-    let review = await source.archive.reviewExport(root); assert.equal(review.issues.length, 1);
+    const fixtureChats = [];
+    for (const agent of ['codex', 'claude']) {
+      const nativeId = randomUUID();
+      const healthy = { id: randomUUID(), agent, ...(agent === 'codex' ? { codexPermissions: 'full-access' } : {}), nativeId, name: 'Healthy context', cwd: source.repo, hasConversation: true, open: false, updatedAt: '2026-10-02T00:00:00Z' };
+      const missing = { ...healthy, id: randomUUID(), nativeId: randomUUID(), name: 'Missing context' };
+      fixtureChats.push({ agent, healthy, missing });
+      for (const chat of [healthy, missing]) source.sessions.items.set(chat.id, source.sessions.make(chat));
+      const file = agent === 'codex' ? path.join(process.env.CODEX_HOME, 'sessions', 'rollout-fixture-' + nativeId + '.jsonl') : await claudeTranscript(source.repo, nativeId);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id: nativeId, cwd: source.repo } }) + '\n');
+    }
+    const unavailableKeys = fixtureChats.map(({ agent, missing }) => `${agent}:${missing.nativeId}`).sort();
+    const healthyKeys = fixtureChats.map(({ agent, healthy }) => `${agent}:${healthy.nativeId}`).sort();
+    const missingId = randomUUID();
+    const dormantId = randomUUID();
+    const dormant = source.sessions.make({ id: dormantId, name: 'Unused Claude tab', agent: 'claude', nativeId: randomUUID(), cwd: source.repo, hasConversation: false, open: false });
+    source.sessions.items.set(dormantId, dormant);
+    const dormantReview = await source.archive.reviewExport(root);
+    assert.equal(dormantReview.issues.some(issue => issue.sessionId === dormantId), false);
+    dormant.lastInputAt = '2026-09-30T00:01:00Z';
+    assert.match((await source.archive.reviewExport(root)).issues.find(issue => issue.sessionId === dormantId).reason, /transcript/i);
+    source.sessions.items.delete(dormantId);
+    source.sessions.items.set(missingId, source.sessions.make({ id: missingId, name: 'Missing native ID', agent: 'codex', cwd: source.repo, nativeId: null, hasConversation: true, open: false }));
+    const incomplete = await source.archive.reviewExport(root);
+    assert.equal(incomplete.issues.length, 3);
+    assert.match(incomplete.issues.find(issue => issue.sessionId === missingId).reason, /native ID missing/i);
+    await assert.rejects(source.archive.exportTo(root), /3 native chat.*light export/is);
+    const light = await source.archive.exportTo(root, { chats: 'light' });
+    assert.ok((await stat(light.path)).isFile());
+    assert.match(path.basename(light.path), /^MrMik-Workspace-.*\.mrmak\.zip$/);
+    source.sessions.items.delete(missingId);
+    let review = await source.archive.reviewExport(root); assert.deepEqual(review.issues.map(item => item.key).sort(), unavailableKeys);
     await assert.rejects(source.archive.exportTo(root, { attachmentToken: review.token }), /explicitly confirm/);
     review = await source.archive.reviewExport(root);
-    await assert.rejects(source.archive.exportTo(root, { attachmentToken: review.token, skipNative: [`${agent}:${projectId}`] }), /Healthy chats/);
+    await assert.rejects(source.archive.exportTo(root, { attachmentToken: review.token, skipNative: healthyKeys }), /Healthy chats/);
     review = await source.archive.reviewExport(root);
     const archive = await source.archive.exportTo(root, { attachmentToken: review.token, skipNative: review.issues.map(item => item.key) });
-    assert.equal(archive.chats, 1); assert.equal(archive.omitted, 1); assert.equal(source.sessions.get(missing.id).nativeUnavailable, undefined);
+    assert.equal(archive.chats, 2); assert.equal(archive.omitted, 2);
+    for (const { agent } of fixtureChats) {
+      const row = archive.coverage.find(item => item.agent === agent);
+      assert.equal(row.historyEntries, 2);
+      assert.equal(row.nativeConversations, 1);
+    }
+    for (const { missing } of fixtureChats) assert.equal(source.sessions.get(missing.id).nativeUnavailable, undefined);
     process.env.CODEX_HOME = path.join(root, 'pc2-codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'pc2-claude');
     const plan = await target.archive.preview(archive.path), unavailable = plan.native.filter(item => item.status === 'unavailable');
-    assert.equal(plan.native.filter(item => item.status === 'new').length, 1); assert.equal(unavailable.length, 1);
+    assert.deepEqual(plan.native.filter(item => item.status === 'new').map(item => item.agent + ':' + item.id).sort(), healthyKeys);
+    assert.deepEqual(unavailable.map(item => item.key).sort(), unavailableKeys);
     await assert.rejects(target.archive.importFrom(archive.path), /explicitly confirm/); assert.equal(target.sessions.list().length, 0);
     const options = { skipNative: unavailable.map(item => item.key), reviewHash: plan.reviewHash };
     await assert.rejects(target.archive.importFrom(archive.path, { ...options, reviewHash: 'stale' }), /archive changed/);
-    const result = await target.archive.importFrom(archive.path, options); assert.equal(result.nativeImported, 1); assert.equal(result.nativeUnavailable, 1);
-    assert.ok(target.sessions.get(missing.id).nativeUnavailable); assert.equal(target.sessions.get(healthy.id).nativeUnavailable, null);
-    if (agent === 'codex') assert.equal(target.sessions.get(healthy.id).codexPermissions, 'full-access');
-    await assert.rejects(target.sessions.resume(missing.id), /native conversation could not be located/);
-    target.sessions.get(missing.id).nativeUnavailable = null; target.sessions.get(missing.id).preview = 'Local healthy state';
-    await target.archive.importFrom(archive.path, options); assert.equal(target.sessions.get(missing.id).preview, 'Local healthy state'); assert.equal(target.sessions.get(missing.id).nativeUnavailable, null);
+    const result = await target.archive.importFrom(archive.path, options);
+    assert.equal(result.nativeImported, 2); assert.equal(result.nativeUnavailable, 2);
+    for (const { agent, healthy, missing } of fixtureChats) {
+      assert.ok(target.sessions.get(missing.id).nativeUnavailable);
+      assert.equal(target.sessions.get(healthy.id).nativeUnavailable, null);
+      if (agent === 'codex') assert.equal(target.sessions.get(healthy.id).codexPermissions, 'full-access');
+      await assert.rejects(target.sessions.resume(missing.id), /native conversation could not be located/);
+      target.sessions.get(missing.id).nativeUnavailable = null;
+      target.sessions.get(missing.id).preview = 'Local healthy state';
+    }
+    await target.archive.importFrom(archive.path, options);
+    for (const { missing } of fixtureChats) {
+      assert.equal(target.sessions.get(missing.id).preview, 'Local healthy state');
+      assert.equal(target.sessions.get(missing.id).nativeUnavailable, null);
+    }
     // An old archive whose manifest declares a missing transcript can be safely
     // isolated too; corruption of present bytes remains an archive-wide failure.
     const entries = unzipSync(await readFile(archive.path)), manifest = JSON.parse(strFromU8(entries['manifest.json']));
     const native = manifest.native[0]; delete entries[native.name];
     const partialPath = path.join(root, 'missing-entry.mrmak.zip'); await writeFile(partialPath, zipSync(entries));
-    const partial = await target.archive.preview(partialPath); assert.equal(partial.native.filter(item => item.status === 'unavailable').length, 2);
+    const partial = await target.archive.preview(partialPath); assert.equal(partial.native.filter(item => item.status === 'unavailable').length, 3);
     const partialResult = await target.archive.importFrom(partialPath, { skipNative: partial.native.filter(item => item.status === 'unavailable').map(item => item.key), reviewHash: partial.reviewHash }); assert.equal(partialResult.nativeImported, 0);
     entries[native.name] = strToU8('invalid JSONL\n'); const tamperedPath = path.join(root, 'tampered.mrmak.zip'); await writeFile(tamperedPath, zipSync(entries));
     await assert.rejects(target.archive.preview(tamperedPath), /integrity/);
     const declaration = manifest.files.find(item => item.name === native.name); declaration.size = entries[native.name].length; declaration.sha256 = createHash('sha256').update(entries[native.name]).digest('hex'); native.sha256 = declaration.sha256;
     entries['manifest.json'] = strToU8(JSON.stringify(manifest)); const invalidPath = path.join(root, 'invalid-chat.mrmak.zip'); await writeFile(invalidPath, zipSync(entries));
-    assert.equal((await target.archive.preview(invalidPath)).native.filter(item => item.status === 'unavailable').length, 2);
+    assert.equal((await target.archive.preview(invalidPath)).native.filter(item => item.status === 'unavailable').length, 3);
   } finally {
     await source.sessions.close(); await target.sessions.close();
     if (oldCodex === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldCodex;
     if (oldClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oldClaude;
-  }
-});
-
-test('full export and review fail explicitly for missing Codex/Claude transcripts and native IDs; light remains usable', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-missing-native-'));
-  const source = await hub(root, 'source');
-  const previous = process.env.CODEX_HOME, previousClaude = process.env.CLAUDE_CONFIG_DIR;
-  try {
-    process.env.CODEX_HOME = path.join(root, 'codex'); process.env.CLAUDE_CONFIG_DIR = path.join(root, 'claude');
-    for (const [key, agent, nativeId] of [['missing-codex', 'codex', id], ['missing-claude', 'claude', projectId], ['missing-id', 'codex', null]]) source.sessions.items.set(key, source.sessions.make({ id: key, name: key, agent, nativeId, cwd: source.repo, open: false, hasConversation: true }));
-    const verify = error => /3 native chat/.test(error.message) && /missing-codex/.test(error.message) && /missing-claude/.test(error.message) && /native ID missing/i.test(error.message) && /light export/.test(error.message);
-    const missingReview = await source.archive.reviewExport(root); assert.equal(missingReview.issues.length, 3);
-    await assert.rejects(source.archive.exportTo(root), verify);
-    const light = await source.archive.exportTo(root, { chats: 'light' }); assert.ok((await stat(light.path)).isFile());
-    source.sessions.items.clear();
-    source.sessions.items.set('empty', source.sessions.make({ id: 'empty', agent: 'claude', nativeId: id, open: false, hasConversation: false, cwd: source.repo }));
-    assert.ok((await source.archive.exportTo(root)).path);
-    source.sessions.items.get('empty').lastInputAt = '2026-09-30T00:01:00Z';
-    await assert.rejects(source.archive.exportTo(root), /1 native chat/);
-    source.sessions.items.clear();
-    await writeFile(path.join(source.stateDir, 'mak-conversations.json'), JSON.stringify({ conversations: [{ id: projectId, threadId: id, projectId: null, title: 'Missing Mik context', parentId: null, at: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:01:00Z' }], selected: {} }));
-    await assert.rejects(source.archive.exportTo(root), /Missing Mik context/);
-  } finally {
-    if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
-    if (previousClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaude;
   }
 });
 
@@ -96,10 +163,12 @@ test('Mak full export transfers native coordinator context and branches; light i
     process.env.CODEX_HOME = path.join(root, 'pc1');
     const file = path.join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `rollout-fixture-${id}.jsonl`);
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id, cwd: source.repo } }) + '\n' + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fixture context' }] } }) + '\n');
+
     const conversation = { id: projectId, threadId: id, projectId: null, title: 'Fixture Mak', parentId: null, at: '2026-09-30T00:00:00Z', effort: 'low', model: 'fixture-model', updatedAt: '2026-09-30T00:01:00Z' };
     await writeFile(path.join(source.stateDir, 'mak-conversations.json'), JSON.stringify({ conversations: [conversation], selected: { global: projectId } }));
-    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultWorkerEffort: 'ultra', defaultClaudeWorkerEffort: 'max', coordinatorEffort: 'low', defaultCodexPermissions: 'full-access' }));
+    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultWorkerEffort: 'ultra', defaultClaudeWorkerEffort: 'max', coordinatorEffort: 'low', defaultCodexPermissions: 'full-access', defaultClaudePermissions: 'ask' }));
+    await assert.rejects(source.archive.exportTo(root), /Fixture Mak/);
+    await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id, cwd: source.repo } }) + '\n' + JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fixture context' }] } }) + '\n');
     const light = await source.archive.exportTo(root, { chats: 'light' });
     const full = await source.archive.exportTo(root, { chats: 'full' });
     process.env.CODEX_HOME = path.join(root, 'pc2');
@@ -107,40 +176,13 @@ test('Mak full export transfers native coordinator context and branches; light i
     const plan = await target.archive.preview(full.path); assert.equal(plan.native.length, 1); assert.ok(plan.native[0].name.startsWith('Mak'));
     await target.archive.importFrom(full.path, { restoreSettings: true }); await target.archive.importFrom(full.path);
     const importedSettings = JSON.parse(await readFile(path.join(target.stateDir, 'settings.json'), 'utf8'));
-    assert.equal(importedSettings.defaultCodexPermissions, 'full-access'); assert.equal(importedSettings.defaultWorkerEffort, 'ultra'); assert.equal(importedSettings.defaultClaudeWorkerEffort, 'max'); assert.equal(importedSettings.coordinatorEffort, 'low');
+    assert.equal(importedSettings.defaultCodexPermissions, 'full-access'); assert.equal(importedSettings.defaultClaudePermissions, 'ask'); assert.equal(importedSettings.defaultWorkerEffort, 'ultra'); assert.equal(importedSettings.defaultClaudeWorkerEffort, 'max'); assert.equal(importedSettings.coordinatorEffort, 'low');
     const records = JSON.parse(await readFile(path.join(target.stateDir, 'mak-conversations.json'), 'utf8'));
     assert.equal(records.conversations.length, 1); assert.equal(records.selected.global, projectId);
     assert.equal(records.conversations[0].effort, 'low'); assert.equal(records.conversations[0].model, 'fixture-model');
     assert.ok((await readFile(await codexTranscript(id), 'utf8')).includes('Fixture context'));
     assert.equal(target.sessions.list().length, 0);
   } finally { if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; }
-});
-
-test('Mak text History travels in light/full archives and merges continuations by operation ID', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-mak-portable-'));
-  const source = await hub(root, 'source'), target = await hub(root, 'target');
-  const first = { id: 'mak-first', text: 'Save lesson', result: 'Saved.', status: 'completed', at: '2026-09-30T00:00:00Z', scope: { projectId: null } };
-  const second = { ...first, id: 'mak-second', text: 'Read lesson', at: '2026-09-30T00:01:00Z' };
-  await mkdir(source.stateDir, { recursive: true });
-  await writeFile(path.join(source.stateDir, 'mak-history.json'), JSON.stringify({ operations: [first], nativeThreadId: 'not-portable' }));
-  const old = await source.archive.exportTo(root, { chats: 'light' });
-  assert.ok((await target.archive.preview(old.path)).manifest.files.some(item => item.name === 'state/mak-history.json'));
-  await target.archive.importFrom(old.path);
-  await writeFile(path.join(source.stateDir, 'mak-history.json'), JSON.stringify({ operations: [first, second] }));
-  const next = await source.archive.exportTo(root, { chats: 'full' });
-  await target.archive.importFrom(next.path); await target.archive.importFrom(next.path);
-  const imported = JSON.parse(await readFile(path.join(target.stateDir, 'mak-history.json'), 'utf8'));
-  assert.deepEqual(imported.operations.map(item => item.id), ['mak-first', 'mak-second']);
-  assert.ok(!JSON.stringify(imported).includes('nativeThreadId'));
-});
-
-test('Codex resume explicitly uses the relinked working folder', async t => {
-  const binary = await codexCommandFixture(t);
-  const command = terminalCommand('codex', { resumeId: id, cwd: 'C:\\Projects\\Game' });
-  assert.equal(command.file, binary.file); assert.equal(command.args[0], binary.script);
-  const index = command.args.indexOf('--cd');
-  assert.ok(index >= 0);
-  assert.equal(command.args[index + 1], 'C:\\Projects\\Game');
 });
 
 for (const agent of ['codex', 'claude']) test(`${agent}: two-computer import updates continuations, History/screens and backs up divergence without duplicates`, async () => {
@@ -229,70 +271,59 @@ async function hub(root, name) {
   return { repo, stateDir, sessions, archive: new PortableArchive(repo, stateDir, sessions, null) };
 }
 
-test('split App/MyHub archives preserve Hub settings and never export or modify the sibling program', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-layout-transfer-'));
-  const source = await hub(root, 'PC1/MyHub'), target = await hub(root, 'PC2/MyHub');
+test('empty legacy Inbox exports canonically, imports existing archives, and still rejects malformed or tampered state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mik-empty-inbox-transfer-'));
+  const source = await hub(root, 'source'), target = await hub(root, 'target');
   try {
-    for (const pc of ['PC1', 'PC2']) {
-      await mkdir(path.join(root, pc, 'App'), { recursive: true });
-      await writeFile(path.join(root, pc, 'App/program.txt'), `${pc}-program`);
-    }
-    const scopes = { skills: { 'workspace-authoring': { global: true, projects: { [projectId]: false } } } };
-    await writeFile(path.join(source.repo, 'projects/skill-scopes.json'), JSON.stringify(scopes));
-    await writeFile(path.join(source.repo, 'knowledge/lesson.md'), 'User content');
+    await writeFile(path.join(source.stateDir, 'inbox.json'), '{}');
+    await writeFile(path.join(target.stateDir, 'inbox.json'), '{}');
     const exported = await source.archive.exportTo(root, { chats: 'full' });
-    const preview = await target.archive.preview(exported.path);
-    assert.equal(preview.manifest.files.some(file => /program\.txt|(^|\/)App\//.test(file.name)), false);
-    await target.archive.importFrom(exported.path);
-    assert.deepEqual(JSON.parse(await readFile(path.join(target.repo, 'projects/skill-scopes.json'), 'utf8')), scopes);
-    assert.equal(await readFile(path.join(target.repo, 'knowledge/lesson.md'), 'utf8'), 'User content');
-    assert.equal(await readFile(path.join(root, 'PC1/App/program.txt'), 'utf8'), 'PC1-program');
-    assert.equal(await readFile(path.join(root, 'PC2/App/program.txt'), 'utf8'), 'PC2-program');
+    const entries = unzipSync(await readFile(exported.path));
+    assert.deepEqual(JSON.parse(strFromU8(entries['state/inbox.json'])), { resources: [] });
+    assert.equal(await readFile(path.join(source.stateDir, 'inbox.json'), 'utf8'), '{}', 'Export must not modify source state');
+    const legacy = async (value, name, updateChecksum = true) => {
+      const files = { ...entries, 'state/inbox.json': strToU8(JSON.stringify(value)) };
+      const manifest = JSON.parse(strFromU8(files['manifest.json']));
+      if (updateChecksum) {
+        const item = manifest.files.find(file => file.name === 'state/inbox.json');
+        item.size = files['state/inbox.json'].length;
+        item.sha256 = createHash('sha256').update(files['state/inbox.json']).digest('hex');
+      }
+      files['manifest.json'] = strToU8(JSON.stringify(manifest));
+      const file = path.join(root, `${name}.mrmak.zip`); await writeFile(file, zipSync(files)); return file;
+    };
+    const oldArchive = await legacy({}, 'legacy');
+    await target.archive.preview(oldArchive);
+    await target.archive.importFrom(oldArchive);
+    assert.deepEqual(JSON.parse(await readFile(path.join(target.stateDir, 'inbox.json'), 'utf8')), { resources: [] });
+    const local = { resources: [{ id: 'local', kind: 'inbox', path: 'inbox/local.txt' }] };
+    await writeFile(path.join(target.stateDir, 'inbox.json'), JSON.stringify(local));
+    await target.archive.importFrom(oldArchive);
+    assert.deepEqual(JSON.parse(await readFile(path.join(target.stateDir, 'inbox.json'), 'utf8')), local);
+    for (const [index, value] of [null, [], { resources: null }, { resources: {} }, { resources: '' }].entries()) {
+      await assert.rejects(target.archive.preview(await legacy(value, `invalid-${index}`)), /invalid state\/inbox\.json/);
+    }
+    await assert.rejects(target.archive.preview(await legacy({}, 'tampered', false)), /integrity/);
+    const projects = new Projects(source.repo, source.stateDir);
+    await rm(path.join(source.stateDir, 'inbox.json'));
+    const project = await projects.save({ name: 'Temporary workspace', repositoryPath: '' });
+    await projects.remove(project.id);
+    assert.deepEqual(JSON.parse(await readFile(path.join(source.stateDir, 'inbox.json'), 'utf8')), { resources: [] });
   } finally {
-    await source.sessions.close(); await target.sessions.close();
-    await rm(root, { recursive: true, force: true });
+    await source.sessions.close(); await target.sessions.close(); await rm(root, { recursive: true, force: true });
   }
-});
-
-test('portable planning chats relocate inside the imported Hub without changing linked project folders', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-planning-export-'));
-  const source = await hub(root, 'source'), target = await hub(root, 'target');
-  const oldLocal = path.join(root, 'old-local-chat');
-  const mapped = { [projectId]: { primary: path.join(root, 'linked-project') } };
-  const manifest = { sourceHub: source.repo };
-  const expected = path.join(target.repo, 'workspace', 'planning', projectId);
-  assert.equal(target.archive.relocatedCwd({ projectId, repositoryId: null, cwd: oldLocal }, manifest, mapped), expected);
-  assert.equal(target.archive.relocatedCwd({ projectId, repositoryId: null, cwd: path.join(source.repo, 'workspace', 'planning', projectId) }, manifest, mapped), expected);
-  assert.equal(target.archive.relocatedCwd({ projectId: null, repositoryId: null, cwd: source.repo }, manifest, mapped), target.repo);
-});
-
-test('export and import keep a promoted linked project without recreating the removed primary link', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-unlinked-export-'));
-  const source = await hub(root, 'source'), target = await hub(root, 'target');
-  try {
-    const oldProject = path.join(root, 'blender-old'), newProject = path.join(root, 'blender-new');
-    await mkdir(oldProject); await mkdir(newProject);
-    await writeFile(path.join(source.repo, 'projects', 'registry.json'), JSON.stringify({ projects: [{ id: projectId, name: 'Game', repositories: [{ id: 'blender', name: 'Blender' }] }] }));
-    await writeFile(path.join(source.stateDir, 'project-locations.json'), JSON.stringify({ [projectId]: { repositoryPath: oldProject, repositories: { blender: oldProject } } }));
-    const exported = await source.archive.exportTo(root, { chats: 'light' });
-    const preview = await target.archive.preview(exported.path);
-    assert.deepEqual(Object.keys(preview.manifest.projectPaths[projectId]), ['blender']);
-    await target.archive.importFrom(exported.path, { relinks: { [projectId]: { blender: newProject } } });
-    assert.deepEqual(JSON.parse(await readFile(path.join(target.repo, 'projects', 'registry.json'), 'utf8')).projects[0].repositories, [{ id: 'blender', name: 'Blender' }]);
-    assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(target.stateDir, 'project-locations.json'), 'utf8'))[projectId].repositories), ['blender']);
-    assert.equal((await target.archive.preview(exported.path)).suggestedRelinks[projectId].blender, await realpath(newProject));
-    const thirdProject = path.join(root, 'blender-third'); await mkdir(thirdProject);
-    await target.archive.importFrom(exported.path, { relinks: { [projectId]: { blender: thirdProject } } });
-    assert.equal(JSON.parse(await readFile(path.join(target.stateDir, 'project-locations.json'), 'utf8'))[projectId].repositories.blender, await realpath(thirdProject));
-  } finally { await source.sessions.close(); await target.sessions.close(); }
 });
 
 test('portable full export imports Hub files, relinks projects and restores a Codex transcript without touching linked folders', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-portable-'));
   const previousCodexHome = process.env.CODEX_HOME;
   const codexHome = path.join(root, 'codex-home'); process.env.CODEX_HOME = codexHome;
-  const source = await hub(root, 'source'), target = await hub(root, 'target');
+  const source = await hub(root, 'PC1/MyHub'), target = await hub(root, 'PC2/MyHub');
   try {
+    for (const pc of ['PC1', 'PC2']) {
+      await mkdir(path.join(root, pc, 'App'), { recursive: true });
+      await writeFile(path.join(root, pc, 'App/program.txt'), `${pc}-program`);
+    }
     const oldProject = path.join(root, 'old-project'), newProject = path.join(root, 'new-project');
     await mkdir(oldProject); await mkdir(newProject);
     await writeFile(path.join(newProject, 'sentinel.txt'), 'never edit linked projects');
@@ -308,20 +339,31 @@ test('portable full export imports Hub files, relinks projects and restores a Co
     await writeFile(path.join(source.repo, 'projects', 'registry.json'), JSON.stringify({ projects: [{ id: projectId, name: 'Game', repositories: [{ id: 'primary', name: 'Unity' }] }] }));
     await writeFile(path.join(source.repo, 'workspace', 'workspace.json'), JSON.stringify({ entities: [{ id: 'card', title: 'Gameplay', folder: 'gameplay', projectId, repositoryId: 'primary', pinned: true, steps: [] }], resources: [{ id: 'lesson', kind: 'knowledge', path: 'knowledge/lesson.md', title: 'Lesson', projectId }] }));
     await writeFile(path.join(source.stateDir, 'inbox.json'), JSON.stringify({ resources: [{ id: 'reference', kind: 'inbox', path: 'inbox/reference.png', title: 'Reference', projectId }] }));
-    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultAgent: 'claude', defaultBypass: true, terminalAppearance: 'original', accentTheme: 'blue', selectedProjectId: projectId, selectedId: id, workspaceRoute: '#/old' }));
+    await writeFile(path.join(source.stateDir, 'settings.json'), JSON.stringify({ defaultAgent: 'claude', defaultBypass: true, terminalAppearance: 'original', completionNotifications: false, accentTheme: 'blue', selectedProjectId: projectId, selectedId: id, workspaceRoute: '#/old' }));
     await writeFile(path.join(source.stateDir, 'project-locations.json'), JSON.stringify({ [projectId]: { repositoryPath: oldProject, repositories: { primary: oldProject } } }));
     const chat = { id, agent: 'codex', nativeId: id, name: 'Unity chat', cwd: oldProject, projectId, repositoryId: 'primary', open: false, status: 'stopped', createdAt: new Date().toISOString() };
     source.sessions.items.set(id, source.sessions.make(chat)); await source.sessions.persist();
     const transcript = path.join(codexHome, 'sessions', '2026', '09', '28', `rollout-${id}.jsonl`);
     await mkdir(path.dirname(transcript), { recursive: true });
     await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { id, cwd: oldProject } }) + '\n');
+    const planningId = randomUUID(), legacyPlanningId = randomUUID(), hubChatId = randomUUID();
+    for (const chat of [
+      { id: planningId, cwd: path.join(source.repo, 'workspace', 'planning', projectId), projectId },
+      { id: legacyPlanningId, cwd: path.join(root, 'former-local-chat'), projectId },
+      { id: hubChatId, cwd: source.repo, projectId: null },
+    ]) source.sessions.items.set(chat.id, source.sessions.make({ ...chat, agent: 'codex', name: 'Planning fixture', repositoryId: null, open: false, hasConversation: false }));
     const exported = await source.archive.exportTo(root, { chats: 'full' });
     const preview = await target.archive.preview(exported.path);
+    assert.equal(preview.manifest.files.some(file => /program\.txt|(^|\/)App\//.test(file.name)), false);
     assert.equal(preview.native[0].status, 'identical');
     assert.ok(!preview.manifest.files.some(file => file.name.includes('.env')));
     const imported = await target.archive.importFrom(exported.path, { relinks: { [projectId]: { primary: newProject } } });
     assert.equal(imported.nativeSkipped, 1);
-    assert.equal(target.sessions.list()[0].cwd, await realpath(newProject));
+    assert.equal(target.sessions.get(id).cwd, await realpath(newProject));
+    const planning = path.join(target.repo, 'workspace', 'planning', projectId);
+    assert.equal(target.sessions.get(planningId).cwd, planning);
+    assert.equal(target.sessions.get(legacyPlanningId).cwd, planning);
+    assert.equal(target.sessions.get(hubChatId).cwd, target.repo);
     assert.equal(await readFile(path.join(target.repo, 'knowledge', 'lesson.md'), 'utf8'), 'portable lesson');
     assert.equal(await readFile(path.join(target.repo, 'processes', 'release.md'), 'utf8'), '# Release steps');
     assert.equal(await readFile(path.join(target.repo, 'inbox', 'reference.png'), 'utf8'), 'fixture-image');
@@ -333,6 +375,7 @@ test('portable full export imports Hub files, relinks projects and restores a Co
     const preferences = JSON.parse(await readFile(path.join(target.stateDir, 'settings.json'), 'utf8'));
     assert.equal(preferences.defaultAgent, 'claude');
     assert.equal(preferences.accentTheme, 'blue');
+    assert.equal(preferences.completionNotifications, false);
     assert.equal(preferences.selectedProjectId, projectId);
     assert.equal(preferences.selectedId, undefined);
     assert.equal(preferences.workspaceRoute, undefined);
@@ -343,6 +386,8 @@ test('portable full export imports Hub files, relinks projects and restores a Co
     assert.equal(importedSkillScopes.skills.handoff.projects[projectId], false);
     assert.equal(importedSkillScopes.claudeSkills.handoff.projects[projectId], true);
     assert.equal((await stat(path.join(target.repo, '.env')).catch(() => null)), null);
+    assert.equal(await readFile(path.join(root, 'PC1/App/program.txt'), 'utf8'), 'PC1-program');
+    assert.equal(await readFile(path.join(root, 'PC2/App/program.txt'), 'utf8'), 'PC2-program');
     assert.equal(await readFile(path.join(newProject, 'sentinel.txt'), 'utf8'), 'never edit linked projects');
   } finally {
     await source.sessions.close(); await target.sessions.close();
@@ -392,24 +437,4 @@ test('full export includes Claude session sidecars; light export keeps only Mr. 
     await source.sessions.close(); await target.sessions.close();
     if (previousClaudeHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaudeHome;
   }
-});
-
-test('import conflict choice updates matching cards and resource associations without dropping local entries', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'mrmak-merge-'));
-  const source = await hub(root, 'source'), target = await hub(root, 'target');
-  try {
-    const file = 'workspace/workspace.json';
-    await writeFile(path.join(source.repo, file), JSON.stringify({ entities: [{ id: 'shared', title: 'Imported card', pinned: true }], resources: [{ id: 'lesson', kind: 'knowledge', path: 'knowledge/lesson.md', projectId }] }));
-    await writeFile(path.join(target.repo, file), JSON.stringify({ entities: [{ id: 'shared', title: 'Local card', pinned: false }, { id: 'local', title: 'Keep me' }], resources: [{ id: 'lesson', kind: 'knowledge', path: 'knowledge/lesson.md', projectId: null }] }));
-    const archive = await source.archive.exportTo(root, { chats: 'light' });
-    await target.archive.importFrom(archive.path);
-    let cards = JSON.parse(await readFile(path.join(target.repo, file), 'utf8'));
-    assert.equal(cards.entities.find(item => item.id === 'shared').title, 'Local card');
-    assert.equal(cards.resources[0].projectId, null);
-    await target.archive.importFrom(archive.path, { replaceHub: [file] });
-    cards = JSON.parse(await readFile(path.join(target.repo, file), 'utf8'));
-    assert.equal(cards.entities.find(item => item.id === 'shared').pinned, true);
-    assert.equal(cards.entities.find(item => item.id === 'local').title, 'Keep me');
-    assert.equal(cards.resources[0].projectId, projectId);
-  } finally { await source.sessions.close(); await target.sessions.close(); }
 });

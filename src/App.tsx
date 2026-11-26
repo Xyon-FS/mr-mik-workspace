@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkspaceEntity } from './types'
-import { useWorkspace, archiveCutoff } from './lib/workspace'
+import { useWorkspace } from './lib/workspace'
 import { parseHash, entityHash, resolveStep, type Route } from './lib/route'
 import MakLogo from './components/MakLogo'
 import Sidebar from './components/Sidebar'
@@ -8,6 +8,7 @@ import Topbar from './components/Topbar'
 import HomeGrid from './components/HomeGrid'
 import ReportBoundary from './components/ReportBoundary'
 import { contentUrl, isDesktop, useDesktop } from './desktop/client'
+import CardOutputLinks, { ChatOutputOrigin } from './desktop/CardOutputLinks'
 
 const Compare3D = lazy(() => import('./components/Compare3D'))
 const ReportViewer = lazy(() => import('./components/ReportViewer'))
@@ -94,12 +95,9 @@ export default function App() {
 
   const q = query.trim().toLowerCase()
   const searching = q.length > 0
-  const cutoff = archiveCutoff()
-  // An explicit `archived` status always wins, so a card can be put away by hand
-  // while it is still inside the 7-day window. Otherwise it is the date rule,
-  // which `pinned` overrides in the other direction.
-  const isArchived = (e: WorkspaceEntity) =>
-    e.status === 'archived' || (!e.pinned && !e.sample && lastTouched(e) < cutoff)
+  // Dates affect ordering only. Archive visibility follows an explicit status
+  // change; inactivity must never hide an active or completed card.
+  const isArchived = (e: WorkspaceEntity) => e.status === 'archived'
   const matchesQuery = (e: WorkspaceEntity) =>
     !searching ||
     [e.title, e.description, e.category, e.id].some(s => s && s.toLowerCase().includes(q))
@@ -166,6 +164,8 @@ export default function App() {
         />
 
         <div className="content card-page-view">
+          {isDesktop && entity && !!entity.artifacts?.length && <CardOutputLinks entity={entity} />}
+          {isDesktop && step?.source && <ChatOutputOrigin source={step.source} />}
           {entity && entity.steps.length > 1 && <nav className="card-page-nav" aria-label="Card pages"><div className="step-tabs" role="tablist" aria-label="Card pages">
             {entity.steps.map((page, index) => <button key={index} role="tab" aria-selected={index === stepIndex} className={`step-tab${index === stepIndex ? ' active' : ''}`} onClick={() => selectStep(entity.id, index)} title={page.name}>{page.name}</button>)}
           </div></nav>}
@@ -180,7 +180,7 @@ export default function App() {
           ) : entity && reportUrl ? (
             <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><ReportViewer key={reportUrl} url={reportUrl} title={step?.name ?? entity.title} relativePath={`workspace/${entity.folder}/${step?.path}`} /></Suspense>
           ) : entity ? (
-            <section className="desk-muted"><h2>{entity.title}</h2><p>{entity.description}</p><p>No report steps yet. Add a note through the project's Codex Workspace Bridge or the normal Workspace authoring workflow.</p></section>
+            <section className="desk-muted"><h2>{entity.title}</h2><p>{entity.description}</p><p>{entity.artifacts?.length ? 'Choose a linked output above to open its preview.' : "No report steps yet. Add a note through the project's Codex Workspace Bridge or the normal Workspace authoring workflow."}</p></section>
           ) : (
             <HomeGrid
               entities={entities}

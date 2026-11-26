@@ -45,6 +45,8 @@ export class WorkspaceSnapshot {
 
   async contents(projectId) {
     const project = await this.projects.get(projectId);
+    const stored = (await this.projects.metadata()).projects.find(item => item.id === projectId);
+    if (stored?.iconDataUrl) { const { validateWorkspaceIcon } = await import('./workspace-icon.mjs'); const icon = validateWorkspaceIcon(stored.iconDataUrl); project.iconDataUrl = icon.dataUrl; project.iconRevision = icon.revision; }
     if (!idPattern.test(project.id)) throw new Error('Workspace ID is invalid.');
     const registry = await json(this.projects.workspacePath, { entities: [], resources: [] });
     const cards = registry.entities.filter(item => item.projectId === projectId);
@@ -84,7 +86,7 @@ export class WorkspaceSnapshot {
         await visit(skillRoot);
       }
     }
-    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion, exportedAt: new Date().toISOString(), project: { id: project.id, name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
+    const manifest = { format: 'mr-mik-workspace', schema: 1, appVersion, exportedAt: new Date().toISOString(), project: { id: project.id, ...(project.iconDataUrl ? { iconDataUrl: project.iconDataUrl, iconRevision: project.iconRevision } : {}), name: project.name, type: project.type, status: project.status, ...(project.exampleKey ? { exampleKey: project.exampleKey } : {}), repositories: project.repositories.map(({ id, name }) => ({ id, name })) }, cards, resources, skills, files: [] };
     for (const [name, entry] of entries) manifest.files.push({ name, sha256: await hash(entry.source), bytes: (await lstat(entry.source)).size });
     manifest.files.sort((a, b) => a.name.localeCompare(b.name));
     return { manifest, entries };
@@ -103,7 +105,7 @@ export class WorkspaceSnapshot {
     for (const card of manifest.cards) {
       if (typeof card.id !== 'string' || !safe(card.id) || !safe(card.folder) || card.folder.split('/')[0] === '_shared' || card.projectId !== manifest.project.id || cardIds.has(card.id) || folders.has(card.folder.toLowerCase()) || card.repositoryId && !linked.has(card.repositoryId) || !Array.isArray(card.steps) || card.steps.some(step => !safe(step.path))) throw new Error('Invalid card associations.');
       cardIds.add(card.id); folders.add(card.folder.toLowerCase());
-      for (const artifact of card.artifacts || []) if (!safe(artifact.path) || artifact.projectId !== manifest.project.id || !linked.has(artifact.repositoryId || 'primary')) throw new Error('Invalid external artifact link.');
+      for (const artifact of card.artifacts || []) if (!safe(artifact.path) || artifact.projectId !== manifest.project.id || (artifact.scope === 'hub' ? privateName(artifact.path) : artifact.scope != null || !linked.has(artifact.repositoryId || 'primary'))) throw new Error('Invalid external artifact link.');
     }
     for (const resource of manifest.resources) {
       if (resource.projectId !== manifest.project.id || !['knowledge', 'process', 'inbox'].includes(resource.kind) || !safe(resource.path) || resource.repositoryProjectId && resource.repositoryProjectId !== manifest.project.id || !resource.repositoryProjectId && !/^(knowledge|processes|inbox)\//.test(resource.path)) throw new Error('Invalid resource associations.');
@@ -202,6 +204,7 @@ export class WorkspaceSnapshot {
         locations[id] ||= {}; locations[id].repositories ||= {}; locations[id].repositories[repositoryId] = linked;
       }
       const project = { id, name: manifest.project.name, type: manifest.project.type || 'other', status: manifest.project.status || 'active', ...(manifest.project.exampleKey === 'mik-midnight-workshop-v1' ? { exampleKey: manifest.project.exampleKey } : {}), repositories: manifest.project.repositories.map(({ id, name }) => ({ id, name })) };
+      if (manifest.project.iconDataUrl) { const { validateWorkspaceIcon } = await import('./workspace-icon.mjs'); const icon = validateWorkspaceIcon(manifest.project.iconDataUrl); project.iconDataUrl = icon.dataUrl; project.iconRevision = icon.revision; }
       metadata.projects = [...metadata.projects.filter(item => item.id !== id), project];
       registry.entities = [...registry.entities.filter(item => item.projectId !== id), ...manifest.cards];
       registry.resources = [...(registry.resources || []).filter(item => item.projectId !== id), ...manifest.resources.filter(item => item.kind !== 'inbox')];

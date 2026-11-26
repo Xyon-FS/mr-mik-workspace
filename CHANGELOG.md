@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.3.0 — Graphical chats, workspace views and safer Hub transfers
+
+### Chats and agent controls
+
+- Added an opt-in graphical chat preview for Codex and Claude alongside the default CLI. Conversations can stream messages, activity and tool results, show structured approval and question cards, and expose supported model, reasoning and permission controls. Codex uses its native App Server and Claude uses its native SDK.
+- Redesigned the composer around a single Send, Stop or Steer action. Added multiline drafts, file and image attachments, skill mentions, browser quotes and keyboard shortcuts. Attachments can include folders or files by reference, and inserting a path into a terminal does not submit the prompt.
+- Added paginated native History, conversation search, read-only subagent views, saved drafts, and a Context panel for usage, compaction, operations and session controls. Graphical conversations preserve the reading position during live updates and show optional activity and turn-duration details.
+- Added supported message-level branch, edit and retry actions with provider-specific boundaries. The original chat is preserved, and unsupported or ambiguous requests stay unavailable. Added Codex native inline review and Claude review drafts, plus a Workspace changes inspector for recorded edits.
+- Updated Codex worker permissions to Ask for approval, Approve for me and Full access. Reviewed modes use scoped writable roots, and legacy bypass selections remain valid. Guarded same-chat resumes wait for active turns, drafts and native dialogs. Added Windows sandbox readiness checks and explicit setup, plus independent Claude Ask/Bypass defaults and native session controls.
+- Added graphical/CLI badges, compact chat details, an optional Codex CLI operations filter and a terminal reading anchor that survives supported scrollback redraws. Optional completion notifications cover live Codex, Claude and OpenCode turns, including taskbar attention in portable mode.
+- Added separate History filters for workspace and working project, and an explicit action to retarget a closed Codex or Claude chat to a linked project in the same workspace or back to planning. Eligible stopped chats also follow an explicitly relinked folder on resume. These operations keep the native conversation ID and verify that the transcript is available.
+- Improved connection and send errors with distinct service, provider, authentication, quota and timeout states. Connection retry preserves the conversation and does not replay a request. Hardened History index recovery, previous-boot Windows conversation lease recovery and exclusive native writer guards.
+- Refined terminal model and reasoning menus, chat start/working states, keyboard navigation and dark selectors. Restored editable worker and coordinator defaults and kept native terminal focus/blur notifications working.
+
+### Accounts
+
+- Added machine-local Codex accounts for worker chats and Mik. New Codex chats select an added account, and eligible idle or legacy conversations can be reassigned after preflight. Accounts isolate credentials while sharing supported native settings, skills, tools and conversation storage. Windows sandbox setup uses the common runtime home.
+- Added native browser-based Codex sign-in, inline account names, usage and reset information, identity verification, and duplicate or changed-account detection. Identity checks protect startup and supported sends. Disconnect verifies native logout before removing the association and retains conversations.
+- Added Claude account profiles for CLI and graphical chats alongside the current native account. Link an existing native directory or sign in to an empty one. Private profiles use the common Tools configuration at launch while preserving private files. A missing profile leaves its chat unavailable until the original profile is relinked.
+
+### Workspace, cards and chat outputs
+
+- Added Workspace view tabs, Back, Forward and Home, pinning and pending views, with bounded retention for live PDF and HTML previews. Added workspace icons, including explicit generation through a chosen native account/model, and made workspace, linked-project and card selection clearer.
+- Added chat output search and previews for code, tables, diagrams, images, HTML and recognized file links. Graphical chat citations open authorized Workspace previews. Output actions support copying, downloading, saving a response or linking a file to a card, and returning to the source chat.
+- Added zoom and download controls for image and diagram previews, CSV export for tables, SVG or source views, and interactive HTML previews. Self-contained interfaces run in an isolated preview with source, reset and viewport controls. Explicit local asset bundling is bounded to supported project assets.
+- Added automatic synchronization after stable edits to registered card pages and scoped HTTP preview links for authorized card views. Workspace authoring continues through native files with metadata registration, including for Hub Context and skills. New templates separate Hub instructions from source-development instructions. Existing Hubs retain their files.
+- Revised navigation and preferences, including compact Settings categories, consistent menus and a saved two-window split. Restore layout places both windows on the initiating monitor, with Chats on the left and Workspace on the right.
+
+### Browser, Tools and integrations
+
+- Added optional Playwright for Codex, Claude and OpenCode workers, off by default, using installed Edge or Chrome. CLI chats use isolated temporary browser sessions. The managed graphical browser supports Workspace or external presentation, manual takeover, tabs, viewport and display scale, and sending a page selection to the composer as editable context.
+- Added dedicated graphical browser profiles by Hub, project, chat and browser, with temporary mode and controls to clear website data. Presentation changes restart only the browser at a safe point. Browser profiles stay local and are excluded from Hub transfers and Git.
+- Updated Tools and Skills with scoped provider/project controls, configuration details, search and availability checks. Added linked-project Tools preflight and reviewed recovery for invalid local MCP definitions, with private backups, guarded undo and protected refresh.
+- Added workspace-level sharing of eligible linked-project MCPs with the main chat. Sharing observes project opt-outs, configuration origin and applicable native permissions. Protected updates wait for idle chats and keep conversation identity.
+- Refined OpenCode V1/V2 message actions, model and variant selection, observer state, connection error handling and guarded resume. Native configuration and transfers continue to use their respective provider adapters.
+- Updated the bundled offline guide for graphical and terminal chats, accounts, managed browser, MCP recovery, card authoring, preview controls and Hub transfers.
+
+### Hub transfers and reliability
+
+- Added optional transfer of supported local conversation files with size and availability review, content deduplication and relocated preview bindings. The option defaults off. Version 1 archives remain readable, and archives carrying relocated bindings use version 2. Unsent drafts and local credentials remain excluded.
+- Added per-agent, per-scope skill activation conflict choices, separate from conflicts in skill file contents. Improved transfer validation for conversation relationships, branch origins, duplicate imports and unavailable native contexts, with legacy archives still supported.
+- Added import preflight and rollback for Hub file changes, preserved concurrent edits for recovery review, and coordinated card scanning and History persistence while imports are being committed. Fixed full and light transfers for a legacy empty Inbox and preserved separately created starter workspaces during import.
+- Improved first launch and folder selection for installed and portable builds. Mr. Mik reuses a valid default Hub when available and can open either the Hub or its parent. An existing valid Hub is preserved, and missing or invalid destinations are handled explicitly.
+- Isolated native launch and window preferences for installed, portable and explicit Hub launches. Added graceful shutdown coordination for native writers and account processes. The Windows installer and uninstaller require Mr. Mik to close gracefully instead of forcing it to exit.
+- Fixed spurious Codex-bundled PSReadLine configuration in standalone terminals, invalid mutation request handling and active-account counts. Kept startup orientation compact and improved local attachment and teardown behavior.
+
+### Build, security and verification
+
+- Added dedicated Windows installer and portable-only build entry points, bundled UI dependency notices and checks for runtime, template and source-archive contents. Starter Hubs use the maintained public skill set. Local browser state, development-only material and live test entry points are kept out of the distributed runtime.
+- Updated the service dependencies to MCP SDK `1.32.0`, `body-parser` `2.4.0` and `zod` `4.6.7`, resolving the high-severity findings from the production dependency audit.
+- Consolidated and reduced the service test suite while retaining coverage of core workflows and risk boundaries. Added shared, guarded teardown for test-owned services, processes and fixtures, and isolated verification of packaging metadata, native Hub selection and Windows layout.
+
 ## 0.2.10 — Native Hub authoring and safer chat permissions
 
 - Fixed stale version metadata in service health and workspace snapshots. Both now use the root package version, also carried into packaged runtimes; regression tests cover source and standalone runtime layouts.

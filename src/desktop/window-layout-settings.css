@@ -1,0 +1,4 @@
+.window-layout-setting input[type=range]{width:100%;accent-color:var(--pink);margin:10px 0}
+.window-layout-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.window-layout-actions .desk-icon{width:auto;height:28px;gap:5px;padding:4px 7px;font:10px var(--font-body);cursor:pointer}
+.window-layout-actions .desk-icon:disabled{opacity:.45;cursor:default}

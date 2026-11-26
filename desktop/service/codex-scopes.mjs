@@ -14,10 +14,8 @@ const bad = message => Object.assign(new Error(message), { status: 400 });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const textFile = async file => readFile(file, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
 const parse = value => { try { return parseToml(value.replace(/^\uFEFF/, '')); } catch { throw bad('Codex config is malformed; no changes were made.'); } };
-const skillName = async file => {
-  const text = await textFile(file);
-  return /^name:\s*["']?([^\r\n"']+)/m.exec(text)?.[1]?.trim() || path.basename(path.dirname(file));
-};
+export const codexSkillName = (text, file) => /^name:\s*["']?([^\r\n"']+)/m.exec(text)?.[1]?.trim() || path.basename(path.dirname(file));
+const skillName = async file => codexSkillName(await textFile(file), file);
 const hostMarketplaces = new Set(['openai-bundled', 'openai-primary-runtime', 'openai-curated', 'openai-curated-remote']);
 
 export class CodexScopes {
@@ -43,16 +41,16 @@ export class CodexScopes {
     const after = end + END.length;
     return { outside: text.slice(0, start) + text.slice(after), managed: text.slice(start + BEGIN.length, end) };
   }
-  async skillFiles(folder) {
+  async skillFiles(folder, { names = true } = {}) {
     const files = [];
     for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       const file = path.join(folder, entry.name, 'SKILL.md');
-      if ((await stat(file).catch(() => null))?.isFile()) files.push({ id: file, name: await skillName(file), location: file });
+      if ((await stat(file).catch(() => null))?.isFile()) files.push({ id: file, name: names ? await skillName(file) : path.basename(path.dirname(file)), location: file });
     }
     return files;
   }
-  async list(projectId, repositoryId) {
+  async list(projectId, repositoryId, { presentation = true } = {}) {
     const target = projectId ? await this.target(projectId, repositoryId) : null;
     const root = target?.root || null, file = target?.file || null;
     const userFile = path.join(this.codexHome(), 'config.toml');
@@ -65,16 +63,20 @@ export class CodexScopes {
       const at = id.lastIndexOf('@'), source = at > 0 ? id.slice(at + 1) : '';
       const name = at > 0 ? id.slice(0, at) : '';
       const hostManaged = hostMarketplaces.has(source);
+      // This specific plugin needs the desktop browser host. Other browser MCPs
+      // and curated plugins may support CLI; do not infer support from names.
+      const desktopBrowser = id === 'browser@openai-bundled';
       const cache = name && source && !/[\\/]/.test(id) ? path.join(this.codexHome(), 'plugins', 'cache', source, name) : '';
       const versions = cache ? (await readdir(cache, { withFileTypes: true }).catch(() => [])).filter(item => item.isDirectory()).map(item => item.name).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })) : [];
-      const bundledSkills = versions.length ? await this.skillFiles(path.join(cache, versions[0], 'skills')) : [];
+      const bundledSkills = presentation && versions.length ? await this.skillFiles(path.join(cache, versions[0], 'skills')) : [];
       return { kind: 'plugin', id, name: id, source: 'Shared installation', location: cache || '', version: versions[0] || null,
         installed: !!versions.length, globalEnabled: user.plugins?.[id]?.enabled === true, globalOverride: user.plugins?.[id]?.enabled ?? null, projectOverride: project.plugins?.[id]?.enabled ?? null,
         bundledSkills: bundledSkills.map(item => item.name), editable: !hostManaged,
         globalEditable: !hostManaged && !!versions.length, projectEditable: !!root && !hostManaged,
         projectDefined: !!foreign.plugins?.[id],
         managedBy: hostManaged ? 'Host/workspace-managed' : 'Local marketplace',
-        note: hostManaged ? 'Project override is not supported for this host/workspace-managed marketplace.' : '' };
+        ...(desktopBrowser ? { cliSupport: 'unsupported' } : {}),
+        note: desktopBrowser ? 'The OpenAI built-in browser is not available in Codex CLI. Mr. Mik chats need a separate CLI-compatible browser MCP. Changing this shared desktop plugin does not connect a browser to these chats.' : hostManaged ? 'Project override is not supported for this host/workspace-managed marketplace.' : '' };
     }));
     const mcps = new Set([...Object.keys(plain(user.mcp_servers)), ...Object.keys(plain(project.mcp_servers))]);
     const mcpRows = [...mcps].sort().map(id => ({ kind: 'mcp', id, name: id, source: user.mcp_servers?.[id] ? 'User config' : 'Project config', location: user.mcp_servers?.[id] ? userFile : file,
@@ -84,9 +86,9 @@ export class CodexScopes {
       projectEditable: !!root && !['node_repl', 'cua_repl', 'mrmak_workspace'].includes(id),
       projectDefined: !!foreign.mcp_servers?.[id],
       note: 'The override changes enablement only. A missing server definition is not installed by this control.' }));
-    const userSkills = await this.skillFiles(path.join(this.home, '.agents', 'skills'));
-    const legacySkills = await this.skillFiles(path.join(this.codexHome(), 'skills'));
-    const repoSkills = root ? await this.skillFiles(path.join(root, '.agents', 'skills')) : [];
+    const userSkills = await this.skillFiles(path.join(this.home, '.agents', 'skills'), { names: presentation });
+    const legacySkills = await this.skillFiles(path.join(this.codexHome(), 'skills'), { names: presentation });
+    const repoSkills = root ? await this.skillFiles(path.join(root, '.agents', 'skills'), { names: presentation }) : [];
     const skillRows = [...userSkills, ...legacySkills, ...repoSkills].map(item => ({ kind: 'skill', ...item,
       source: root && within(root, item.location) ? 'Project folder' : 'Personal folder', globalEnabled: !(root && within(root, item.location)), globalOverride: null,
       projectOverride: rows(project.skills?.config).find(row => typeof row.path === 'string' && path.resolve(row.path) === path.resolve(item.id))?.enabled ?? null,
@@ -95,8 +97,10 @@ export class CodexScopes {
       note: 'Local skill discovery is path-based. Plugin-bundled skills follow their plugin instead.' }));
     const trust = root ? Object.entries(plain(user.projects)).find(([folder]) => path.resolve(folder).toLowerCase() === root.toLowerCase())?.[1]?.trust_level || 'unknown' : 'not applicable';
     const names = new Map();
-    for (const row of skillRows) if (row.projectOverride !== false) names.set(row.name.toLowerCase(), [...(names.get(row.name.toLowerCase()) || []), row.source]);
-    for (const row of pluginRows) if (row.projectOverride ?? row.globalEnabled) for (const name of row.bundledSkills) names.set(name.toLowerCase(), [...(names.get(name.toLowerCase()) || []), row.id]);
+    if (presentation) {
+      for (const row of skillRows) if (row.projectOverride !== false) names.set(row.name.toLowerCase(), [...(names.get(row.name.toLowerCase()) || []), row.source]);
+      for (const row of pluginRows) if (row.projectOverride ?? row.globalEnabled) for (const name of row.bundledSkills) names.set(name.toLowerCase(), [...(names.get(name.toLowerCase()) || []), row.id]);
+    }
     const duplicates = [...names].filter(([, sources]) => sources.length > 1).map(([name, sources]) => ({ name, sources }));
     return { projectId, repositoryId, root, file, globalFile: userFile, trust, rows: [...pluginRows, ...mcpRows, ...skillRows], duplicates,
       notice: 'Declared settings, not a live-session tool list. Project config loads only when Codex trusts this repository. Existing chats need a new launch to pick up changes.' };

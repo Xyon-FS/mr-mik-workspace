@@ -1,10 +1,11 @@
+import { selectControl } from './select-control.mjs';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'mik-opencode-ui-')));
@@ -19,13 +20,13 @@ let browser;
 try {
   const project = await service.projects.save({ name: 'Fixture Workspace', repositoryPath: linked });
   await service.projects.setHubSkillScope({ id: 'report', agent: 'opencode', scope: 'global', enabled: true });
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.workspace);
   await page.getByRole('button', { name: 'Toggle skills' }).click();
   await page.getByRole('button', { name: 'OpenCode', exact: true }).click();
-  await page.getByLabel('Active workspace').selectOption(project.id);
+  await selectControl(page, "Active workspace", project.id);
   await page.getByLabel('report project setting').selectOption('off');
   await page.getByLabel('report project setting').selectOption('inherited');
   await page.getByRole('button', { name: 'Linked project', exact: true }).click();

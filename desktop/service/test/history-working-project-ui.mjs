@@ -1,0 +1,52 @@
+import { testBrowserEnvironment } from './fixtures.mjs';
+// Run after npm run build. Uses the built UI with only synthetic closed chats.
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { chromium, expect } from '@playwright/test';
+import { mkdtemp, createService, cleanupFixtures } from './fixtures.mjs';
+
+const base = await mkdtemp(path.join(os.tmpdir(), 'mik-working-project-ui-'));
+let service, browser;
+try {
+  const repo = path.join(base, 'hub'), external = path.join(base, 'external'), home = path.join(base, 'home'), codex = path.join(home, '.codex');
+  for (const folder of [repo, external, codex]) await mkdir(folder, { recursive: true });
+  await writeFile(path.join(codex, 'config.toml'), '');
+  service = await createService({ repo, uiDir: path.resolve('dist'), restoreSessions: false, mcpOptions: { home, env: { CODEX_HOME: codex, CODEX_SQLITE_HOME: codex } }, profileOptions: { root: path.join(base, 'accounts') } });
+  const project = await service.projects.save({ name: 'Planning then project' });
+  const planning = path.join(repo, 'workspace/planning', project.id); await mkdir(planning, { recursive: true });
+  const session = service.sessions.make({ id: randomUUID(), name: 'Planning fixture', agent: 'codex', chatInterface: 'chat', projectId: project.id, repositoryId: null, cwd: planning, open: false, hasConversation: true, nativeId: randomUUID() });
+  service.sessions.items.set(session.id, session);
+  const linked = await service.projects.save({ id: project.id, name: project.name, repositoryPath: external });
+  await service.sessions.persist();
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: 'chrome' });
+  const page = await browser.newPage({ viewport: { width: 1050, height: 850 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(service.urls.chats);
+  await page.getByRole('button', { name: 'History', exact: true }).first().click();
+  await page.locator('.history-management > summary').click();
+  const workspace = page.getByRole('combobox', { name: 'Associate Planning fixture with workspace', exact: true });
+  const working = page.getByRole('combobox', { name: 'Working project for Planning fixture', exact: true });
+  await expect(working).toContainText('Workspace planning');
+  const a = await workspace.boundingBox(), b = await working.boundingBox();
+  assert.ok(Math.abs(a.y - b.y) < 2 && b.x > a.x && a.width <= 280 && b.width <= 280);
+  await working.click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('option', { name: linked.repositories[0].name, exact: true }).click();
+  await expect(working).toContainText(linked.repositories[0].name);
+  assert.equal(session.repositoryId, linked.repositories[0].id); assert.equal(session.cwd.toLowerCase(), external.toLowerCase());
+  await working.click(); page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('option', { name: 'Workspace planning', exact: true }).click();
+  await expect(working).toContainText(linked.repositories[0].name);
+  session.open = true; service.sessions.changed(session);
+  await expect(working).toBeDisabled();
+  session.open = false; session.agent = 'opencode'; service.sessions.changed(session);
+  await expect(working).toBeDisabled();
+  await page.setViewportSize({ width: 430, height: 850 });
+  const narrowA = await workspace.boundingBox(), narrowB = await working.boundingBox();
+  assert.ok(narrowA.width > 0 && narrowB.width > 0 && narrowB.x + narrowB.width <= 430);
+  assert.deepEqual(errors, []);
+  console.log('History UI passed: adjacent compact workspace/project selectors, confirmed project change, cancel, open/unsupported guards and narrow layout. No agent or login started.');
+} finally { await browser?.close(); await service?.close(); await cleanupFixtures(); }

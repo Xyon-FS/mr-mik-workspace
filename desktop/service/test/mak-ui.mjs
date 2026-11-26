@@ -1,11 +1,12 @@
+import { selectControl } from './select-control.mjs';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createService } from '../server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const base = await mkdtemp(path.join(os.tmpdir(), 'mrmak-mak-ui-'));
@@ -19,7 +20,9 @@ const service = await createService({ repo, uiDir, mcpOptions: { home: path.join
 let browser;
 try {
   const project = await service.projects.save({ name: 'Game X', repositoryPath: linked });
-  await service.projects.createCard({ projectId: project.id, title: 'Unity Work', repositoryId: 'primary' });
+  const card = await service.projects.createCard({ projectId: project.id, title: 'Unity Work', repositoryId: 'primary' });
+  await mkdir(path.join(repo, '.agents/skills/fixture'), { recursive: true });
+  await writeFile(path.join(repo, '.agents/skills/fixture/SKILL.md'), '---\nname: fixture\ndescription: Synthetic fixture\n---\n');
   const mak = service.coordinator;
   let turn = 0;
   mak.start = async () => { if (!mak.child) { mak.child = { kill() {} }; mak.threadId = 'global'; mak.threads.set('global', 'global'); } };
@@ -34,14 +37,14 @@ try {
       try {
         const scope = mak.active.scope, id = mak.active.operationId;
         assert.equal(scope.projectId, project.id);
-        await mak.execute('hub_action', { name: 'mrmak_create_resource', args: { kind: 'knowledge', title: global ? 'Global Lesson' : 'Workspace Lesson', text: 'A fixture lesson.', scope: global ? 'global' : 'workspace' } }, id, undefined, scope);
-        await mak.message({ method: 'item/completed', params: { threadId: params.threadId, item: { type: 'agentMessage', text: 'Lesson saved in the Hub.' } } });
+        await mak.execute('hub_action', global ? { name: 'mrmak_manage_skill', args: { action: 'scope', id: 'fixture', agent: 'codex', scope: 'global', enabled: true, confirmed: true } } : { name: 'mrmak_update_card', args: { id: card.id, pinned: true } }, id, undefined, scope);
+        await mak.message({ method: 'item/completed', params: { threadId: params.threadId, item: { type: 'agentMessage', text: 'Requested Hub action completed.' } } });
         await mak.message({ method: 'turn/completed', params: { threadId: params.threadId, turn: { status: 'completed' } } });
       } catch (error) { mak.active?.reject(error); }
     }, 20);
     return { turn: { id: `turn-${turn}` } };
   };
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(service.urls.workspace);
@@ -51,11 +54,11 @@ try {
   const launcher = await page.locator('.mak-launcher').boundingBox();
   const surface = await page.locator('.workspace-surface').boundingBox();
   assert.ok(launcher.width <= 44 && Math.abs(surface.x + surface.width - launcher.x - launcher.width - 18) < 2);
-  await page.getByLabel('Active workspace').selectOption(project.id);
+  await selectControl(page, 'Active workspace', project.id);
   await page.getByRole('combobox', { name: 'Mik card' }).click(); await page.getByRole('option', { name: 'Unity Work', exact: true }).click();
   await page.locator('.mak-working-target').getByText('Main project', { exact: true }).waitFor();
   assert.equal(await page.getByRole('combobox', { name: 'Mik working project' }).count(), 0);
-  await page.getByRole('textbox', { name: 'Message Mik' }).fill('Save a workspace lesson');
+  await page.getByRole('textbox', { name: 'Message Mik' }).fill('Pin workspace card');
   await page.getByRole('combobox', { name: 'Mik reasoning', exact: true }).click();
   await page.getByRole('option', { name: 'Low', exact: true }).click();
   await page.getByRole('combobox', { name: 'Mik model', exact: true }).click();
@@ -63,8 +66,10 @@ try {
   await page.getByRole('combobox', { name: 'Mik model', exact: true }).getByText('Other model', { exact: true }).waitFor();
   assert.equal(mak.conversation(project.id).model, 'fixture-other');
   await page.getByRole('button', { name: 'Send to Mik' }).click();
-  await page.getByText('Lesson saved in the Hub.', { exact: true }).waitFor();
-  await page.getByRole('textbox', { name: 'Message Mik' }).fill('Save a global lesson');
+  await expect.poll(() => [...mak.operations.values()].at(-1)?.result, { timeout: 5000 }).toBe('Requested Hub action completed.');
+  await page.getByText('Requested Hub action completed.', { exact: true }).waitFor();
+  assert.equal(JSON.parse(await readFile(service.projects.workspacePath, 'utf8')).entities.find(item => item.id === card.id).pinned, true);
+  await page.getByRole('textbox', { name: 'Message Mik' }).fill('Enable global fixture skill');
   await page.getByRole('button', { name: 'Send to Mik' }).click();
   await page.getByRole('group', { name: 'Mik confirmation' }).waitFor();
   assert.equal(await page.getByRole('combobox', { name: 'Mik reasoning', exact: true }).isDisabled(), true);
@@ -76,15 +81,15 @@ try {
   await page.getByRole('group', { name: 'Mik confirmation' }).waitFor();
   assert.equal(await page.getByRole('textbox', { name: 'Message Mik' }).count(), 0);
   await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-  assert.equal((await service.projects.resources('knowledge', null, 'relevant')).length, 0);
+  assert.equal(await readFile(service.projects.skillScopesPath, 'utf8').catch(() => null), null);
   await page.waitForTimeout(250);
   await page.screenshot({ path: path.join(base, 'mak-confirmation.png') });
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.mak-answer').length === 2);
-  assert.equal((await service.projects.resources('knowledge', null, 'relevant')).length, 1);
-  await page.getByLabel('Active workspace').selectOption('');
+  assert.equal(JSON.parse(await readFile(service.projects.skillScopesPath, 'utf8')).skills.fixture.global, true);
+  await selectControl(page, 'Active workspace', '');
   await page.getByText('Ask Mik to organize cards', { exact: false }).waitFor();
-  await page.getByLabel('Active workspace').selectOption(project.id);
+  await selectControl(page, 'Active workspace', project.id);
   await page.waitForFunction(() => document.querySelectorAll('.mak-answer').length === 2);
   await page.getByRole('button', { name: 'Activity', exact: true }).click();
   assert.equal(await page.getByRole('textbox', { name: 'Message Mik' }).count(), 0);
@@ -109,7 +114,7 @@ try {
   assert.equal(mak.conversation(project.id).effort, 'medium');
   await page.getByRole('button', { name: 'Mik conversation History', exact: true }).click();
   await page.getByRole('combobox', { name: 'Mik saved conversations' }).click();
-  await page.getByRole('option', { name: 'Save a workspace lesson', exact: true }).click();
+  await page.getByRole('option', { name: 'Pin workspace card', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.mak-answer').length === 2);
   assert.equal(mak.conversation(project.id).id, original);
   await page.getByRole('button', { name: 'Collapse files', exact: true }).click();
@@ -123,12 +128,16 @@ try {
   await page.getByRole('group', { name: 'Mik confirmation' }).waitFor();
   await page.locator('.mak-composer').getByRole('button', { name: 'Stop Mik request' }).click();
   await page.getByRole('button', { name: 'Send to Mik' }).waitFor();
-  assert.equal((await service.projects.resources('knowledge', null, 'relevant')).length, 1);
+  assert.equal(JSON.parse(await readFile(service.projects.skillScopesPath, 'utf8')).skills.fixture.global, true);
   await page.setViewportSize({ width: 1100, height: 850 });
   await page.getByRole('button', { name: 'Toggle settings', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Default worker reasoning · Codex', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Worker reasoning agent', exact: true }).click();
+  await page.getByRole('option', { name: 'Codex', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Worker reasoning level', exact: true }).click();
   await page.getByRole('option', { name: 'Low', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Default worker reasoning · Claude', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Worker reasoning agent', exact: true }).click();
+  await page.getByRole('option', { name: 'Claude', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Worker reasoning level', exact: true }).click();
   await page.getByRole('option', { name: 'Max', exact: true }).click();
   await page.getByRole('combobox', { name: 'Coordinator reasoning', exact: true }).click();
   await page.getByRole('option', { name: 'Extra high', exact: true }).click();
@@ -139,5 +148,5 @@ try {
   assert.equal(mak.conversation(project.id).effort, 'low');
   await page.screenshot({ path: path.join(base, 'reasoning-settings.png') });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'Mik UI: scoped conversation, card/project defaults, Bridge writes, real UI approval, workspace switching and restored History passed. Model protocol was simulated; no CLI or model request.', screenshots: base }));
+  console.log(JSON.stringify({ result: 'Mik UI: scoped conversation, card/project defaults, card metadata, explicit UI configuration approval, workspace switching and restored History passed. Model protocol was simulated; no CLI or model request.', screenshots: base }));
 } finally { await browser?.close(); await service.close(); }

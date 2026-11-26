@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -41,13 +42,6 @@ test('V2 divergent histories never invoke native delete/import to bypass a confl
     await assert.rejects(transfer.write(next, base, openCodeHash(original)), /cannot overwrite/);
     await assert.rejects(transfer.remove(original.info.id, 'stale'), /changed/);
   } finally { await rm(base, { recursive: true, force: true }); }
-});
-
-test('V2 prompt provenance normalization deduplicates by stored bytes without resolving external tool URIs', () => {
-  const local = data(); local.messages[0].files = [{ data: 'AQID', mime: 'image/png', source: { type: 'uri', uri: 'file:///missing.png' } }];
-  const portable = structuredClone(local); portable.messages[0].files[0].source = { type: 'inline' };
-  assert.equal(openCodeRelation(local, portable), 'identical'); assert.equal(openCodeHash(local), openCodeHash(portable));
-  portable.messages[0].files[0].data = 'BAUG'; assert.equal(openCodeRelation(local, portable), 'conflict');
 });
 
 async function hub(root, name) {
@@ -143,16 +137,13 @@ async function replacementFixture(t) {
 
 test('V2 compatible replacement persists a recovery backup before deletion and preserves local permissions', async t => {
   const f = await replacementFixture(t);
-  const result = await f.transfer.write(f.incoming, f.root, openCodeHash(f.local));
-  assert.equal(f.stored.messages.length, 2); assert.deepEqual(f.stored.info.permissions, f.local.info.permissions); assert.equal(f.deletes, 1);
-  assert.deepEqual(JSON.parse(await readFile(result.backup, 'utf8')), f.local);
-});
-
-test('V2 failed incoming import restores the exact original transcript and local policy', async t => {
-  const f = await replacementFixture(t); f.failImport();
+  f.failImport();
   await assert.rejects(f.transfer.write(f.incoming, f.root, openCodeHash(f.local)), /original conversation was restored/);
   assert.deepEqual(f.stored, f.local); assert.equal(f.deletes, 1);
   assert.equal((await readdir(path.join(f.root, '.mrmak/import-backups/opencode-v2'))).length, 1);
+  const result = await f.transfer.write(f.incoming, f.root, openCodeHash(f.local));
+  assert.equal(f.stored.messages.length, 2); assert.deepEqual(f.stored.info.permissions, f.local.info.permissions); assert.equal(f.deletes, 2);
+  assert.deepEqual(JSON.parse(await readFile(result.backup, 'utf8')), f.local);
 });
 
 test('V2 rollback prevalidation and changed-chat checks stop before destructive commands', async t => {

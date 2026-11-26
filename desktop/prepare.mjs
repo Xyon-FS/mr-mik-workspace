@@ -4,9 +4,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { gameSkillPack } from './service/skill-pack.mjs';
 import { buildStarterHub } from '../scripts/starter-hub.mjs';
+import { runtimeServiceExcludes } from '../scripts/source-files.mjs';
+import { graphicalCodexBinary } from './service/codex-chat-binary.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = path.join(repo, '.cache', 'desktop-runtime');
+const notices = spawnSync(process.execPath, [path.join(repo, 'scripts/generate-ui-notices.mjs'), '--check'], { cwd: repo, stdio: 'inherit', windowsHide: true });
+if (notices.status !== 0) throw new Error('Frontend dependency notices must be regenerated before packaging.');
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('This package currently targets Windows x64. Build on that platform.');
 // Clear only this generated staging directory, after verifying its resolved path.
 const actualRuntime = await realpath(runtime).catch(() => null);
@@ -23,7 +27,7 @@ run(['run', 'build'], repo);
 await cp(process.execPath, path.join(runtime, 'node.exe'));
 await mkdir(path.join(runtime, 'service'), { recursive: true });
 const serviceSource = path.join(repo, 'desktop', 'service');
-await cp(serviceSource, path.join(runtime, 'service'), { recursive: true, filter: source => !path.relative(serviceSource, source).split(path.sep).some(part => ['node_modules', 'test', '.cache'].includes(part)) });
+await cp(serviceSource, path.join(runtime, 'service'), { recursive: true, filter: source => !path.relative(serviceSource, source).split(path.sep).some(part => runtimeServiceExcludes.includes(part)) });
 const { version } = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
 await writeFile(path.join(runtime, 'service', 'app-version.json'), JSON.stringify({ version }));
 // A checkout can itself live under a cache/worktree directory. Validate the
@@ -35,6 +39,11 @@ await cp(path.join(repo, 'processes/workspace-authoring.md'), path.join(runtime,
 await cp(path.join(repo, 'LICENSE'), path.join(runtime, 'service/skill-pack/LICENSE'));
 await cp(path.join(repo, 'THIRD_PARTY_NOTICES.md'), path.join(runtime, 'service/skill-pack/NOTICE.md'));
 run(['ci', '--omit=dev'], path.join(runtime, 'service'));
+// Fail packaging instead of silently reverting graphical chats to the user's CLI.
+graphicalCodexBinary({ packageRoot: path.join(runtime, 'service/node_modules/@openai/codex-win32-x64') });
+await cp(path.join(repo, 'desktop/licenses/CODEX-APACHE-2.0.txt'), path.join(runtime, 'CODEX-APACHE-2.0.txt'));
+await cp(path.join(repo, 'desktop/licenses/CODEX-NOTICE.txt'), path.join(runtime, 'CODEX-NOTICE.txt'));
+await cp(path.join(repo, 'desktop/licenses/UI-DEPENDENCIES.txt'), path.join(runtime, 'UI-DEPENDENCIES.txt'));
 await cp(path.join(repo, 'dist'), path.join(runtime, 'ui'), { recursive: true });
 // Vite deliberately does not copy the enormous workspace junction. Bundle only UI assets.
 try { await access(path.join(repo, 'public', 'assets')); await cp(path.join(repo, 'public', 'assets'), path.join(runtime, 'ui', 'assets'), { recursive: true }); } catch { /* Optional brand assets. */ }

@@ -1,0 +1,51 @@
+import { testBrowserEnvironment } from './fixtures.mjs';
+import { selectChatInNavigation } from './chat-navigation.mjs';
+// Targeted reading acknowledgement acceptance; synthetic profiles/turns only.
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
+import { mkdtemp, createService, cleanupFixtures } from './fixtures.mjs';
+import { CodexChat } from '../codex-chat.mjs';
+import { graphicalFixture } from './codex-chat-fixture.mjs';
+
+const base = await mkdtemp(path.join(os.tmpdir(), 'mik-graphical-unread-'));
+let service, browser;
+try {
+  const repo = path.join(base, 'hub'), home = path.join(base, 'home'), native = path.join(home, '.codex');
+  await mkdir(path.join(repo, 'workspace'), { recursive: true }); await mkdir(native, { recursive: true });
+  await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}'); await writeFile(path.join(native, 'config.toml'), '# Synthetic\n');
+  service = await createService({ repo, uiDir: path.resolve('dist'), mcpOptions: { home, env: { ...process.env, CODEX_HOME: native } }, profileOptions: { root: path.join(base, 'accounts') } });
+  const profile = await service.profiles.create('Unread fixture');
+  service.sessions.verifyAccount = async () => {}; service.sessions.verifyIdentity = async () => {}; service.sessions.captureTools = async () => ({});
+  const transport = graphicalFixture({ completeBeforeResponse: true });
+  service.sessions.createGraphicalRuntime = options => new CodexChat({ ...options, spawnChild: transport.spawnChild });
+  const create = name => service.sessions.create({ agent: 'codex', name, chatInterface: 'chat', accountProfileId: profile.id, codexPermissions: 'ask', cwd: repo });
+  const a = await create('Visible fixture'), b = await create('Background fixture');
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' }); const page = await browser.newPage();
+  await page.goto(service.urls.chats); await page.bringToFront();
+  const chat = page.getByRole('region', { name: 'Codex graphical chat', exact: true }); await expect(chat).toBeVisible();
+  await chat.getByRole('textbox', { name: 'Message Codex', exact: true }).fill('Synthetic visible request');
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(chat).toContainText('Fixture streamed answer.');
+  await expect.poll(() => service.sessions.get(a.id).unread).toBe(false);
+  await page.getByRole('button', { name: 'Expand projects', exact: true }).click();
+  const covered = service.sessions.get(a.id).graphical;
+  covered.message({ method: 'turn/started', params: { threadId: covered.threadId, turn: { id: 'covered-turn', status: 'inProgress' } } });
+  covered.message({ method: 'item/completed', params: { threadId: covered.threadId, item: { id: 'covered-answer', type: 'agentMessage', text: 'Result behind project navigation.' } } });
+  covered.message({ method: 'turn/completed', params: { threadId: covered.threadId, turn: { id: 'covered-turn', status: 'completed' } } });
+  await page.waitForTimeout(850); assert.equal(service.sessions.get(a.id).unread, true, 'Covered conversation stays unread while navigation is expanded');
+  await page.getByRole('button', { name: 'Collapse project panel', exact: true }).click();
+  await expect.poll(() => service.sessions.get(a.id).unread).toBe(false);
+  const background = service.sessions.get(b.id).graphical;
+  background.message({ method: 'turn/started', params: { threadId: background.threadId, turn: { id: 'background-turn', status: 'inProgress' } } });
+  background.message({ method: 'item/completed', params: { threadId: background.threadId, item: { id: 'background-answer', type: 'agentMessage', text: 'Background result to read.' } } });
+  background.message({ method: 'turn/completed', params: { threadId: background.threadId, turn: { id: 'background-turn', status: 'completed' } } });
+  await page.waitForTimeout(800); assert.equal(service.sessions.get(b.id).unread, true, 'Hidden chat must remain unread');
+  await selectChatInNavigation(page, b.id);
+  await expect(chat).toContainText('Background result to read.');
+  await expect.poll(() => service.sessions.get(b.id).unread).toBe(false);
+  assert.equal(await page.getByText('This terminal is stopped. Resume it before sending a message.', { exact: true }).count(), 0);
+  console.log('PASS: visible graphical results mark read; hidden results remain unread until their loaded view is selected. No model/login/live Hub.');
+} finally { await browser?.close(); await service?.close(); await cleanupFixtures(); }

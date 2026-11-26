@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, readdir, symlink, realpath } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, symlink, realpath } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeSettings, openCodeDocument } from '../opencode-settings.mjs';
@@ -34,6 +35,13 @@ test('OpenCode external MCP toggles preserve JSONC comments/secrets and isolate 
   assert.equal((await f.settings.list(f.project.id, 'primary')).rows.find(row => row.kind === 'mcp').effective, true);
   assert.equal((await f.settings.list(f.project.id, f.repository.id)).rows.find(row => row.kind === 'mcp').effective, false);
   assert.deepEqual((await openCodeDocument(path.join(f.linked, 'opencode.json'))).value.mcp.fixture, { enabled: true });
+  await change('project', false);
+  const inventory = new McpInventory(f.linked, { home: f.home, env: {} });
+  try {
+    const listed = await inventory.list(), server = listed.servers.find(item => item.client === 'opencode' && item.name === 'fixture');
+    assert.equal(server.enabled, false); assert.equal(server.transport, 'stdio'); assert.equal(server.sources.length, 2);
+    assert.equal(JSON.stringify(listed).includes('fixture-secret'), false);
+  } finally { inventory.close(); }
   await change('project', null);
   assert.equal((await openCodeDocument(path.join(f.linked, 'opencode.json'))).value.mcp.fixture, undefined);
   assert.equal((await f.settings.list(f.project.id, 'primary')).rows.find(row => row.kind === 'mcp').effective, false);
@@ -79,17 +87,6 @@ test('OpenCode Hub scopes are independent and native skill creation creates only
   assert.equal((await openCodeDocument(path.join(f.linked, 'opencode.json'))).value.permission.skill['native-report'], 'deny');
   await f.settings.change({ projectId: f.project.id, repositoryId: 'primary', kind: 'skill', id: 'native-report', enabled: null });
   assert.equal((await openCodeDocument(path.join(f.linked, 'opencode.json'))).value.permission.skill['native-report'], undefined);
-});
-
-test('OpenCode MCP inventory merges sparse overrides without losing transport and hides credentials', async () => {
-  const f = await fixture();
-  await f.settings.change({ projectId: f.project.id, repositoryId: 'primary', id: 'fixture', enabled: false });
-  const inventory = new McpInventory(f.linked, { home: f.home, env: {} });
-  try {
-    const listed = await inventory.list(), server = listed.servers.find(item => item.client === 'opencode' && item.name === 'fixture');
-    assert.equal(server.enabled, false); assert.equal(server.transport, 'stdio'); assert.equal(server.sources.length, 2);
-    assert.equal(JSON.stringify(listed).includes('fixture-secret'), false);
-  } finally { inventory.close(); }
 });
 
 test('OpenCode Bridge uses the same approved skill/MCP services and snapshot preserves workspace scopes', async () => {

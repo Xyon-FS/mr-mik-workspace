@@ -1,8 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { defaultHubSkillScopes } from '../desktop/service/hub-skill-defaults.mjs';
-export const directories = ['src', 'desktop', 'src-tauri', 'scripts', '.github', 'docs', 'public', '.agents/skills', '.claude/skills'];
-export const rootFiles = ['.env.example', '.gitattributes', '.gitignore', '.mcp.json', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md', 'README.md', 'overview.png', 'CHANGELOG.md', 'Setup.ps1', 'Start Mr. Mik.cmd', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'eslint.config.js', 'index.html'];
+export const directories = ['src', 'desktop', 'src-tauri', 'scripts', 'templates', '.github', 'docs', 'public', '.agents/skills', '.claude/skills'];
+export const runtimeServiceExcludes = ['node_modules', 'test', '.cache', 'test-live.mjs'];
+export const rootFiles = ['.env.example', '.gitattributes', '.gitignore', '.mcp.json', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md', 'README.md', 'overview.png', 'CHANGELOG.md', 'Setup.ps1', 'Build-Installer.cmd', 'Build-Portable.cmd', 'Start Mr. Mik.cmd', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'eslint.config.js', 'index.html'];
 const excluded = part => ['node_modules', '.cache', '.mrmak', '.git', 'dist', 'gen', '__pycache__', 'release', 'target'].includes(part) || part.startsWith('target-') || /^(auth|credentials?|tokens?|job|result|upload)\.json$/i.test(part) || /\.(log|pyc|pyo|tsbuildinfo)$/i.test(part);
 export async function sourceFiles(root) {
   const files = [...rootFiles];

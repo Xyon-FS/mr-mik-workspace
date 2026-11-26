@@ -50,8 +50,11 @@ export async function body(request, limit = 256 * 1024) {
     if (length > limit) throw Object.assign(new Error('Request is too large'), { status: 413 });
     chunks.push(chunk);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString() || '{}'); }
+  let value;
+  try { value = JSON.parse(Buffer.concat(chunks).toString() || '{}'); }
   catch { throw Object.assign(new Error('Invalid JSON'), { status: 400 }); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('Request body must be a JSON object'), { status: 400 });
+  return value;
 }
 export function publicError(error) {
   // Errors from HTTP providers must never include request headers or environment values.

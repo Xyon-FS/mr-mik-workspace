@@ -1,0 +1,104 @@
+// Production Tools/Chats UI and service lifecycle; synthetic Claude transport.
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { chromium, expect } from '@playwright/test';
+import { mkdtemp, createService, cleanupFixtures, testBrowserEnvironment } from './fixtures.mjs';
+import { claudeFixture } from './claude-chat-fixture.mjs';
+import { writeClaudeHistory } from './claude-history-fixture.mjs';
+import { selectControl } from './select-control.mjs';
+
+const root = path.resolve('.'), index = process.argv.indexOf('--portable');
+const serviceRoot = index < 0 ? path.join(root, 'desktop/service') : path.resolve(process.argv[index + 1], 'App/runtime/service');
+const uiDir = index < 0 ? path.join(root, 'dist') : path.resolve(process.argv[index + 1], 'App/runtime/ui');
+const { createService: factory } = await import(pathToFileURL(path.join(serviceRoot, 'server.mjs')));
+const { ClaudeChat } = await import(pathToFileURL(path.join(serviceRoot, 'claude-chat.mjs')));
+const base = await mkdtemp(path.join(os.tmpdir(), 'mik-workspace-mcp-ui-')), original = { ...process.env };
+let browser, service; const fixtures = [], launches = [];
+try {
+  browser = await chromium.launch({ headless: true, env: testBrowserEnvironment(), channel: process.env.MRMAK_TEST_BROWSER || 'chrome' });
+  for (const key of Object.keys(process.env)) if (!/^(PATH|SystemRoot|WINDIR|COMSPEC|PATHEXT|TEMP|TMP)$/i.test(key)) delete process.env[key];
+  for (const key of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME']) { process.env[key] = path.join(base, key); await mkdir(process.env[key]); }
+  const repo = path.join(base, 'hub'), main = path.join(base, 'main'), child = path.join(base, 'unity'), extra = path.join(base, 'extra');
+  for (const dir of [path.join(repo, 'workspace'), main, child, extra]) await mkdir(dir, { recursive: true });
+  await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[],"resources":[]}');
+  const config = { type: 'stdio', command: process.execPath, args: ['synthetic-not-launched.mjs'], env: { PRIVATE_FIXTURE: 'synthetic-private' } };
+  const configFile = path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json');
+  await writeFile(configFile, JSON.stringify({ projects: { [child]: { mcpServers: { UnityMCP: config } }, [extra]: { mcpServers: { ExtraMCP: config } } } }));
+  service = await createService({ repo, uiDir, mcpOptions: { home: process.env.HOME, env: process.env }, profileOptions: { root: path.join(base, 'accounts'), claudeIdentity: async () => ({ status: 'logged-in', identity: 'workspace-mcp-ui-fixture' }) } }, factory);
+  service.sessions.createGraphicalRuntime = options => {
+    const fixture = claudeFixture(options.session.nativeId); fixtures.push(fixture); launches.push({ sessionId: options.session.id, names: Object.keys(options.bridge?.linkedMcps || {}) });
+    return new ClaudeChat({ ...options, transportFactory: fixture.factory });
+  };
+  const project = await service.projects.save({ name: 'Workspace MCP fixture', repositoryPath: main });
+  const linked = await service.projects.saveRepository({ projectId: project.id, name: 'Multiplayer', repositoryPath: child });
+  const repositoryId = (await service.projects.get(project.id)).repositories.find(row => row.repositoryPath === child).id;
+  void linked;
+  const request = async (route, body) => { const response = await fetch(service.origin + '/api' + route, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const result = await response.json(); assert.ok(response.ok, result.error); return result; };
+  await request('/settings', { selectedProjectId: project.id });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 980 } }), errors = []; page.on('pageerror', cause => errors.push(cause.message));
+  await page.goto(service.urls.workspace); await page.getByRole('button', { name: 'Toggle mcp', exact: true }).click();
+  await page.getByRole('button', { name: 'Tool filters', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Filter MCP by agent', exact: true }).click();
+  const agents = page.getByRole('listbox', { name: 'Filter MCP by agent', exact: true });
+  await expect(agents.getByRole('option', { name: 'Kimi', exact: true })).toHaveCount(0);
+  await expect(agents.getByRole('option', { name: 'Cursor', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');await page.keyboard.press('Escape');
+  await selectControl(page, 'Linked project for tools', repositoryId);
+  const card = page.locator('[data-mcp-id="claude:UnityMCP"]'); await expect(card).toBeVisible();
+  await page.getByRole('button', { name: 'Availability for UnityMCP', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'UnityMCP linked Claude MCP', exact: true })).toHaveAttribute('data-value', 'on');
+  await expect(page.getByRole('group', { name: 'UnityMCP global Claude MCP', exact: true })).toHaveAttribute('data-value', 'off');
+  await selectControl(page, 'UnityMCP linked Claude MCP', 'off');
+  await expect(page.getByRole('group', { name: 'UnityMCP linked Claude MCP', exact: true })).toHaveAttribute('data-value', 'off');
+  await selectControl(page, 'UnityMCP linked Claude MCP', 'on');
+  await expect(page.getByRole('group', { name: 'UnityMCP linked Claude MCP', exact: true })).toHaveAttribute('data-value', 'on');
+  await selectControl(page, 'UnityMCP global Claude MCP', 'on');
+  await expect(page.getByRole('group', { name: 'UnityMCP global Claude MCP', exact: true })).toHaveAttribute('data-value', 'on');
+  await selectControl(page, 'UnityMCP global Claude MCP', 'off');
+  await expect(page.getByRole('group', { name: 'UnityMCP global Claude MCP', exact: true })).toHaveAttribute('data-value', 'off');
+  assert.deepEqual(JSON.parse(await readFile(configFile, 'utf8')).projects[child].mcpServers.UnityMCP, config);
+  assert.equal((await page.locator('body').innerText()).includes('synthetic-private'), false);
+  await page.screenshot({ path: path.join(root, '.cache/workspace-mcp-tools-ui.png') });
+
+  const created = await request('/sessions', { agent: 'claude', chatInterface: 'chat', projectId: project.id, repositoryId: 'primary', name: 'Main MCP fixture' });
+  const source = service.sessions.get(created.id), nativeId = source.nativeId;
+  source.graphical.submit('Synthetic initial input'); await writeClaudeHistory(process.env.CLAUDE_CONFIG_DIR, main, nativeId, 1);
+  await request(`/sessions/${source.id}/focus`, {}); await page.goto(service.urls.chats);
+  const input = page.getByRole('textbox', { name: 'Message Claude', exact: true }); await input.fill('Preserve this draft');
+  await expect.poll(() => source.graphical.draft).toBe('Preserve this draft');
+  const previous = source.process;
+  await service.projects.saveRepository({ projectId: project.id, name: 'Extra', repositoryPath: extra });
+  await service.toolRefresh.poll(); assert.equal(source.process, previous);
+  await expect(input).toHaveValue('Preserve this draft');
+  await expect(page.locator('.chat-tool-refresh')).toHaveCount(0);
+  await input.fill(''); await expect.poll(() => source.graphical.draft).toBe('');
+  await service.toolRefresh.poll(); await expect.poll(() => source.process !== previous).toBe(true);
+  assert.equal(source.nativeId, nativeId); assert.equal(launches.filter(row => row.sessionId === source.id).at(-1).names.length, 2);
+  await expect(page.locator('.chat-tool-refresh')).toHaveCount(0);
+  const specific = await request('/sessions', { agent: 'claude', chatInterface: 'chat', projectId: project.id, repositoryId, name: 'Specific fixture' });
+  assert.equal(launches.find(row => row.sessionId === specific.id).names.length, 0);
+  const extraId = (await service.projects.get(project.id)).repositories.find(row => row.repositoryPath === extra).id;
+  const fresh = await request('/sessions', { agent: 'claude', chatInterface: 'chat', projectId: project.id, repositoryId: 'primary', name: 'Unused main fixture' });
+  const freshSession = service.sessions.get(fresh.id), freshProcess = freshSession.process, freshId = freshSession.nativeId;
+  const beforeRemoval = source.process;
+  await request('/projects/repositories/remove', { projectId: project.id, repositoryId: extraId }); await service.toolRefresh.poll();
+  await expect.poll(() => source.process !== beforeRemoval, { timeout: 15000 }).toBe(true);
+  assert.equal(source.nativeId, nativeId); assert.equal(launches.filter(row => row.sessionId === source.id).at(-1).names.length, 1);
+  await expect.poll(() => freshSession.process !== freshProcess && freshSession.process != null, { timeout: 15000 }).toBe(true);
+  assert.equal(freshSession.nativeId, freshId); assert.equal(freshSession.hasConversation, false);
+  assert.deepEqual(errors, []);
+  assert.equal(fixtures.flatMap(fixture => fixture.calls).filter(call => call.type === 'user').length, 1);
+  await service.close(); service = null;
+  assert.deepEqual(await readdir(path.join(repo, '.mrmak/linked-mcp-launches')), []);
+  console.log('PASS production Tools and Chats UI: local installation Global/Local controls, main-only visibility, silent add/remove updates, preserved draft/native ID, specific-project isolation and runtime cleanup. Synthetic transport only.');
+} catch (error) {
+  if (service) console.log('Isolated lifecycle state:', JSON.stringify(service.sessions.list().map(session => ({ name: session.name, status: session.status, hasConversation: session.hasConversation, toolRefresh: session.toolRefresh, restoreError: session.restoreError }))));
+  throw error;
+} finally {
+  await browser?.close(); await service?.close(); for (const fixture of fixtures) fixture.close();
+  for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]; Object.assign(process.env, original);
+  await cleanupFixtures();
+}

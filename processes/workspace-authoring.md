@@ -37,3 +37,7 @@ New HTML reports can begin with:
 
 The relative paths above assume a folder immediately inside `workspace/`.
 Adjust them for nested reports. All sample pages follow the same shared style.
+
+## Registered card content synchronization
+
+Registered card pages advertising autoSync are synchronized locally after stable saves: reuse their native paths within this chat and do not register ordinary content edits. New pages and other Hub content still require explicit destination resolution and registration. Re-resolve on stale access or changed association; read current source when needed. Card creation/removal and page membership remain explicit.

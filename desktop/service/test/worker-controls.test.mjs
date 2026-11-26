@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workerControls } from '../worker-controls.mjs';
-import { MakActions } from '../mak-actions.mjs';
-import { coordinatorTools } from '../coordinator.mjs';
 
 function fixture() {
   const chat = { id: 'owned', agent: 'opencode', name: 'Fixture work', projectId: 'workspace', activity: 'idle', attention: false, process: {}, lastInputAt: null };
@@ -34,35 +32,4 @@ test('OpenCode controls fail closed before paste and do not retry a draft after 
   f.events.length = 0;
   f.picker.command = async () => { f.chat.process = {}; };
   await assert.rejects(f.controls.send('owned', 'Task'), /changed/); assert.equal(f.events.length, 0);
-});
-
-test('Mik exposes OpenCode, preserves card scope and confirmations, and rejects foreign targets and Codex-style effort', async () => {
-  const f = fixture(), calls = [];
-  const coordinator = { cancelled: new Set(), operations: new Map([['op', { text: 'Create work' }]]), active: { observedChats: new Map() }, requireConfirmation: async () => calls.push('confirm') };
-  const actions = new MakActions({
-    repo: 'hub', projects: { get: async () => ({ id: 'workspace', repositories: [{ id: 'unity', available: true }] }) },
-    registry: async () => ({ entities: [{ id: 'card', projectId: 'workspace', repositoryId: 'unity' }] }),
-    sessions: { ...f.sessions, read: async () => ({ screen: 'Native input' }) }, coordinator: () => coordinator,
-    createChat: async options => { calls.push(options); return { ...options, id: 'owned' }; }, focus: () => {},
-    workerControls: { send: async () => calls.push('send'), interrupt: async () => calls.push('abort'), prepare: async () => {} },
-  });
-  const scope = { projectId: 'workspace', cardId: 'card' };
-  assert.ok(coordinatorTools.find(item => item.name === 'open_chat').inputSchema.properties.agent.enum.includes('opencode'));
-  await actions.execute('open_chat', { agent: 'opencode', name: 'Unity work' }, 'op', scope);
-  assert.equal(calls[0], 'confirm'); assert.equal(calls[1].repositoryId, 'unity'); assert.equal(calls[1].cardId, 'card'); assert.equal(calls[1].effort, undefined);
-  await assert.rejects(actions.execute('open_chat', { agent: 'opencode', name: 'Work', effort: 'high' }, 'op', scope), /variants/);
-  await assert.rejects(actions.execute('open_chat', { agent: 'opencode', name: 'Work', projectId: 'foreign' }, 'op', scope), /workspace/);
-  await assert.rejects(actions.execute('send_to_chat', { id: 'owned', text: 'Task' }, 'op', scope), /Read/);
-  await actions.execute('read_chat', { id: 'owned' }, 'op', scope);
-  await actions.execute('send_to_chat', { id: 'owned', text: 'Task' }, 'op', scope);
-  assert.deepEqual(calls.slice(-2), ['confirm', 'send']);
-  f.chat.lastInputAt = 'changed'; await assert.rejects(actions.execute('send_to_chat', { id: 'owned', text: 'Task' }, 'op', scope), /Read/);
-  await actions.execute('read_chat', { id: 'owned' }, 'op', scope);
-  coordinator.requireConfirmation = async () => { throw new Error('Declined'); };
-  await assert.rejects(actions.execute('send_to_chat', { id: 'owned', text: 'Task' }, 'op', scope), /Declined/);
-  coordinator.requireConfirmation = async () => { calls.push('confirm'); f.chat.lastInputAt = 'intervening typing'; };
-  await assert.rejects(actions.execute('send_to_chat', { id: 'owned', text: 'Task' }, 'op', scope), /Read/);
-  coordinator.requireConfirmation = async () => calls.push('confirm');
-  await actions.execute('interrupt_chat', { id: 'owned' }, 'op', scope); assert.deepEqual(calls.slice(-2), ['confirm', 'abort']);
-  f.chat.projectId = 'foreign'; await assert.rejects(actions.execute('interrupt_chat', { id: 'owned' }, 'op', scope), /outside/);
 });

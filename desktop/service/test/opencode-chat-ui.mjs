@@ -1,12 +1,12 @@
 // UI smoke with fake PTYs/picker replies. Native TUI is tested separately.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, cp } from 'node:fs/promises';
+import { mkdir, writeFile, cp } from 'node:fs/promises';
+import { mkdtemp, createService, testBrowserEnvironment } from './fixtures.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { chromium } from '@playwright/test';
-import { createService } from '../server.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..'), base = await mkdtemp(path.join(os.tmpdir(), 'mik-opencode-chat-ui-'));
 const repo = path.join(base, 'hub'), uiDir = path.join(base, 'ui'), linked = path.join(base, 'working');
 await mkdir(path.join(repo, 'workspace'), { recursive: true }); await mkdir(linked);
@@ -21,7 +21,7 @@ try {
   source.preview = 'OpenCode final preview fixture'; source.hasConversation = true;
   source.process = { write() {}, resize() {}, kill() {} }; await service.sessions.hydrate(source); service.sessions.items.set(source.id, source);
   const family = service.sessions.make({ id: randomUUID(), name: 'Family fixture', agent: 'opencode', cwd: linked, nativeId: 'ses_familyui', status: 'stopped', open: false, hasConversation: true, createdAt: new Date().toISOString() }); service.sessions.items.set(family.id, family);
-  browser = await chromium.launch({ headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), headless: true, channel: process.env.MRMAK_TEST_BROWSER || 'msedge' });
   const page = await browser.newPage({ viewport: { width: 700, height: 780 } }), errors = [], controls = [], picks = [];
   page.on('pageerror', error => errors.push(error.stack || error.message));
   let deleted;
@@ -80,7 +80,7 @@ try {
   assert.equal(await page.locator('.xterm-cursor').count(), 0, 'The contrast bar never forces a hidden native cursor to appear');
   await new Promise(resolve => source.terminal.write('\x1b[?25h', resolve)); source.pendingOutput += '\x1b[?25h'; service.sessions.flushOutput(source);
   await page.waitForFunction(() => !!document.querySelector('.xterm-cursor'));
-  await page.getByRole('button', { name: 'Model ▾', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose model', exact: true }).click();
   await page.getByRole('textbox', { name: 'Find a native model', exact: true }).fill('Beta');
   await page.locator('.chat-model-menu').getByRole('button', { name: 'Fixture Beta', exact: true }).click();
   await page.locator('.chat-model-menu').getByRole('button', { name: 'high', exact: true }).click();

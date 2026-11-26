@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, symlink, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,23 +14,6 @@ function v2Fixture(uri) {
     { id: 'msg_answer', type: 'assistant', time: { created: 1, completed: 2 }, content: [{ type: 'tool', name: 'fixture', state: { status: 'completed', input: {}, content: [{ type: 'text', text: 'Fixture' }, { type: 'file', mime: 'image/png', uri }] } }] },
   ] };
 }
-
-test('V2 keeps historical prompt bytes and explicitly reviews external tool files without mutating native content', async t => {
-  const folder = await mkdtemp(path.join(os.tmpdir(), 'mik-v2-media-'));
-  t.after(() => rm(folder, { recursive: true, force: true }));
-  const file = path.join(folder, 'tool.png'); await writeFile(file, Buffer.from([5, 6, 7]));
-  const data = v2Fixture(pathToFileURL(file).href), before = JSON.stringify(data);
-  assert.throws(() => validateV2Transfer(data), /provenance/);
-  validateV2Transfer(data, data.info.id, { portable: false });
-  const approved = await reviewAttachments([data]); assert.equal(approved.length, 1); assert.equal(approved[0].bytes, 3);
-  await assert.rejects(embedAttachments(data, []), /not approved/);
-  const result = await embedAttachments(data, approved); validateV2Transfer(result);
-  assert.equal(result.messages[0].files[0].data, 'AQIDBA==');
-  assert.deepEqual(result.messages[0].files[0].source, { type: 'inline' });
-  assert.equal(result.messages[1].content[0].state.content[1].uri, 'data:image/png;base64,BQYH');
-  assert.equal(JSON.stringify(data), before); assert.deepEqual(await reviewAttachments([result]), []);
-  await writeFile(file, 'changed'); await assert.rejects(embedAttachments(data, approved), /changed/);
-});
 
 test('V2 rejects unsafe external tool locations, malformed media and unknown content', async () => {
   for (const uri of ['https://example.test/file.png', 'file://server/share/a.png', 'relative.png', 'file:///fixture/.env']) await assert.rejects(reviewAttachments([v2Fixture(uri)]), /unsupported|private|Only local/i);

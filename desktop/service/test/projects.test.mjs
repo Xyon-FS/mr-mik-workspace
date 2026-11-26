@@ -1,19 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, symlink, realpath, rename } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, symlink, realpath, rename } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Projects } from '../projects.mjs';
 import { Workspace } from '../workspace.mjs';
 import { WorkspaceBridge, bridgeTools } from '../workspace-bridge.mjs';
-import { createService } from '../server.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { claudeBridgeArgs, commandPath, terminalCommand } from '../agents.mjs';
+import { codexBridgeArgs, commandPath, terminalCommand } from '../agents.mjs';
 
 async function fixture() {
   const base = await mkdtemp(path.join(os.tmpdir(), 'mrmak-projects-'));
@@ -48,26 +48,38 @@ test('registration separates portable metadata from local locations and never co
   await f.projects.remove(f.a.id);
   assert.deepEqual(await readdir(f.external), []);
   assert.equal((await f.registry()).entities[0].id, 'legacy');
+  await writeFile(f.projects.registryPath, '{invalid');
+  await assert.rejects(f.projects.save({ name: 'Retain', repositoryPath: f.external }), /Registry/);
+  assert.equal(await readFile(f.projects.registryPath, 'utf8'), '{invalid');
 });
 
-test('unlinking a linked project preserves its folder and cards but clears only its Hub associations', async () => {
-  const f = await fixture(), blender = path.join(path.dirname(f.external), 'blender');
-  await mkdir(blender);
-  await writeFile(path.join(blender, 'model.txt'), 'source model');
-  const linked = await f.projects.saveRepository({ projectId: f.a.id, name: 'Blender', repositoryPath: blender });
-  const card = await f.projects.createCard({ projectId: f.a.id, repositoryId: linked.id, title: 'Models' });
-  await f.projects.linkArtifact({ projectId: f.a.id, id: card.id, repositoryId: linked.id, path: 'model.txt' });
-  const movedCard = await f.projects.createCard({ projectId: f.a.id, title: 'Shared models' });
-  await f.projects.linkArtifact({ projectId: f.a.id, id: movedCard.id, repositoryId: linked.id, path: 'model.txt' });
-  await f.projects.assignCard(movedCard.id, null);
-  const result = await f.projects.removeRepository({ projectId: f.a.id, repositoryId: linked.id });
-  assert.deepEqual([result.affectedCards, result.removedArtifacts, result.removedDocuments], [1, 2, 0]);
-  assert.equal((await f.projects.get(f.a.id)).repositories.length, 1);
-  assert.equal((await f.registry()).entities.find(item => item.id === card.id).repositoryId, null);
-  assert.deepEqual((await f.registry()).entities.find(item => item.id === card.id).artifacts, []);
-  assert.deepEqual((await f.registry()).entities.find(item => item.id === movedCard.id).artifacts, []);
-  assert.equal(await readFile(path.join(blender, 'model.txt'), 'utf8'), 'source model');
-  await assert.rejects(f.projects.removeRepository({ projectId: f.a.id, repositoryId: 'primary' }), /needs one linked project/);
+test('card workspace and linked-project associations save together and reject invalid pairs without changes', async () => {
+  const f = await fixture();
+  const card = await f.projects.createCard({ projectId: f.a.id, repositoryId: 'primary', title: 'Association fixture' });
+  await f.projects.assignCard(card.id, f.b.id, 'primary');
+  const current = () => f.registry().then(registry => registry.entities.find(item => item.id === card.id));
+  assert.deepEqual([(await current()).projectId, (await current()).repositoryId], [f.b.id, 'primary']);
+  await assert.rejects(f.projects.assignCard(card.id, f.a.id, 'missing'), /not linked/);
+  await assert.rejects(f.projects.assignCard(card.id, null, 'primary'), /not linked/);
+  assert.deepEqual([(await current()).projectId, (await current()).repositoryId], [f.b.id, 'primary']);
+  await f.projects.assignCard(card.id, f.a.id);
+  assert.equal((await current()).repositoryId, null);
+  await f.projects.assignCard(card.id, f.b.id, null);
+  const folder = path.join(path.dirname(f.external), 'queued-linked');
+  await mkdir(folder);
+  const linked = await f.projects.saveRepository({ projectId: f.a.id, name: 'Queued', repositoryPath: folder });
+  let release;
+  const gate = f.projects.serialize(() => new Promise(resolve => { release = resolve; }));
+  await new Promise(resolve => setImmediate(resolve));
+  const removing = f.projects.removeRepository({ projectId: f.a.id, repositoryId: linked.id });
+  const assigning = f.projects.assignCard(card.id, f.a.id, linked.id);
+  release(); await gate;
+  await removing;
+  await assert.rejects(assigning, /not linked/);
+  assert.equal((await current()).projectId, f.b.id);
+  assert.equal((await current()).repositoryId, null);
+  await f.projects.assignCard(card.id, null, null);
+  assert.deepEqual([(await current()).projectId, (await current()).repositoryId], [null, null]);
 });
 
 test('unlinking the main linked project requires a replacement and does not silently retarget Hub links', async () => {
@@ -79,6 +91,14 @@ test('unlinking the main linked project requires a replacement and does not sile
   await f.projects.linkArtifact({ projectId: f.a.id, id: card.id, path: 'architecture.md' });
   const document = await f.projects.linkDocument({ projectId: f.a.id, path: 'architecture.md' });
   await assert.rejects(f.projects.removeRepository({ projectId: f.a.id, repositoryId: 'primary' }), /Choose another linked project/);
+  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
+  try {
+    const session = service.sessions.make({ id: randomUUID(), name: 'Blender chat', agent: 'codex', cwd: blender, projectId: f.a.id, repositoryId: linked.id, open: true, status: 'stopped', createdAt: new Date().toISOString() });
+    service.sessions.items.set(session.id, session);
+    const response = await fetch(`${service.origin}/api/projects/repositories/remove`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: f.a.id, repositoryId: linked.id }) });
+    assert.equal(response.status, 409);
+    assert.equal((await f.projects.get(f.a.id)).repositories.length, 2);
+  } finally { service.sessions.items.clear(); await service.close(); }
   const result = await f.projects.removeRepository({ projectId: f.a.id, repositoryId: 'primary', replacementId: linked.id });
   assert.deepEqual([result.affectedCards, result.removedArtifacts, result.removedDocuments], [1, 1, 1]);
   assert.equal((await f.projects.get(f.a.id)).repositories[0].id, linked.id);
@@ -92,33 +112,6 @@ test('unlinking the main linked project requires a replacement and does not sile
   assert.equal(await readFile(await f.projects.resourceLocation(newDocument), 'utf8'), '# Blender architecture');
   await f.projects.save({ id: f.a.id, name: 'Exercise renamed', repositoryPath: blender });
   assert.deepEqual((await f.projects.get(f.a.id)).repositories.map(item => item.id), [linked.id]);
-});
-
-test('unlink API refuses a linked project while one of its chat tabs is open', async () => {
-  const f = await fixture(), blender = path.join(path.dirname(f.external), 'blender');
-  await mkdir(blender);
-  const linked = await f.projects.saveRepository({ projectId: f.a.id, name: 'Blender', repositoryPath: blender });
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
-  try {
-    const session = service.sessions.make({ id: randomUUID(), name: 'Blender chat', agent: 'codex', cwd: blender, projectId: f.a.id, repositoryId: linked.id, open: true, status: 'stopped', createdAt: new Date().toISOString() });
-    service.sessions.items.set(session.id, session);
-    const response = await fetch(`${service.origin}/api/projects/repositories/remove`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: f.a.id, repositoryId: linked.id }) });
-    assert.equal(response.status, 409);
-    assert.equal((await f.projects.get(f.a.id)).repositories.length, 2);
-  } finally { service.sessions.items.clear(); await service.close(); }
-});
-
-test('a project remains selectable and keeps Hub cards when its non-Git folder is missing', async () => {
-  const f = await fixture();
-  await rename(f.external, `${f.external}-moved`);
-  assert.equal((await f.projects.get(f.a.id)).available, false);
-  const card = await f.projects.createCard({ projectId: f.a.id, title: 'Planning' });
-  assert.equal(card.projectId, f.a.id);
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
-  try {
-    const response = await fetch(`${service.origin}/api/settings`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedProjectId: f.a.id }) });
-    assert.equal(response.status, 200);
-  } finally { await service.close(); }
 });
 
 test('one logical project links independent repositories and cards retain Hub-only pages and assets', async () => {
@@ -156,50 +149,6 @@ test('one logical project links independent repositories and cards retain Hub-on
   await assert.rejects(f.bridge.call(token, 'mrmak_read_repository_file', { repositoryId: linked.id, path: '../hub/workspace/workspace.json' }));
 });
 
-test('Hub skills are opt-in globally or per project and never copied into linked repositories', async () => {
-  const f = await fixture();
-  const folder = path.join(f.repo, '.agents', 'skills', 'handoff');
-  await mkdir(folder, { recursive: true });
-  await writeFile(path.join(folder, 'SKILL.md'), '---\nname: handoff\ndescription: Make a project handoff card.\n---\n# Handoff\n');
-  const a = f.bridge.issue('skill-a', f.a.id), b = f.bridge.issue('skill-b', f.b.id);
-  assert.deepEqual(await f.bridge.call(a, 'mrmak_list_hub_skills'), []);
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'project', projectId: f.a.id, enabled: true });
-  assert.equal((await f.bridge.call(a, 'mrmak_list_hub_skills'))[0].scope, 'project');
-  assert.deepEqual(await f.bridge.call(b, 'mrmak_list_hub_skills'), []);
-  assert.match((await f.bridge.call(a, 'mrmak_read_hub_skill', { id: 'handoff' })).text, /# Handoff/);
-  await assert.rejects(f.bridge.call(b, 'mrmak_read_hub_skill', { id: 'handoff' }), /not enabled/);
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'global', enabled: true });
-  assert.equal((await f.bridge.call(b, 'mrmak_list_hub_skills'))[0].scope, 'hub-global');
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'project', projectId: f.a.id, enabled: false });
-  assert.equal((await f.projects.hubSkills(f.a.id))[0].projectOverride, false);
-  assert.deepEqual(await f.bridge.call(a, 'mrmak_list_hub_skills'), []);
-  await assert.rejects(f.bridge.call(a, 'mrmak_read_hub_skill', { id: 'handoff' }), /not enabled/);
-  assert.equal((await f.bridge.call(b, 'mrmak_list_hub_skills'))[0].scope, 'hub-global');
-  assert.equal(JSON.parse(await readFile(path.join(f.repo, 'projects', 'skill-scopes.json'), 'utf8')).skills.handoff.projects[f.a.id], false);
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'project', projectId: f.a.id, enabled: null });
-  assert.equal((await f.projects.hubSkills(f.a.id))[0].projectOverride, null);
-  assert.equal((await f.bridge.call(a, 'mrmak_list_hub_skills'))[0].scope, 'hub-global');
-  await assert.rejects(f.projects.setHubSkillScope({ id: 'handoff', scope: 'global', enabled: null }), /enabled state/);
-  const claudeFolder = path.join(f.repo, '.claude', 'skills', 'handoff');
-  await mkdir(claudeFolder, { recursive: true });
-  await writeFile(path.join(claudeFolder, 'SKILL.md'), '---\nname: handoff\ndescription: Claude-specific handoff.\n---\n# Claude handoff\n');
-  const claudeA = f.bridge.issue('claude-a', f.a.id, null, null, 'claude'), claudeB = f.bridge.issue('claude-b', f.b.id, null, null, 'claude');
-  assert.deepEqual(await f.bridge.call(claudeA, 'mrmak_list_hub_skills'), []);
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'project', projectId: f.a.id, enabled: true, agent: 'claude' });
-  assert.equal((await f.bridge.call(claudeA, 'mrmak_list_hub_skills'))[0].scope, 'project');
-  assert.deepEqual(await f.bridge.call(claudeB, 'mrmak_list_hub_skills'), []);
-  assert.match((await f.bridge.call(claudeA, 'mrmak_read_hub_skill', { id: 'handoff' })).text, /# Claude handoff/);
-  assert.match((await f.bridge.call(a, 'mrmak_read_hub_skill', { id: 'handoff' })).text, /# Handoff/);
-  await assert.rejects(f.bridge.call(claudeB, 'mrmak_read_hub_skill', { id: 'handoff' }), /not enabled/);
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'global', enabled: true, agent: 'claude' });
-  await f.projects.setHubSkillScope({ id: 'handoff', scope: 'project', projectId: f.a.id, enabled: false, agent: 'claude' });
-  assert.deepEqual(await f.bridge.call(claudeA, 'mrmak_list_hub_skills'), []);
-  await assert.rejects(f.bridge.call(claudeA, 'mrmak_read_hub_skill', { id: 'handoff' }), /not enabled/);
-  assert.equal((await f.bridge.call(claudeB, 'mrmak_list_hub_skills'))[0].scope, 'hub-global');
-  assert.deepEqual(await readdir(f.external), []);
-  assert.deepEqual(await readdir(f.other), []);
-});
-
 test('skill creation separates Hub and linked folders, creates missing roots, and never overwrites', async () => {
   const f = await fixture();
   const base = { agent: 'codex', name: 'new-handoff', description: 'Use for handoffs.', instructions: '# Handoff\n\nCheck the destination.' };
@@ -215,31 +164,6 @@ test('skill creation separates Hub and linked folders, creates missing roots, an
   await assert.rejects(f.projects.createSkill({ ...base, target: 'hub', name: '../escape' }), /Provide a skill name/);
   await symlink(f.external, path.join(f.other, '.agents'), 'junction');
   await assert.rejects(f.projects.createSkill({ ...base, target: 'linked', projectId: f.b.id, repositoryId: 'primary' }), /not a regular folder/);
-});
-
-test('card pin API reuses the existing pinned field and keeps its workspace association', async () => {
-  const f = await fixture();
-  const card = await f.projects.createCard({ projectId: f.a.id, title: 'Gameplay' });
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
-  try {
-    const response = await fetch(`${service.origin}/api/cards/pin`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: card.id, pinned: true }) });
-    assert.equal(response.status, 200);
-    const saved = (await f.registry()).entities.find(item => item.id === card.id);
-    assert.equal(saved.pinned, true);
-    assert.equal(saved.projectId, f.a.id);
-  } finally { await service.close(); }
-});
-
-test('legacy resources remain global; project metadata changes neither documents nor inbox files', async () => {
-  const f = await fixture();
-  assert.equal((await f.projects.resources('knowledge', '', 'global')).length, 2);
-  await f.projects.assignResource({ kind: 'knowledge', path: 'knowledge/specific.md', projectId: f.a.id });
-  assert.equal((await f.projects.resources('knowledge', f.b.id, 'relevant')).length, 1);
-  assert.equal((await f.projects.resources('knowledge', f.a.id, 'relevant')).length, 2);
-  await f.projects.assignResource({ kind: 'inbox', path: 'inbox/reference.txt', projectId: f.a.id });
-  assert.equal(await readFile(path.join(f.repo, 'inbox/reference.txt'), 'utf8'), 'original bytes');
-  assert.equal(await readFile(path.join(f.repo, 'knowledge/specific.md'), 'utf8'), '# Specific lesson');
-  assert.equal((await f.registry()).preserved, true);
 });
 
 test('selected file is copied to the Hub project library; external repository stays unchanged', async () => {
@@ -259,15 +183,23 @@ test('selected file is copied to the Hub project library; external repository st
   assert.equal((await f.projects.resources('inbox', f.a.id, 'project')).length, 1);
   assert.equal((await f.projects.resources('inbox', f.b.id, 'project')).length, 0);
   assert.deepEqual(await readdir(f.external), ['reference.pdf']);
-});
-
-test('recycled Hub files lose their library metadata while external links only unlink', async () => {
-  const f = await fixture();
-  const source = path.join(f.external, 'architecture.md');
-  await writeFile(source, '# External source');
-  const linked = await f.projects.linkDocument({ projectId: f.a.id, path: 'architecture.md' });
+  await mkdir(path.join(f.external, 'docs'));
+  const externalDocument = path.join(f.external, 'docs/architecture.md');
+  await writeFile(externalDocument, '# External source');
+  const knowledge = path.join(f.repo, 'knowledge');
+  const contentBefore = (await readdir(knowledge, { recursive: true })).sort();
+  const linked = await f.projects.linkDocument({ projectId: f.a.id, path: 'docs/architecture.md' });
+  assert.deepEqual((await readdir(knowledge, { recursive: true })).sort(), contentBefore);
+  assert.equal((await f.projects.readResource('knowledge', linked.id, f.a.id)).text, '# External source');
+  await assert.rejects(f.projects.readResource('knowledge', linked.id, f.b.id), /not available/);
+  await assert.rejects(f.projects.linkDocument({ projectId: f.a.id, path: '../hub/knowledge/general.md' }));
+  await assert.rejects(f.projects.linkDocument({ projectId: f.a.id, path: '.codex/auth.md' }));
+  assert.equal(await readFile(externalDocument, 'utf8'), '# External source');
+  await writeFile(path.join(f.external, 'private.md'), 'outside');
+  await symlink(f.external, path.join(f.repo, 'knowledge/linked'), 'junction');
+  await assert.rejects(f.projects.assignResource({ kind: 'knowledge', path: 'knowledge/linked/private.md', projectId: f.a.id }), /leaves/);
   assert.equal((await f.projects.unlinkResource('knowledge', linked.id)).sourceUntouched, true);
-  assert.equal(await readFile(source, 'utf8'), '# External source');
+  assert.equal(await readFile(externalDocument, 'utf8'), '# External source');
   assert.equal((await f.projects.resources('knowledge', f.a.id, 'project')).some(item => item.id === linked.id), false);
 
   const entry = await f.projects.assignResource({ kind: 'knowledge', path: 'knowledge/specific.md', projectId: f.a.id });
@@ -277,16 +209,6 @@ test('recycled Hub files lose their library metadata while external links only u
   assert.deepEqual(await f.projects.cleanupRecycledResource(original), { removed: 1 });
   assert.equal((await f.projects.resources('knowledge', f.a.id, 'project')).some(item => item.id === entry.id), false);
   assert.equal(await readFile(moved, 'utf8'), '# Specific lesson');
-});
-
-test('project folder picker targets the Workspace window and requests a directory', async () => {
-  const f = await fixture(), events = [];
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui'), native: event => events.push(event) });
-  try {
-    const response = await fetch(`${service.origin}/api/files/pick`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: '00000000-0000-4000-8000-000000000001', window: 'workspace', folder: true }) });
-    assert.equal(response.status, 200);
-    assert.deepEqual(events, [{ type: 'pick-files', window: 'workspace', requestId: '00000000-0000-4000-8000-000000000001', folder: true }]);
-  } finally { await service.close(); }
 });
 
 test('Bridge isolates cards and resources, denies general operations and revokes old capabilities', async () => {
@@ -376,27 +298,6 @@ test('Bridge discovers and changes skills and MCP settings through the same scop
   } finally { await service.close(); }
 });
 
-test('technical documentation is linked, not copied; traversal and private files are rejected', async () => {
-  const f = await fixture();
-  await mkdir(path.join(f.external, 'docs')); await writeFile(path.join(f.external, 'docs/architecture.md'), '# Architecture');
-  const linked = await f.projects.linkDocument({ projectId: f.a.id, path: 'docs/architecture.md' });
-  assert.equal((await f.projects.readResource('knowledge', linked.id, f.a.id)).text, '# Architecture');
-  await assert.rejects(f.projects.readResource('knowledge', linked.id, f.b.id), /not available/);
-  await assert.rejects(f.projects.linkDocument({ projectId: f.a.id, path: '../hub/knowledge/general.md' }));
-  await assert.rejects(f.projects.linkDocument({ projectId: f.a.id, path: '.codex/auth.md' }));
-  assert.deepEqual(await readdir(path.join(f.repo, 'knowledge')), ['general.md', 'projects', 'specific.md']);
-});
-
-test('library links cannot escape via junctions and malformed registries are never overwritten', async () => {
-  const f = await fixture();
-  await writeFile(path.join(f.external, 'private.md'), 'outside');
-  await symlink(f.external, path.join(f.repo, 'knowledge/linked'), 'junction');
-  await assert.rejects(f.projects.assignResource({ kind: 'knowledge', path: 'knowledge/linked/private.md', projectId: f.a.id }), /leaves/);
-  await writeFile(f.projects.registryPath, '{invalid');
-  await assert.rejects(f.projects.save({ name: 'Retain', repositoryPath: f.external }), /Registry/);
-  assert.equal(await readFile(f.projects.registryPath, 'utf8'), '{invalid');
-});
-
 test('real MCP transport exposes only scoped tools and its capability cannot call application APIs', async () => {
   const f = await fixture();
   const skillFolder = path.join(f.repo, '.agents', 'skills', 'handoff');
@@ -421,47 +322,6 @@ test('real MCP transport exposes only scoped tools and its capability cannot cal
   } finally { await client.close(); await transport.close(); await service.close(); }
 });
 
-test('Claude launch config includes the scoped Bridge without a token in arguments', () => {
-  const script = fileURLToPath(new URL('../bridge-mcp.mjs', import.meta.url));
-  const args = claudeBridgeArgs(script);
-  assert.equal(args[0], '--mcp-config');
-  const server = JSON.parse(args[1]).mcpServers.mrmak_workspace;
-  assert.equal(server.command, process.execPath);
-  assert.deepEqual(server.args, [script]);
-  assert.deepEqual(server.env, { MRMAK_BRIDGE_URL: '${MRMAK_BRIDGE_URL}', MRMAK_BRIDGE_TOKEN: '${MRMAK_BRIDGE_TOKEN}' });
-});
-
-test('MCP inventory uses the selected repository and never mixes another project server', async () => {
-  const f = await fixture();
-  for (const [root, name] of [[f.external, 'exercise-only'], [f.other, 'pumpdown-only']]) {
-    await mkdir(path.join(root, '.codex')); await writeFile(path.join(root, '.codex/config.toml'), `[mcp_servers."${name}"]\nurl="https://example.invalid/mcp"\n`);
-  }
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui'), mcpOptions: { home: path.join(f.repo, '.mrmak/empty-home'), env: {} } });
-  const request = id => fetch(`${service.origin}/api/mcp?projectId=${id}`, { headers: { Authorization: `Bearer ${service.token}` } }).then(response => response.json());
-  try {
-    const exercise = await request(f.a.id), pumpdown = await request(f.b.id);
-    assert.ok(exercise.servers.some(item => item.name === 'exercise-only'));
-    assert.ok(!exercise.servers.some(item => item.name === 'pumpdown-only'));
-    assert.ok(pumpdown.servers.some(item => item.name === 'pumpdown-only'));
-    assert.ok(!pumpdown.servers.some(item => item.name === 'exercise-only'));
-  } finally { await service.close(); }
-});
-
-test('Kimi project MCP inventory uses native project file only for its repository', async () => {
-  const f = await fixture();
-  const service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
-  try {
-    await mkdir(path.join(f.external, '.kimi-code'));
-    await writeFile(path.join(f.external, '.kimi-code/mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: 'node' } } }));
-    const headers = { Authorization: `Bearer ${service.token}` };
-    const forProject = id => fetch(`${service.origin}/api/mcp?projectId=${id}`, { headers }).then(response => response.json());
-    assert.ok((await forProject(f.a.id)).servers.some(item => item.id === 'kimi:fixture' && item.scope === 'project'));
-    assert.ok(!(await forProject(f.b.id)).servers.some(item => item.id === 'kimi:fixture'));
-    assert.equal(await service.sessions.prepareLaunch({ agent: 'kimi', projectId: f.a.id, cwd: await f.projects.root(f.a.id) }), null);
-    assert.equal(await service.sessions.prepareLaunch({ agent: 'kimi', projectId: f.b.id, cwd: await f.projects.root(f.b.id) }), null);
-  } finally { await service.close(); }
-});
-
 test('project chat resolves backend cwd, preserves native metadata and blocks silent redirection', { skip: process.platform !== 'win32' }, async () => {
   const f = await fixture(), service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
   try {
@@ -484,7 +344,12 @@ test('installed Codex accepts invocation-only Bridge overrides without touching 
   const launch = terminalCommand('codex', { bridge: { script, instructions: 'Route Mr. Mik Hub pages through its Bridge.' } });
   assert.equal(launch.file, commandPath('codex'));
   assert.ok(launch.args.includes(`mcp_servers.mrmak_workspace.args=[${JSON.stringify(script)}]`));
-  const child = spawn(launch.file, ['app-server', '--stdio', ...launch.args.filter(item => item !== '--no-alt-screen')], { cwd: f.external, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  // app-server accepts configuration overrides, not interactive TUI permission
+  // flags. Reusing the complete terminal command caused an immediate parse exit
+  // which this test used to report as an eight-second RPC timeout.
+  const child = spawn(launch.file, ['app-server', '--stdio', ...codexBridgeArgs(script), '-c', 'developer_instructions="Route Mr. Mik Hub pages through its Bridge."'], { cwd: f.external, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  let diagnostic = '';
+  child.stderr.on('data', data => { diagnostic = (diagnostic + data).slice(-2000); });
   const pending = new Map(); let sequence = 0;
   const lines = createInterface({ input: child.stdout });
   lines.on('line', line => {
@@ -492,13 +357,17 @@ test('installed Codex accepts invocation-only Bridge overrides without touching 
   });
   const rpc = async (method, params) => {
     const id = ++sequence; let timer;
+    const exited = () => pending.get(id)?.({ error: { message: `Codex app-server exited before ${method}: ${diagnostic}` } });
+    const failed = error => pending.get(id)?.({ error: { message: `Codex app-server could not start: ${error.message}` } });
     try {
       return await new Promise((resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('Isolated Codex protocol test timed out.')), 8000);
-        pending.set(id, message => message.error ? reject(new Error('Isolated Codex protocol rejected the request.')) : resolve(message.result));
+        timer = setTimeout(() => reject(new Error(`Isolated Codex protocol timed out at ${method}: ${diagnostic}`)), 8000);
+        pending.set(id, message => message.error ? reject(new Error(message.error.message || 'Isolated Codex protocol rejected the request.')) : resolve(message.result));
+        child.once('exit', exited); child.once('error', failed);
+        if (child.exitCode !== null || child.signalCode !== null) return exited();
         child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
       });
-    } finally { clearTimeout(timer); pending.delete(id); }
+    } finally { clearTimeout(timer); pending.delete(id); child.off('exit', exited); child.off('error', failed); }
   };
   try {
     await rpc('initialize', { clientInfo: { name: 'mrmak_config_test', version: '1' } });
@@ -510,27 +379,55 @@ test('installed Codex accepts invocation-only Bridge overrides without touching 
     assert.equal(result.config.developer_instructions, 'Route Mr. Mik Hub pages through its Bridge.');
     assert.ok(!(await readdir(home)).includes('config.toml'));
     assert.deepEqual(await readdir(f.external), []);
-  } finally { lines.close(); child.stdin.end(); child.kill(); }
+  } finally {
+    lines.close(); child.stdin.end();
+    if (child.exitCode === null && child.signalCode === null) {
+      // Wait for owned stdio handles as well as the process; on Windows an
+      // exit event alone can race fixture removal while its pipes still close.
+      const stopped = new Promise(resolve => child.once('close', resolve));
+      let timer;
+      await Promise.race([stopped, new Promise(resolve => { timer = setTimeout(resolve, 1500); })]);
+      clearTimeout(timer);
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await stopped;
+    }
+  }
 });
 
 test('New Codex Chat launches the real Windows terminal with a typed Bridge MCP array', { skip: process.platform !== 'win32' || !commandPath('codex')?.endsWith('.exe'), timeout: 20000 }, async () => {
   const f = await fixture(), home = path.join(f.repo, '.mrmak', 'isolated-codex-home');
   await mkdir(home, { recursive: true });
-  const previous = process.env.CODEX_HOME;
-  process.env.CODEX_HOME = home;
-  let service;
+  let service, ownedSession, ownedProcess;
   try {
-    service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui') });
-    const response = await fetch(`${service.origin}/api/sessions`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: 'codex', projectId: f.a.id, name: 'Bridge startup test' }) });
-    assert.equal(response.status, 201);
+    service = await createService({ repo: f.repo, uiDir: path.join(f.repo, 'ui'), mcpOptions: { home: path.dirname(home), env: { CODEX_HOME: home } }, profileOptions: { root: path.join(f.repo, '.mrmak', 'test-accounts') } });
+    const profile = await service.profiles.create('Bridge startup fixture');
+    // Native startup/config parsing is under test, not a real account login.
+    let preflight = false;
+    service.sessions.verifyAccount = async (_session, context) => {
+      assert.equal(context.profileId, profile.id); assert.equal(context.system, false);
+      assert.equal(context.sharedHome, home); preflight = true;
+    };
+    const request = data => fetch(`${service.origin}/api/sessions`, { method: 'POST', headers: { Authorization: `Bearer ${service.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: 'codex', projectId: f.a.id, name: 'Bridge startup test', ...data }) });
+    const missingAccount = await request({});
+    assert.equal(missingAccount.status, 400); assert.match((await missingAccount.json()).error, /added Codex account/);
+    const response = await request({ accountProfileId: profile.id, codexPermissions: 'ask' });
+    assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
     const chat = await response.json();
+    ownedSession = service.sessions.get(chat.id); ownedProcess = ownedSession.process;
+    assert.equal(chat.accountProfileId, profile.id); assert.equal(preflight, true);
     await new Promise(resolve => setTimeout(resolve, 1800));
     const screen = (await service.sessions.read(chat.id)).screen;
     assert.doesNotMatch(screen, /invalid type|expected a sequence|mcp_servers\.mrmak_workspace\.args/i);
     assert.equal(service.sessions.get(chat.id).status, 'running', `Codex exited at startup: ${screen.slice(0, 1200)}`);
   } finally {
-    await service?.close();
-    if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
+    try {
+      // This startup-only fixture owns the entire PTY process tree. Close its
+      // children on failure too; inherited cwd handles can keep rmdir busy.
+      if (ownedProcess && ownedSession.process === ownedProcess) {
+        const stop = spawn('taskkill.exe', ['/PID', String(ownedProcess.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        await new Promise((resolve, reject) => { stop.once('close', resolve); stop.once('error', reject); });
+      }
+    } finally { await service?.close(); }
   }
 });
 

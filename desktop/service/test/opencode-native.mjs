@@ -1,13 +1,13 @@
 // Explicit smoke test, not generic CI: isolated profile, localhost fake model only.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, realpath } from 'node:fs/promises';
+import { mkdtemp, createService } from './fixtures.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openCodeBinary } from '../agents.mjs';
 import { openCodeLaunchEnvironment, readOpenCodeState, openCodeStateFile } from '../opencode.mjs';
-import { createService } from '../server.mjs';
 import { chatOrientation } from '../chat-orientation.mjs';
 import http from 'node:http';
 import { OpenCodeSettings, openCodeConfigDir } from '../opencode-settings.mjs';

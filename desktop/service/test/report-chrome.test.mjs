@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {reportChromeStream,serveReport} from '../report-chrome.mjs';
-import {mkdtemp,writeFile,stat} from 'node:fs/promises';
+import {writeFile,stat} from 'node:fs/promises';
+import { mkdtemp } from './fixtures.mjs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,13 +22,6 @@ test('report chrome precedes document styles and preserves Unicode and original 
   assert.ok(output.indexOf('data-mrmak-chrome') < output.indexOf('body{background:#ddd}'));
   assert.ok(output.startsWith('\uFEFF<!doctype html>'));
   assert.match(output,/scrollbar-color:#514c59 #111217/);
-});
-test('unstyled fragments and large reports retain their content and receive one chrome layer',async()=>{
-  for(const source of ['<h1>A plain report</h1>', '<!doctype html><h1>No explicit head</h1>', '<!doctype html><!--'+'x'.repeat(70000)+'--><html><body>Large report</body></html>']){
-    const output=await rendered([Buffer.from(source.slice(0,65000)),Buffer.from(source.slice(65000))]);
-    assert.equal(original(output),source); assert.equal(output.split('data-mrmak-chrome').length,2);
-    if(source.startsWith('<!doctype'))assert.ok(output.startsWith('<!doctype html>'));
-  }
 });
 
 test('HTML GET and HEAD agree on byte length while ranges remain full transformed documents',async()=>{

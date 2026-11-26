@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
+import { mkdtemp, createService, cleanupFixtures, testBrowserEnvironment } from './fixtures.mjs';
+import { CodexChat } from '../codex-chat.mjs';
+import { graphicalFixture } from './codex-chat-fixture.mjs';
+
+const base = await mkdtemp(path.join(os.tmpdir(), 'mik-ui-interactions-'));
+let service, browser;
+try {
+  const repo = path.join(base, 'hub'), home = path.join(base, 'home'), native = path.join(home, '.codex');
+  await mkdir(path.join(repo, 'workspace'), { recursive: true }); await mkdir(native, { recursive: true });
+  await writeFile(path.join(repo, 'workspace/workspace.json'), '{"entities":[]}'); await writeFile(path.join(native, 'config.toml'), '');
+  service = await createService({ repo, uiDir: path.resolve('dist'), mcpOptions: { home, env: { CODEX_HOME: native } }, profileOptions: { root: path.join(base, 'accounts') } });
+  service.accounts.inventory = async () => []; service.accounts.profileInventory = async () => [];
+  service.sessions.verifyAccount = async () => {}; service.sessions.verifyIdentity = async () => {}; service.sessions.captureTools = async () => ({});
+  const transport = graphicalFixture(); service.sessions.createGraphicalRuntime = options => new CodexChat({ ...options, spawnChild: transport.spawnChild });
+  const profile = await service.profiles.create('Synthetic UI account');
+  const session = await service.sessions.create({ agent: 'codex', chatInterface: 'chat', accountProfileId: profile.id, codexPermissions: 'ask', cwd: repo });
+  browser = await chromium.launch({ env: testBrowserEnvironment(), channel: process.env.MRMAK_TEST_BROWSER || 'chrome', headless: true });
+  const context = await browser.newContext(), workspace = await context.newPage(), chat = await context.newPage();
+  const errors = [], failures = []; workspace.on('pageerror', error => errors.push(error.message)); chat.on('pageerror', error => errors.push(error.message));
+  await workspace.goto(service.urls.workspace);
+  await chat.goto(service.urls.chats); await chat.getByRole('button', { name:'New chat', exact:true }).click();
+  const creation = chat.getByRole('dialog', { name:'New chat', exact:true });
+  const agent = creation.getByRole('combobox', { name:'Chat interface', exact:true });
+  await agent.focus(); await chat.keyboard.press('ArrowUp');
+  await expect(chat.getByRole('listbox', { name:'Chat interface', exact:true })).toBeVisible();
+  await expect(chat.getByRole('option', { name:'Chat', exact:true })).toBeFocused();
+  await chat.keyboard.press('ArrowDown');
+  await expect(chat.getByRole('option', { name:'CLI', exact:true })).toBeFocused();
+  await chat.keyboard.press('Escape'); await expect(creation).toBeVisible();
+  await chat.keyboard.press('Escape'); await expect(creation).toHaveCount(0);
+  await workspace.getByRole('button', { name: 'Open Workspace help' }).click();
+  const help = workspace.getByRole('dialog', { name: 'Mr. Mik guide', exact: true }); await expect(help).toBeVisible();
+  const search = help.getByRole('textbox', { name: 'Search the guide' }); await expect(search).toBeFocused();
+  await search.fill('a-unique-no-match-123'); await expect(help.getByText('No sections match your search.', { exact: true })).toBeVisible();
+  await search.fill('');
+  await help.getByRole('button', { name:'Close guide', exact:true }).focus();
+  await workspace.keyboard.press('Tab'); await expect(search).toBeFocused();
+  await workspace.keyboard.press('Shift+Tab');
+  await expect(help.getByRole('button', { name:'Close guide', exact:true })).toBeFocused();
+  for (let index=0; index<12; index++) {
+    await workspace.keyboard.press('Tab');
+    if (!await help.evaluate(element=>element.contains(document.activeElement))) failures.push('Tab escaped the modal Help dialog');
+  }
+  await workspace.keyboard.press('Escape'); await expect(help).toHaveCount(0);
+  if (!await workspace.getByRole('button', { name: 'Open Workspace help' }).evaluate(element => element === document.activeElement)) failures.push('Closing Help did not restore focus to its opener');
+  await chat.goto(service.urls.chats);
+  const mode = chat.getByRole('combobox', { name: 'Model and reasoning', exact: true }); await expect(mode).toBeEnabled(); await mode.click();
+  await expect(chat.getByRole('dialog', { name: 'Model and reasoning', exact: true })).toBeVisible();
+  transport.children[0].notify('turn/started', { threadId: session.nativeId, turn: { id: 'active-fixture', status: 'inProgress' } });
+  const picker=chat.getByRole('dialog', { name:'Model and reasoning', exact:true });
+  await expect(picker.getByRole('combobox', { name:'Model', exact:true })).toBeDisabled();
+  for (const radio of await picker.getByRole('radio').all()) await expect(radio).toBeDisabled();
+  await expect(picker.getByRole('button', { name:'Close model and session', exact:true })).toBeEnabled();
+  await chat.keyboard.press('Escape');
+  transport.children[0].notify('turn/completed', { threadId: session.nativeId, turn: { id: 'active-fixture', status: 'completed' } });
+  await expect(mode).toBeEnabled();
+  await expect(chat.getByRole('dialog', { name: 'Model and reasoning', exact: true })).toHaveCount(0);
+  assert.deepEqual(errors, []); assert.deepEqual(failures, []);
+  console.log('Interaction UI passed: ArrowUp boundary, empty Help search, modal focus containment/restoration and disabling provider setting choices while keeping the open picker dismissible. Synthetic native events only.');
+} finally { await browser?.close(); await service?.close(); await cleanupFixtures(); }

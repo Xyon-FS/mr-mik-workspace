@@ -63,7 +63,7 @@ export class ClaudeMcpEditor {
     const state = await this.state(projectId, repositoryId, scope);
     const parked = state.parked;
     const servers = scope === 'global' ? { ...parked, ...object(state.document.mcpServers) } : object(state.project.mcpServers);
-    return { scope, file: state.file, servers: Object.entries(servers).map(([name, server]) => ({ name, transport: server.url ? 'http' : 'stdio', managed: state.owned[name] === hash(server), enabled: scope === 'global' ? !!state.document.mcpServers?.[name] : !state.project.disabledMcpServers?.includes(name) })), disabledMcpServers: scope === 'local' ? (Array.isArray(state.project.disabledMcpServers) ? state.project.disabledMcpServers : []).filter(name => typeof name === 'string') : [], disabledGlobal: Object.keys(parked), note: scope === 'global' ? 'Global Off preserves the definition in a private inactive section of Claude configuration; On restores it. No credentials are returned or exported.' : 'Local to this linked project on this computer. Native approvals and managed policy still apply.' };
+    return { scope, file: state.file, servers: Object.entries(servers).map(([name, server]) => ({ name, transport: server.url ? 'http' : 'stdio', managed: state.owned[name] === hash(server), inheritedCopy: !!state.registry[state.registryKey]?.overrideServers?.[name], enabled: scope === 'global' ? !!state.document.mcpServers?.[name] : !state.project.disabledMcpServers?.includes(name) })), disabledMcpServers: scope === 'local' ? (Array.isArray(state.project.disabledMcpServers) ? state.project.disabledMcpServers : []).filter(name => typeof name === 'string') : [], disabledGlobal: Object.keys(parked), note: scope === 'global' ? 'Global Off preserves the definition in a private inactive section of Claude configuration; On restores it. No credentials are returned or exported.' : 'Local to this linked project on this computer. Native approvals and managed policy still apply.' };
   }
   async change({ projectId, repositoryId, scope = 'local', action, name, transport, url, command, args, enabled }) {
     if (!['save', 'toggle', 'remove', 'override'].includes(action)) throw bad('Choose an MCP action.');
@@ -74,7 +74,13 @@ export class ClaudeMcpEditor {
       const parked = { ...state.parked };
       const owned = { ...state.owned };
       if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z_0-9-]{0,63}$/.test(name) || ['__proto__', 'constructor', 'prototype'].includes(name)) throw bad('Choose a valid MCP server name.');
-      const existing = servers[name] || (scope === 'global' ? parked[name] : null);
+      let existing = servers[name] || (scope === 'global' ? parked[name] : null);
+      // Tools may promote a selected folder's local definition to user scope.
+      // Read the definition privately; never round-trip credentials through UI.
+      if (scope === 'global' && action === 'toggle' && !existing && projectId) {
+        const local = await this.state(projectId, repositoryId, 'local');
+        existing = local.project.mcpServers?.[name] || (await claudeJson(path.join(local.root, '.mcp.json'))).value.mcpServers?.[name];
+      }
       const projectServers = scope === 'local' ? object((await claudeJson(path.join(state.root, '.mcp.json'))).value.mcpServers) : {};
       const record = object(state.registry[state.registryKey]);
       const overrideServers = { ...object(record.overrideServers) };
@@ -101,7 +107,8 @@ export class ClaudeMcpEditor {
           if (!servers[name] || hash(servers[name]) !== overrideServers[name]) throw bad('The local override changed outside Mr. Mik. Resolve it before clearing inheritance.');
           delete servers[name]; delete overrideServers[name]; delete owned[name];
         }
-        if (enabled === true && parked[name] && !servers[name] && !projectServers[name]) { servers[name] = parked[name]; overrideServers[name] = hash(servers[name]); owned[name] = hash(servers[name]); }
+        const inherited = state.document.mcpServers?.[name] || parked[name];
+        if (enabled === true && inherited && !servers[name] && !projectServers[name]) { servers[name] = inherited; overrideServers[name] = hash(servers[name]); owned[name] = hash(servers[name]); }
         if (enabled === false) disabled.add(name); else disabled.delete(name);
       } else { delete servers[name]; delete parked[name]; delete owned[name]; delete overrideServers[name]; disabled.delete(name); }
       if (action === 'save' && (scope !== 'global' || enabled !== false)) delete parked[name];
